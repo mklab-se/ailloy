@@ -1,0 +1,58 @@
+[package]
+name = "ailloy"
+version = "0.1.0"
+edition = "2024"
+authors = ["Kristofer Liljeblad <kristofer@mklab.se>"]
+license = "MIT"
+repository = "https://github.com/mklab-se/ailloy"
+rust-version = "1.85"
+description = "An AI abstraction layer for Rust"
+keywords = ["ai", "llm", "openai", "ollama", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
+
+[[bin]]
+name = "ailloy"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+cli = [
+    "dep:clap",
+    "dep:clap_complete",
+    "dep:inquire",
+    "dep:colored",
+    "dep:tracing-subscriber",
+    "dep:semver",
+    "tokio/rt-multi-thread",
+    "tokio/macros",
+]
+
+[dependencies]
+# Core (always included)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+tokio = { version = "1.0", features = ["process"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls-native-roots"], default-features = false }
+anyhow = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+dirs = "5.0"
+
+# CLI-only (behind feature flag)
+clap = { version = "4.5", features = ["derive", "env", "wrap_help"], optional = true }
+clap_complete = { version = "4.5", optional = true }
+inquire = { version = "0.7", optional = true }
+colored = { version = "2.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+semver = { version = "1.0", optional = true }
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/ailloy-v{ version }-{ target }.{ archive-format }"
+bin-dir = "ailloy{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
