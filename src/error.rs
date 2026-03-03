@@ -20,6 +20,9 @@ pub enum ClientError {
     #[error("Binary not found: {binary}. Is it installed?")]
     BinaryNotFound { binary: String },
 
+    #[error("Operation not supported: {0}")]
+    Unsupported(String),
+
     #[error("{0}")]
     Other(String),
 }

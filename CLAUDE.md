@@ -20,48 +20,63 @@ Single crate with feature-flagged CLI, similar to how `clap` separates derive fe
 ```
 src/
   lib.rs              # Public library API — always compiled
-  config.rs           # Config types, load/save from ~/.config/ailloy/config.yaml
-  types.rs            # Message, Role, ChatResponse, Usage
-  error.rs            # ClientError enum (thiserror)
-  provider.rs         # AiProvider enum, create_provider() dispatcher
-  openai.rs           # OpenAI-compatible API client (works with any OpenAI-compatible endpoint)
-  ollama.rs           # Ollama local LLM client (/api/chat, /api/tags)
-  local_agent.rs      # Local CLI agent integration (claude, codex, copilot subprocess)
+  config.rs           # Config types, load/save, local config merge, migration
+  types.rs            # Message, Role, ChatResponse, ChatOptions, StreamEvent, ChatStream,
+                      #   ImageResponse, ImageOptions, EmbeddingResponse, Task, Usage
+  error.rs            # ClientError enum (thiserror) — Http, Api, Json, NotConfigured,
+                      #   BinaryNotFound, Unsupported, Other
+  client.rs           # Provider trait, Client struct, ClientBuilder, create_provider_from_config()
+  conversation.rs     # ChatHistory trait, InMemoryHistory, Conversation
+  blocking.rs         # Sync client wrapper (internal tokio current-thread runtime)
+  provider.rs         # Legacy AiProvider enum (kept for backward compatibility)
+  openai.rs           # OpenAI client — chat, stream (SSE), image gen, embeddings
+  anthropic.rs        # Anthropic client — chat, stream (SSE)
+  azure.rs            # Azure OpenAI client — chat, stream (SSE), image gen, embeddings
+  vertex.rs           # Vertex AI client — Gemini chat/stream, Imagen, embeddings
+  ollama.rs           # Ollama client — chat, stream (NDJSON), embeddings
+  local_agent.rs      # Local CLI agent (claude, codex, copilot) — chat, stream (line-buffered)
   main.rs             # CLI entry point (requires "cli" feature)
   cli.rs              # Clap CLI definitions (requires "cli" feature)
   banner.rs           # ASCII art logo (requires "cli" feature)
   update.rs           # Background update checker via crates.io (requires "cli" feature)
   commands/
     mod.rs            # Command module exports
-    chat.rs           # `ailloy chat` — send message to AI provider
-    config_cmd.rs     # `ailloy config init/show` — interactive setup and display
+    chat.rs           # `ailloy chat` — chat, streaming, image gen, SVG, interactive, stdin
+    config_cmd.rs     # `ailloy config init/show` — interactive setup (all 6 provider types)
     completion.rs     # `ailloy completion` — shell completions
-    providers.rs      # `ailloy providers list` — list configured providers
+    providers.rs      # `ailloy providers list/detect` — list and auto-detect providers
 ```
 
 ## Feature Flags
 
 - `default = ["cli"]` — includes CLI binary and all CLI dependencies
 - `cli` — enables clap, inquire, colored, tracing-subscriber, semver, and tokio runtime features
-- Library users: `ailloy = { version = "0.1", default-features = false }`
+- Library users: `ailloy = { version = "0.2", default-features = false }`
 - CLI users: `cargo install ailloy` (uses default features)
 
 ## Key Patterns
 
 - Feature-flagged single crate: library code always compiles, CLI code gated behind `cli` feature via `required-features` on `[[bin]]`
+- **Provider trait** (`client.rs`): unified `async_trait` with default methods returning `Unsupported` — `name()`, `chat()`, `chat_stream()`, `generate_image()`, `embed()`
+- **Client** wraps `Box<dyn Provider>` — constructed via `from_config()`, `with_provider()`, `for_task()`, `from_provider()`, `builder()`, or direct constructors (`Client::openai()`, `Client::anthropic()`, etc.)
+- **Streaming**: SSE parsing for OpenAI/Anthropic/Azure/Vertex via `futures_util::stream::unfold`, NDJSON for Ollama, line-buffered for local agents
+- **Config v2**: `defaults` map routes task names (chat, image, embedding) to provider names; `ProviderConfig` has `task`, `auth`, `project`, `location`, `provider_defaults` fields
+- **Local config**: `.ailloy.yaml` in current or parent directories, merged with global config
+- **Config migration**: old `default_provider` auto-migrated to `defaults.chat` on load
+- **Blocking wrapper**: `blocking::Client` with internal `tokio::runtime::Builder::new_current_thread()` — mirrors async Client API
+- **Conversation**: `Conversation` struct with pluggable `ChatHistory` trait and `InMemoryHistory` default
 - CLI built with `clap` derive macros + `clap_complete` for shell completions
+- Default command pre-parsing: `ailloy "msg"` → `ailloy chat "msg"`
+- Stdin detection: auto-reads piped input via `io::stdin().is_terminal()`
+- Output routing: `-o image.png` → image generation, `-o file.svg` → SVG via chat, other → file save
 - Async runtime: `tokio`
 - Logging: `tracing` + `tracing-subscriber` (CLI only) with `-v`/`-vv` verbosity levels
 - Colored output via `colored` crate (respects `--no-color`)
 - Interactive prompts via `inquire`
 - Error handling: `anyhow` for CLI commands, `thiserror` for `ClientError` in library code
 - Config: `~/.config/ailloy/config.yaml` (via `dirs::config_dir()`)
-- Provider dispatch: `AiProvider` enum routes to OpenAI, Ollama, or LocalAgent
-- OpenAI client: standard `/v1/chat/completions` endpoint, works with any OpenAI-compatible API
-- Ollama client: native `/api/chat` format with `/api/tags` for model listing
-- Local agents: subprocess invocation with `--print` flag (claude, codex, copilot)
 - Update checker: background task, cached at `~/.cache/ailloy/`, skip with `AILLOY_NO_UPDATE_CHECK=1`
-- Environment variable support: `OPENAI_API_KEY` as fallback for OpenAI provider
+- Environment variable support: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` as fallback for providers
 
 ## Releasing
 

@@ -8,11 +8,27 @@ use clap::Parser;
 use colored::Colorize;
 use tracing_subscriber::EnvFilter;
 
-use cli::{Cli, Commands};
+use cli::{Cli, Commands, KNOWN_SUBCOMMANDS};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    // Pre-parse: if argv[1] is not a known subcommand and doesn't start with '-',
+    // insert "chat" so it becomes: ailloy chat "message"
+    let args: Vec<String> = std::env::args().collect();
+    let effective_args = if args.len() > 1 {
+        let first = &args[1];
+        if !first.starts_with('-') && !KNOWN_SUBCOMMANDS.contains(&first.as_str()) {
+            let mut new_args = vec![args[0].clone(), "chat".to_string()];
+            new_args.extend(args[1..].iter().cloned());
+            new_args
+        } else {
+            args
+        }
+    } else {
+        args
+    };
+
+    let cli = Cli::parse_from(effective_args);
 
     let filter = match cli.verbose {
         0 => "warn",
@@ -38,7 +54,7 @@ async fn main() -> Result<()> {
     let result = match cli.command {
         Commands::Chat(args) => commands::chat::run(args, cli.quiet).await,
         Commands::Config(cmd) => commands::config_cmd::run(cmd).await,
-        Commands::Providers(cmd) => commands::providers::run(cmd),
+        Commands::Providers(cmd) => commands::providers::run(cmd).await,
         Commands::Completion(args) => commands::completion::run(args),
         Commands::Version => {
             banner::print_banner();

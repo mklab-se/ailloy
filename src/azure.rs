@@ -1,6 +1,6 @@
-//! OpenAI API client.
-//!
-//! Works with any OpenAI-compatible endpoint (OpenAI, Azure via proxy, vLLM, etc.).
+//! Azure OpenAI Service client.
+
+use std::process::Stdio;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -15,19 +15,27 @@ use crate::types::{
     ImageResponse, Message, StreamEvent, Usage,
 };
 
-const DEFAULT_ENDPOINT: &str = "https://api.openai.com";
-
-/// Client for the OpenAI chat completions API.
-pub struct OpenAiClient {
-    client: reqwest::Client,
-    api_key: String,
-    model: String,
-    endpoint: String,
+/// Authentication method for Azure OpenAI.
+#[derive(Debug, Clone)]
+pub enum AzureAuth {
+    /// API key passed as a header.
+    ApiKey(String),
+    /// Authenticate via `az` CLI (Azure Active Directory).
+    AzureCli,
 }
 
+/// Client for the Azure OpenAI Service.
+pub struct AzureOpenAiClient {
+    client: reqwest::Client,
+    endpoint: String,
+    deployment: String,
+    api_version: String,
+    auth: AzureAuth,
+}
+
+// Request types (same as OpenAI format)
 #[derive(Serialize)]
 struct ChatRequest<'a> {
-    model: &'a str,
     messages: &'a [Message],
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
@@ -76,7 +84,6 @@ struct ApiErrorDetail {
 struct StreamChunk {
     choices: Vec<StreamChoice>,
     model: Option<String>,
-    usage: Option<ApiUsage>,
 }
 
 #[derive(Deserialize)]
@@ -92,15 +99,12 @@ struct StreamDelta {
 // Image generation types
 #[derive(Serialize)]
 struct ImageGenRequest<'a> {
-    model: &'a str,
     prompt: &'a str,
     n: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     size: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     quality: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    style: Option<&'a str>,
     response_format: &'a str,
 }
 
@@ -118,7 +122,6 @@ struct ImageData {
 // Embedding types
 #[derive(Serialize)]
 struct EmbeddingRequest<'a> {
-    model: &'a str,
     input: &'a str,
 }
 
@@ -140,42 +143,95 @@ struct EmbeddingUsage {
     total_tokens: u32,
 }
 
-impl OpenAiClient {
-    /// Create a new OpenAI client.
-    ///
-    /// If `endpoint` is `None`, defaults to `https://api.openai.com`.
+impl AzureOpenAiClient {
+    /// Create a new Azure OpenAI client.
     pub fn new(
-        api_key: impl Into<String>,
-        model: impl Into<String>,
-        endpoint: Option<String>,
+        endpoint: impl Into<String>,
+        deployment: impl Into<String>,
+        api_version: impl Into<String>,
+        auth: AzureAuth,
     ) -> Self {
         Self {
             client: reqwest::Client::new(),
-            api_key: api_key.into(),
-            model: model.into(),
-            endpoint: endpoint.unwrap_or_else(|| DEFAULT_ENDPOINT.to_string()),
+            endpoint: endpoint.into(),
+            deployment: deployment.into(),
+            api_version: api_version.into(),
+            auth,
         }
-    }
-
-    /// Send a chat completion request (legacy method for backward compatibility).
-    pub async fn chat(&self, messages: &[Message]) -> Result<ChatResponse> {
-        <Self as Provider>::chat(self, messages, None).await
-    }
-
-    /// Get the model name.
-    pub fn model(&self) -> &str {
-        &self.model
     }
 
     fn base_url(&self) -> String {
         self.endpoint.trim_end_matches('/').to_string()
     }
+
+    fn chat_url(&self) -> String {
+        format!(
+            "{}/openai/deployments/{}/chat/completions?api-version={}",
+            self.base_url(),
+            self.deployment,
+            self.api_version
+        )
+    }
+
+    fn image_url(&self) -> String {
+        format!(
+            "{}/openai/deployments/{}/images/generations?api-version={}",
+            self.base_url(),
+            self.deployment,
+            self.api_version
+        )
+    }
+
+    fn embedding_url(&self) -> String {
+        format!(
+            "{}/openai/deployments/{}/embeddings?api-version={}",
+            self.base_url(),
+            self.deployment,
+            self.api_version
+        )
+    }
+
+    async fn get_auth_header(&self) -> Result<(&'static str, String)> {
+        match &self.auth {
+            AzureAuth::ApiKey(key) => Ok(("api-key", key.clone())),
+            AzureAuth::AzureCli => {
+                let output = tokio::process::Command::new("az")
+                    .args([
+                        "account",
+                        "get-access-token",
+                        "--resource",
+                        "https://cognitiveservices.azure.com",
+                        "--query",
+                        "accessToken",
+                        "-o",
+                        "tsv",
+                    ])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .output()
+                    .await
+                    .context("Failed to run 'az' CLI. Is Azure CLI installed and authenticated?")?;
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!(
+                        "Azure CLI authentication failed: {}. Run 'az login' to authenticate.",
+                        stderr.trim()
+                    );
+                }
+
+                let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                Ok(("Authorization", format!("Bearer {}", token)))
+            }
+        }
+    }
 }
 
 #[async_trait]
-impl Provider for OpenAiClient {
+impl Provider for AzureOpenAiClient {
     fn name(&self) -> &str {
-        "openai"
+        "azure-openai"
     }
 
     async fn chat(
@@ -183,11 +239,12 @@ impl Provider for OpenAiClient {
         messages: &[Message],
         options: Option<&ChatOptions>,
     ) -> Result<ChatResponse> {
-        let url = format!("{}/v1/chat/completions", self.base_url());
-        debug!(url = %url, model = %self.model, "Sending chat request");
+        let url = self.chat_url();
+        debug!(url = %url, deployment = %self.deployment, "Sending chat request to Azure OpenAI");
+
+        let (header_name, header_value) = self.get_auth_header().await?;
 
         let request = ChatRequest {
-            model: &self.model,
             messages,
             max_tokens: options.and_then(|o| o.max_tokens),
             temperature: options.and_then(|o| o.temperature),
@@ -197,11 +254,11 @@ impl Provider for OpenAiClient {
         let response = self
             .client
             .post(&url)
-            .bearer_auth(&self.api_key)
+            .header(header_name, &header_value)
             .json(&request)
             .send()
             .await
-            .context("Failed to send request to OpenAI API")?;
+            .context("Failed to send request to Azure OpenAI")?;
 
         let status = response.status();
         if !status.is_success() {
@@ -209,13 +266,13 @@ impl Provider for OpenAiClient {
             let message = serde_json::from_str::<ApiError>(&body)
                 .map(|e| e.error.message)
                 .unwrap_or(body);
-            anyhow::bail!("OpenAI API error ({}): {}", status.as_u16(), message);
+            anyhow::bail!("Azure OpenAI API error ({}): {}", status.as_u16(), message);
         }
 
         let api_response: ChatApiResponse = response
             .json()
             .await
-            .context("Failed to parse OpenAI API response")?;
+            .context("Failed to parse Azure OpenAI API response")?;
 
         let content = api_response
             .choices
@@ -239,11 +296,12 @@ impl Provider for OpenAiClient {
         messages: &[Message],
         options: Option<&ChatOptions>,
     ) -> Result<ChatStream> {
-        let url = format!("{}/v1/chat/completions", self.base_url());
-        debug!(url = %url, model = %self.model, "Sending streaming chat request");
+        let url = self.chat_url();
+        debug!(url = %url, deployment = %self.deployment, "Sending streaming chat request to Azure OpenAI");
+
+        let (header_name, header_value) = self.get_auth_header().await?;
 
         let request = ChatRequest {
-            model: &self.model,
             messages,
             max_tokens: options.and_then(|o| o.max_tokens),
             temperature: options.and_then(|o| o.temperature),
@@ -253,11 +311,11 @@ impl Provider for OpenAiClient {
         let response = self
             .client
             .post(&url)
-            .bearer_auth(&self.api_key)
+            .header(header_name, &header_value)
             .json(&request)
             .send()
             .await
-            .context("Failed to send streaming request to OpenAI API")?;
+            .context("Failed to send streaming request to Azure OpenAI")?;
 
         let status = response.status();
         if !status.is_success() {
@@ -265,17 +323,16 @@ impl Provider for OpenAiClient {
             let message = serde_json::from_str::<ApiError>(&body)
                 .map(|e| e.error.message)
                 .unwrap_or(body);
-            anyhow::bail!("OpenAI API error ({}): {}", status.as_u16(), message);
+            anyhow::bail!("Azure OpenAI API error ({}): {}", status.as_u16(), message);
         }
 
-        let model = self.model.clone();
+        let deployment = self.deployment.clone();
         let byte_stream = response.bytes_stream();
 
         let stream = futures_util::stream::unfold(
-            (byte_stream, String::new(), String::new(), model),
-            |(mut byte_stream, mut buffer, mut assembled, model)| async move {
+            (byte_stream, String::new(), String::new(), deployment),
+            |(mut byte_stream, mut buffer, mut assembled, deployment)| async move {
                 loop {
-                    // Process any complete lines in the buffer
                     while let Some(newline_pos) = buffer.find('\n') {
                         let line = buffer[..newline_pos].trim().to_string();
                         buffer = buffer[newline_pos + 1..].to_string();
@@ -288,12 +345,12 @@ impl Provider for OpenAiClient {
                             if data == "[DONE]" {
                                 let response = ChatResponse {
                                     content: assembled.clone(),
-                                    model: model.clone(),
+                                    model: deployment.clone(),
                                     usage: None,
                                 };
                                 return Some((
                                     Ok(StreamEvent::Done(response)),
-                                    (byte_stream, buffer, assembled, model),
+                                    (byte_stream, buffer, assembled, deployment),
                                 ));
                             }
 
@@ -304,7 +361,7 @@ impl Provider for OpenAiClient {
                                             assembled.push_str(text);
                                             return Some((
                                                 Ok(StreamEvent::Delta(text.clone())),
-                                                (byte_stream, buffer, assembled, model),
+                                                (byte_stream, buffer, assembled, deployment),
                                             ));
                                         }
                                     }
@@ -313,26 +370,27 @@ impl Provider for OpenAiClient {
                         }
                     }
 
-                    // Read more data
                     match byte_stream.next().await {
                         Some(Ok(bytes)) => {
                             buffer.push_str(&String::from_utf8_lossy(&bytes));
                         }
                         Some(Err(e)) => {
-                            return Some((Err(e.into()), (byte_stream, buffer, assembled, model)));
+                            return Some((
+                                Err(e.into()),
+                                (byte_stream, buffer, assembled, deployment),
+                            ));
                         }
                         None => {
-                            // Stream ended without [DONE]
                             if !assembled.is_empty() {
                                 let response = ChatResponse {
                                     content: assembled.clone(),
-                                    model: model.clone(),
+                                    model: deployment.clone(),
                                     usage: None,
                                 };
                                 assembled.clear();
                                 return Some((
                                     Ok(StreamEvent::Done(response)),
-                                    (byte_stream, buffer, assembled, model),
+                                    (byte_stream, buffer, assembled, deployment),
                                 ));
                             }
                             return None;
@@ -350,31 +408,31 @@ impl Provider for OpenAiClient {
         prompt: &str,
         options: Option<&ImageOptions>,
     ) -> Result<ImageResponse> {
-        let url = format!("{}/v1/images/generations", self.base_url());
-        debug!(url = %url, "Sending image generation request");
+        let url = self.image_url();
+        debug!(url = %url, "Sending image generation request to Azure OpenAI");
+
+        let (header_name, header_value) = self.get_auth_header().await?;
 
         let size = options
             .and_then(|o| o.size)
             .map(|(w, h)| format!("{}x{}", w, h));
 
         let request = ImageGenRequest {
-            model: &self.model,
             prompt,
             n: 1,
             size,
             quality: options.and_then(|o| o.quality.as_deref()),
-            style: options.and_then(|o| o.style.as_deref()),
             response_format: "b64_json",
         };
 
         let response = self
             .client
             .post(&url)
-            .bearer_auth(&self.api_key)
+            .header(header_name, &header_value)
             .json(&request)
             .send()
             .await
-            .context("Failed to send image generation request")?;
+            .context("Failed to send image generation request to Azure OpenAI")?;
 
         let status = response.status();
         if !status.is_success() {
@@ -383,7 +441,7 @@ impl Provider for OpenAiClient {
                 .map(|e| e.error.message)
                 .unwrap_or(body);
             anyhow::bail!(
-                "OpenAI image generation error ({}): {}",
+                "Azure OpenAI image generation error ({}): {}",
                 status.as_u16(),
                 message
             );
@@ -392,7 +450,7 @@ impl Provider for OpenAiClient {
         let api_response: ImageGenResponse = response
             .json()
             .await
-            .context("Failed to parse image generation response")?;
+            .context("Failed to parse Azure image generation response")?;
 
         let image_data = api_response
             .data
@@ -420,22 +478,21 @@ impl Provider for OpenAiClient {
     }
 
     async fn embed(&self, input: &str) -> Result<EmbeddingResponse> {
-        let url = format!("{}/v1/embeddings", self.base_url());
-        debug!(url = %url, "Sending embedding request");
+        let url = self.embedding_url();
+        debug!(url = %url, "Sending embedding request to Azure OpenAI");
 
-        let request = EmbeddingRequest {
-            model: &self.model,
-            input,
-        };
+        let (header_name, header_value) = self.get_auth_header().await?;
+
+        let request = EmbeddingRequest { input };
 
         let response = self
             .client
             .post(&url)
-            .bearer_auth(&self.api_key)
+            .header(header_name, &header_value)
             .json(&request)
             .send()
             .await
-            .context("Failed to send embedding request")?;
+            .context("Failed to send embedding request to Azure OpenAI")?;
 
         let status = response.status();
         if !status.is_success() {
@@ -443,13 +500,17 @@ impl Provider for OpenAiClient {
             let message = serde_json::from_str::<ApiError>(&body)
                 .map(|e| e.error.message)
                 .unwrap_or(body);
-            anyhow::bail!("OpenAI embedding error ({}): {}", status.as_u16(), message);
+            anyhow::bail!(
+                "Azure OpenAI embedding error ({}): {}",
+                status.as_u16(),
+                message
+            );
         }
 
         let api_response: EmbeddingApiResponse = response
             .json()
             .await
-            .context("Failed to parse embedding response")?;
+            .context("Failed to parse Azure embedding response")?;
 
         let vector = api_response
             .data

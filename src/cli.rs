@@ -41,8 +41,8 @@ pub enum Commands {
 
 #[derive(clap::Args)]
 pub struct ChatArgs {
-    /// The message to send
-    pub message: String,
+    /// The message to send (optional if piped via stdin or using -i)
+    pub message: Option<String>,
 
     /// Provider to use (overrides default)
     #[arg(short, long)]
@@ -51,6 +51,26 @@ pub struct ChatArgs {
     /// System prompt
     #[arg(short, long)]
     pub system: Option<String>,
+
+    /// Stream the response token by token
+    #[arg(long)]
+    pub stream: bool,
+
+    /// Maximum tokens to generate
+    #[arg(long)]
+    pub max_tokens: Option<u32>,
+
+    /// Temperature for generation (0.0 - 2.0)
+    #[arg(long)]
+    pub temperature: Option<f32>,
+
+    /// Save response to file (image extensions trigger image generation)
+    #[arg(short, long)]
+    pub output: Option<String>,
+
+    /// Interactive conversation mode
+    #[arg(short, long)]
+    pub interactive: bool,
 }
 
 #[derive(Subcommand)]
@@ -65,6 +85,8 @@ pub enum ConfigCommands {
 pub enum ProviderCommands {
     /// List configured providers
     List,
+    /// Auto-detect available providers
+    Detect,
 }
 
 #[derive(clap::Args)]
@@ -72,3 +94,13 @@ pub struct CompletionArgs {
     /// Shell to generate completions for
     pub shell: clap_complete::Shell,
 }
+
+/// Known subcommand names for default command pre-parsing.
+pub const KNOWN_SUBCOMMANDS: &[&str] = &[
+    "chat",
+    "config",
+    "providers",
+    "completion",
+    "version",
+    "help",
+];

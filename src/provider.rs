@@ -65,10 +65,22 @@ pub fn create_provider_by_name(name: &str, config: &Config) -> Result<AiProvider
             let client = OpenAiClient::new(api_key, model, provider_config.endpoint.clone());
             Ok(AiProvider::OpenAi(client))
         }
+        ProviderKind::Anthropic => {
+            bail!(
+                "Anthropic provider is not yet fully integrated into the legacy AiProvider. \
+                 Use the new Client API instead."
+            )
+        }
         ProviderKind::AzureOpenAi => {
             bail!(
-                "Azure OpenAI provider is not yet implemented. \
-                 Use 'openai' kind with an Azure-compatible endpoint for now."
+                "Azure OpenAI provider is not yet fully integrated into the legacy AiProvider. \
+                 Use the new Client API instead."
+            )
+        }
+        ProviderKind::VertexAi => {
+            bail!(
+                "Vertex AI provider is not yet fully integrated into the legacy AiProvider. \
+                 Use the new Client API instead."
             )
         }
         ProviderKind::Ollama => {
@@ -97,6 +109,70 @@ mod tests {
 
     use crate::config::ProviderConfig;
 
+    fn make_config(default_chat: Option<&str>, providers: Vec<(&str, ProviderConfig)>) -> Config {
+        Config {
+            default_provider: None,
+            defaults: default_chat
+                .map(|d| HashMap::from([("chat".to_string(), d.to_string())]))
+                .unwrap_or_default(),
+            providers: providers
+                .into_iter()
+                .map(|(n, c)| (n.to_string(), c))
+                .collect(),
+        }
+    }
+
+    fn openai_config(api_key: Option<&str>, model: Option<&str>) -> ProviderConfig {
+        ProviderConfig {
+            kind: ProviderKind::OpenAi,
+            api_key: api_key.map(|s| s.to_string()),
+            endpoint: None,
+            model: model.map(|s| s.to_string()),
+            deployment: None,
+            api_version: None,
+            binary: None,
+            task: None,
+            auth: None,
+            project: None,
+            location: None,
+            provider_defaults: None,
+        }
+    }
+
+    fn ollama_config(model: &str) -> ProviderConfig {
+        ProviderConfig {
+            kind: ProviderKind::Ollama,
+            api_key: None,
+            endpoint: None,
+            model: Some(model.to_string()),
+            deployment: None,
+            api_version: None,
+            binary: None,
+            task: None,
+            auth: None,
+            project: None,
+            location: None,
+            provider_defaults: None,
+        }
+    }
+
+    fn local_agent_config(binary: Option<&str>) -> ProviderConfig {
+        ProviderConfig {
+            kind: ProviderKind::LocalAgent,
+            api_key: None,
+            endpoint: None,
+            model: None,
+            deployment: None,
+            api_version: None,
+            binary: binary.map(|s| s.to_string()),
+            task: None,
+            auth: None,
+            project: None,
+            location: None,
+            provider_defaults: None,
+        }
+    }
+
     #[test]
     fn test_create_provider_no_default() {
         let config = Config::default();
@@ -105,21 +181,7 @@ mod tests {
 
     #[test]
     fn test_create_provider_missing_api_key() {
-        let config = Config {
-            default_provider: Some("test".to_string()),
-            providers: HashMap::from([(
-                "test".to_string(),
-                ProviderConfig {
-                    kind: ProviderKind::OpenAi,
-                    api_key: None,
-                    endpoint: None,
-                    model: None,
-                    deployment: None,
-                    api_version: None,
-                    binary: None,
-                },
-            )]),
-        };
+        let config = make_config(Some("test"), vec![("test", openai_config(None, None))]);
         // Without OPENAI_API_KEY env var, this should fail
         // SAFETY: This test does not run in parallel with other tests that depend on this env var.
         unsafe { std::env::remove_var("OPENAI_API_KEY") };
@@ -128,42 +190,14 @@ mod tests {
 
     #[test]
     fn test_create_provider_ollama() {
-        let config = Config {
-            default_provider: Some("local".to_string()),
-            providers: HashMap::from([(
-                "local".to_string(),
-                ProviderConfig {
-                    kind: ProviderKind::Ollama,
-                    api_key: None,
-                    endpoint: None,
-                    model: Some("llama3.2".to_string()),
-                    deployment: None,
-                    api_version: None,
-                    binary: None,
-                },
-            )]),
-        };
+        let config = make_config(Some("local"), vec![("local", ollama_config("llama3.2"))]);
         let provider = create_provider(&config).unwrap();
         assert_eq!(provider.model(), "llama3.2");
     }
 
     #[test]
     fn test_create_provider_local_agent_missing_binary() {
-        let config = Config {
-            default_provider: Some("agent".to_string()),
-            providers: HashMap::from([(
-                "agent".to_string(),
-                ProviderConfig {
-                    kind: ProviderKind::LocalAgent,
-                    api_key: None,
-                    endpoint: None,
-                    model: None,
-                    deployment: None,
-                    api_version: None,
-                    binary: None,
-                },
-            )]),
-        };
+        let config = make_config(Some("agent"), vec![("agent", local_agent_config(None))]);
         assert!(create_provider(&config).is_err());
     }
 }

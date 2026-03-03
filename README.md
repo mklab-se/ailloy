@@ -42,7 +42,7 @@ ailloy config init
 ### Send a message
 
 ```bash
-ailloy chat "Explain the Rust borrow checker in one sentence"
+ailloy "Explain the Rust borrow checker in one sentence"
 ```
 
 ## Use as a Library
@@ -51,35 +51,65 @@ Add ailloy to your project without CLI dependencies:
 
 ```toml
 [dependencies]
-ailloy = { version = "0.1", default-features = false }
+ailloy = { version = "0.2", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 anyhow = "1"
 ```
 
+### Async (recommended)
+
 ```rust
-use ailloy::config::Config;
-use ailloy::provider::create_provider;
-use ailloy::types::Message;
+use ailloy::{Client, Message};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config = Config::load()?;
-    let provider = create_provider(&config)?;
-    let response = provider.chat(&[Message::user("Hello!")]).await?;
+    let client = Client::from_config()?;
+    let response = client.chat(&[Message::user("Hello!")]).await?;
     println!("{}", response.content);
     Ok(())
 }
 ```
 
-Or configure a provider directly in code:
+### Blocking (sync)
 
 ```rust
-use ailloy::openai::OpenAiClient;
-use ailloy::types::Message;
+use ailloy::blocking::Client;
+use ailloy::Message;
+
+fn main() -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let response = client.chat(&[Message::user("Hello!")])?;
+    println!("{}", response.content);
+    Ok(())
+}
+```
+
+### Programmatic (no config file needed)
+
+```rust
+use ailloy::{Client, Message};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let client = OpenAiClient::new("sk-...", "gpt-4o", None);
+    let client = Client::openai("sk-...", "gpt-4o")?;
+    let response = client.chat(&[Message::user("Hello!")]).await?;
+    println!("{}", response.content);
+    Ok(())
+}
+```
+
+### Builder pattern
+
+```rust
+use ailloy::{Client, Message};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let client = Client::builder()
+        .anthropic()
+        .api_key("sk-ant-...")
+        .model("claude-sonnet-4-6")
+        .build()?;
     let response = client.chat(&[Message::user("Hello!")]).await?;
     println!("{}", response.content);
     Ok(())
@@ -88,24 +118,37 @@ async fn main() -> anyhow::Result<()> {
 
 ## Providers
 
-| Provider | Kind | Auth | Notes |
-|----------|------|------|-------|
-| OpenAI | `openai` | API key | GPT-4o, GPT-4, etc. Works with any OpenAI-compatible endpoint |
-| Ollama | `ollama` | None | Local LLMs (Llama, Mistral, etc.) |
-| Local Agent | `local-agent` | None | Claude, Codex, Copilot via subprocess |
-| Azure OpenAI | `azure-openai` | — | Coming soon |
+| Provider | Kind | Chat | Stream | Images | Embeddings | Auth |
+|----------|------|:----:|:------:|:------:|:----------:|------|
+| OpenAI | `openai` | yes | yes | DALL-E | yes | API key |
+| Anthropic | `anthropic` | yes | yes | — | — | API key |
+| Azure OpenAI | `azure-openai` | yes | yes | yes | yes | API key / `az` CLI |
+| Google Vertex AI | `vertex-ai` | yes | yes | Imagen | yes | `gcloud` CLI |
+| Ollama | `ollama` | yes | yes | — | yes | None |
+| Local Agent | `local-agent` | yes | yes | — | — | None |
 
 ## Configuration
 
 Ailloy stores its configuration at `~/.config/ailloy/config.yaml`:
 
 ```yaml
-default_provider: openai
+defaults:
+  chat: openai
+  image: dalle
 providers:
   openai:
-    kind: openai
+    kind: open-ai
     api_key: sk-...
     model: gpt-4o
+  anthropic:
+    kind: anthropic
+    api_key: sk-ant-...
+    model: claude-sonnet-4-6
+  dalle:
+    kind: open-ai
+    api_key: sk-...
+    model: dall-e-3
+    task: image-generation
   ollama:
     kind: ollama
     model: llama3.2
@@ -114,24 +157,38 @@ providers:
     binary: claude
 ```
 
+### Local project config
+
+Create `.ailloy.yaml` in your project root to override or add providers for that project. Local config is merged with global config.
+
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
+| `ailloy <message>` | Send a message (shorthand for `ailloy chat`) |
 | `ailloy chat <message>` | Send a message to the configured AI provider |
+| `ailloy chat -i` | Interactive conversation mode |
 | `ailloy config init` | Interactive provider setup wizard |
 | `ailloy config show` | Display current configuration |
 | `ailloy providers list` | List configured providers |
+| `ailloy providers detect` | Auto-detect available providers |
 | `ailloy completion <shell>` | Generate shell completions |
 | `ailloy version` | Show version and banner |
 
 ### Options
 
 ```bash
-ailloy chat "message" --provider ollama    # Use a specific provider
-ailloy chat "message" --system "Be brief"  # Set a system prompt
-ailloy -v chat "message"                   # Debug logging
-ailloy -q chat "message"                   # Quiet mode
+ailloy "message" --provider ollama       # Use a specific provider
+ailloy "message" --system "Be brief"     # Set a system prompt
+ailloy "message" --stream                # Stream response tokens
+ailloy "message" --max-tokens 100        # Limit response length
+ailloy "message" --temperature 0.7       # Control randomness
+ailloy "message" -o response.txt         # Save response to file
+ailloy "message" -o image.png            # Generate an image
+ailloy "message" -o diagram.svg          # Generate SVG via chat
+echo "prompt" | ailloy                   # Pipe input via stdin
+ailloy -v chat "message"                 # Debug logging
+ailloy -q chat "message"                 # Quiet mode
 ```
 
 ## Feature Flags
@@ -145,7 +202,7 @@ Ailloy uses feature flags to keep the library lean:
 Library users should disable default features:
 
 ```toml
-ailloy = { version = "0.1", default-features = false }
+ailloy = { version = "0.2", default-features = false }
 ```
 
 ## Development

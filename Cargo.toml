@@ -1,6 +1,6 @@
 [package]
 name = "ailloy"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Kristofer Liljeblad <kristofer@mklab.se>"]
 license = "MIT"
@@ -34,8 +34,11 @@ cli = [
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
-tokio = { version = "1.0", features = ["process"] }
-reqwest = { version = "0.12", features = ["json", "rustls-tls-native-roots"], default-features = false }
+tokio = { version = "1.0", features = ["process", "io-util", "rt"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls-native-roots", "stream"], default-features = false }
+futures-util = "0.3"
+async-trait = "0.1"
+base64 = "0.22"
 anyhow = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
