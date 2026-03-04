@@ -62,7 +62,8 @@ async fn main() -> Result<()> {
             Some(ConfigCommands::Init) => commands::config_cmd::run_interactive().await,
             Some(cmd) => commands::config_cmd::run(cmd).await,
         },
-        Commands::Providers(cmd) => commands::providers::run(cmd).await,
+        Commands::Nodes(cmd) => commands::nodes::run(cmd).await,
+        Commands::Discover(args) => commands::discover::run(args).await,
         Commands::Completion(args) => commands::completion::run(args),
         Commands::Version => {
             banner::print_banner();
@@ -73,13 +74,14 @@ async fn main() -> Result<()> {
     if let Some(handle) = update_handle {
         if let Ok(Some(latest)) = handle.await {
             let current = env!("CARGO_PKG_VERSION");
-            if latest != current {
+            if latest != current && !update::is_running_from_source() {
+                let hint = update::upgrade_hint();
                 eprintln!(
                     "\n{} {} -> {} ({})",
                     "Update available:".yellow().bold(),
                     current.dimmed(),
                     latest.green(),
-                    "brew upgrade ailloy".dimmed()
+                    hint.dimmed()
                 );
             }
         }

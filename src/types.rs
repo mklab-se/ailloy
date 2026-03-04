@@ -265,6 +265,16 @@ impl Task {
             Self::Transcription => "transcription",
         }
     }
+
+    /// Convert this task to a [`Capability`](crate::config::Capability), if applicable.
+    pub fn to_capability(&self) -> Option<crate::config::Capability> {
+        match self {
+            Self::Chat => Some(crate::config::Capability::Chat),
+            Self::ImageGeneration => Some(crate::config::Capability::Image),
+            Self::Embedding => Some(crate::config::Capability::Embedding),
+            Self::Transcription => None,
+        }
+    }
 }
 
 #[cfg(test)]

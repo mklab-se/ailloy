@@ -23,18 +23,19 @@ pub mod blocking;
 pub mod client;
 pub mod config;
 pub mod conversation;
+pub mod discover;
 pub mod error;
 pub mod foundry;
 pub mod local_agent;
 pub mod ollama;
 pub mod openai;
-pub mod provider;
 pub mod terminal;
 pub mod types;
 pub mod vertex;
 
 // Re-export commonly used types at the crate root.
 pub use client::{Client, Provider};
+pub use config::{AiNode, Auth, Capability};
 pub use conversation::{ChatHistory, Conversation, InMemoryHistory};
 pub use error::ClientError;
 pub use types::{

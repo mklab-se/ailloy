@@ -20,16 +20,18 @@ Single crate with feature-flagged CLI, similar to how `clap` separates derive fe
 ```
 src/
   lib.rs              # Public library API — always compiled
-  config.rs           # Config types, load/save, local config merge, migration,
-                      #   ProviderKind::supports_task(), ALL_TASKS constant
+  config.rs           # Config types (AiNode, Capability, Auth, ProviderKind, Config),
+                      #   load/save, local config merge, node CRUD, alias resolution,
+                      #   capability filtering, ALL_CAPABILITIES constant
   types.rs            # Message, Role, ChatResponse, ChatOptions, StreamEvent, ChatStream,
                       #   ImageResponse, ImageOptions, EmbeddingResponse, Task, Usage
   error.rs            # ClientError enum (thiserror) — Http, Api, Json, NotConfigured,
-                      #   BinaryNotFound, Unsupported, Other
-  client.rs           # Provider trait, Client struct, ClientBuilder, create_provider_from_config()
+                      #   BinaryNotFound, NodeNotFound, Unsupported, Other
+  client.rs           # Provider trait, Client struct, ClientBuilder, create_provider_from_node()
   conversation.rs     # ChatHistory trait, InMemoryHistory, Conversation
   blocking.rs         # Sync client wrapper (internal tokio current-thread runtime)
-  provider.rs         # Legacy AiProvider enum (kept for backward compatibility)
+  discover.rs         # Discovery library API — discover_env_keys(), discover_local(),
+                      #   discover_ollama(), DiscoveredNode struct
   openai.rs           # OpenAI client — chat, stream (SSE), image gen, embeddings
   anthropic.rs        # Anthropic client — chat, stream (SSE)
   azure.rs            # Azure OpenAI client — chat, stream (SSE), image gen, embeddings
@@ -45,32 +47,32 @@ src/
     mod.rs            # Command module exports
     azure_discover.rs # Azure CLI wrappers: list subscriptions, resources, deployments
     chat.rs           # `ailloy chat` — chat, streaming, image gen, SVG, interactive, stdin
-    config_cmd.rs     # `ailloy config` — interactive config orchestrator, provider detail/edit,
-                      #   `config show/set/get/unset`, add-provider flows (Azure/Foundry discovery)
-    tui.rs            # Custom crossterm-based TUI for `ailloy config` — task-grouped provider list,
-                      #   keyboard-driven (Space/Enter/Delete/A/Q), section headers, `*` defaults
+    config_cmd.rs     # `ailloy config` — interactive wizard (inquire prompts), node detail/edit,
+                      #   `config show/set/get/unset`, add-node flows (Azure/Foundry discovery)
     completion.rs     # `ailloy completion` — shell completions
     consent.rs        # Reusable CLI tool consent prompt/check (ConsentResult, ensure_consent)
-    providers.rs      # `ailloy providers list/detect` — list and auto-detect providers
+    nodes.rs          # `ailloy nodes list/add/edit/remove/default/show` — node management
+    discover.rs       # `ailloy discover` — auto-detect available AI providers/models
 ```
 
 ## Feature Flags
 
 - `default = ["cli"]` — includes CLI binary and all CLI dependencies
 - `cli` — enables clap, inquire, colored, tracing-subscriber, semver, and tokio runtime features
-- Library users: `ailloy = { version = "0.2", default-features = false }`
+- Library users: `ailloy = { version = "0.4", default-features = false }`
 - CLI users: `cargo install ailloy` (uses default features)
 
 ## Key Patterns
 
 - Feature-flagged single crate: library code always compiles, CLI code gated behind `cli` feature via `required-features` on `[[bin]]`
+- **AI Nodes**: atomic config units representing a specific model from a specific provider with connection details and capability tags; node IDs follow `{provider}/{model|deployment|binary}` pattern with optional `alias` for shorthand
 - **Provider trait** (`client.rs`): unified `async_trait` with default methods returning `Unsupported` — `name()`, `chat()`, `chat_stream()`, `generate_image()`, `embed()`
-- **Client** wraps `Box<dyn Provider>` — constructed via `from_config()`, `with_provider()`, `for_task()`, `from_provider()`, `builder()`, or direct constructors (`Client::openai()`, `Client::anthropic()`, etc.)
+- **Client** wraps `Box<dyn Provider>` — constructed via `from_config()`, `with_node()`, `for_capability()`, `from_node()`, `builder()`, or direct constructors (`Client::openai()`, `Client::anthropic()`, etc.)
 - **Streaming**: SSE parsing for OpenAI/Anthropic/Azure/Vertex via `futures_util::stream::unfold`, NDJSON for Ollama, line-buffered for local agents
-- **Config v2**: `defaults` map routes task names (chat, image, embedding) to provider names; `ProviderConfig` has `task`, `auth`, `project`, `location`, `provider_defaults` fields; all config maps use `BTreeMap` for deterministic serialization
-- **Task-centric config TUI**: `ailloy config` home screen groups providers by task (Chat, Image Generation, Embeddings); section headers trigger filtered add-provider flows; `ProviderKind::supports_task()` drives capability filtering
-- **Local config**: `.ailloy.yaml` in current or parent directories, merged with global config
-- **Config migration**: old `default_provider` auto-migrated to `defaults.chat` on load
+- **Config**: `nodes` map of `AiNode` structs; `defaults` map routes capability names (chat, image, embedding) to node IDs; `Auth` enum supports `env`, `api_key`, `azure_cli`, `gcloud_cli`; all config maps use `BTreeMap` for deterministic serialization
+- **Interactive config wizard**: `ailloy config` uses sequential `inquire` prompts (Select/Confirm/Text) — no TUI framework; `ProviderKind::supports_task()` drives capability filtering
+- **Discovery**: `discover.rs` library provides `discover_env_keys()`, `discover_local()`, `discover_ollama()` returning data only; CLI layer (`commands/discover.rs`) handles interaction
+- **Local config**: `.ailloy.yaml` in current or parent directories, merged with global config (nodes/defaults merge, consents are global-only)
 - **CLI tool consent**: `consents` map in config tracks user permission for external tools (`azure-cli`, `gcloud-cli`); security decisions use global config only (not overridable by local `.ailloy.yaml`)
 - **Azure auto-discovery**: `azure_discover.rs` wraps `az` CLI for subscription/resource/deployment listing; discovers both `kind=='OpenAI'` and `kind=='AIServices'` resources; `ailloy config` uses it when user consents
 - **Blocking wrapper**: `blocking::Client` with internal `tokio::runtime::Builder::new_current_thread()` — mirrors async Client API

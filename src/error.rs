@@ -23,6 +23,9 @@ pub enum ClientError {
     #[error("Operation not supported: {0}")]
     Unsupported(String),
 
+    #[error("Node not found: {0}")]
+    NodeNotFound(String),
+
     #[error("{0}")]
     Other(String),
 }

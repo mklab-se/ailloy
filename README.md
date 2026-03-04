@@ -51,7 +51,7 @@ Add ailloy to your project without CLI dependencies:
 
 ```toml
 [dependencies]
-ailloy = { version = "0.2", default-features = false }
+ailloy = { version = "0.4", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 anyhow = "1"
 ```
@@ -133,53 +133,56 @@ async fn main() -> anyhow::Result<()> {
 Ailloy stores its configuration at `~/.config/ailloy/config.yaml`:
 
 ```yaml
-defaults:
-  chat: openai
-  image: dalle
-providers:
-  openai:
-    kind: open-ai
-    api_key: sk-...
+nodes:
+  openai/gpt-4o:
+    provider: openai
     model: gpt-4o
-  anthropic:
-    kind: anthropic
-    api_key: sk-ant-...
+    auth:
+      env: OPENAI_API_KEY
+    capabilities: [chat, image]
+
+  anthropic/claude-sonnet-4-6:
+    provider: anthropic
     model: claude-sonnet-4-6
-  dalle:
-    kind: open-ai
-    api_key: sk-...
-    model: dall-e-3
-    task: image-generation
-  ollama:
-    kind: ollama
+    auth:
+      env: ANTHROPIC_API_KEY
+    capabilities: [chat]
+
+  ollama/llama3.2:
+    provider: ollama
     model: llama3.2
-  claude:
-    kind: local-agent
-    binary: claude
+    endpoint: http://localhost:11434
+    capabilities: [chat]
+
+defaults:
+  chat: openai/gpt-4o
+  image: openai/gpt-4o
 ```
 
 ### Local project config
 
-Create `.ailloy.yaml` in your project root to override or add providers for that project. Local config is merged with global config.
+Create `.ailloy.yaml` in your project root to override or add nodes for that project. Local config is merged with global config (nodes and defaults merge; consents are global-only).
 
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
 | `ailloy <message>` | Send a message (shorthand for `ailloy chat`) |
-| `ailloy chat <message>` | Send a message to the configured AI provider |
+| `ailloy chat <message>` | Send a message to the configured AI node |
 | `ailloy chat -i` | Interactive conversation mode |
-| `ailloy config` | Interactive provider configuration |
+| `ailloy config` | Interactive node configuration |
 | `ailloy config show` | Display current configuration |
-| `ailloy providers list` | List configured providers |
-| `ailloy providers detect` | Auto-detect available providers |
+| `ailloy nodes list` | List configured AI nodes |
+| `ailloy nodes add` | Add a new AI node interactively |
+| `ailloy nodes default <cap> <id>` | Set the default node for a capability |
+| `ailloy discover` | Auto-detect available AI providers and models |
 | `ailloy completion <shell>` | Generate shell completions |
 | `ailloy version` | Show version and banner |
 
 ### Options
 
 ```bash
-ailloy "message" --provider ollama       # Use a specific provider
+ailloy "message" --node ollama/llama3.2  # Use a specific node
 ailloy "message" --system "Be brief"     # Set a system prompt
 ailloy "message" --stream                # Stream response tokens
 ailloy "message" --max-tokens 100        # Limit response length
@@ -203,7 +206,7 @@ Ailloy uses feature flags to keep the library lean:
 Library users should disable default features:
 
 ```toml
-ailloy = { version = "0.2", default-features = false }
+ailloy = { version = "0.4", default-features = false }
 ```
 
 ## Development

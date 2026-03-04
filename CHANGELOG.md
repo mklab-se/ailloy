@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-03-04
+
+### Added
+
+- **AI Nodes config model** — configuration now uses atomic "AI Nodes" (`AiNode`) instead of named providers. Each node represents a specific model from a specific provider with connection details, auth, and capability tags. Node IDs follow `{provider}/{model}` pattern (e.g., `openai/gpt-4o`, `ollama/llama3.2`).
+- **`ailloy nodes` command** — new top-level command for node management: `list`, `add`, `edit`, `remove`, `default`, `show`
+- **`ailloy discover` command** — auto-detect available AI providers and models from environment variables, running Ollama instances, and local CLI agents (claude, codex, copilot)
+- **Discovery library API** — `discover_env_keys()`, `discover_local()`, `discover_ollama()` functions return data-only `DiscoveredNode` structs for programmatic use
+- **Node aliases** — optional `alias` field on nodes for shorthand references (e.g., `alias: gpt` to reference `openai/gpt-4o` as just `gpt`)
+- **Structured auth** — `Auth` enum supports `env` (environment variable), `api_key` (inline), `azure_cli`, `gcloud_cli` with explicit YAML map serialization
+- **Capability enum** — explicit `Capability` enum (`Chat`, `Image`, `Embedding`) replaces string-based task routing
+- **`--node` flag** — `ailloy chat --node ollama/llama3.2` to use a specific node (replaces `--provider`)
+- **`Client::with_node()`** — load config and create a client for a specific node by ID or alias
+- **`Client::for_capability()`** — create a client for the default node of a given capability
+- **`Client::from_node()`** — create a client directly from an `AiNode` struct (no config file needed)
+- **`NodeNotFound` error variant** — specific error type for missing node references
+- **LM Studio provider** — added as a provider option during node setup, using the OpenAI-compatible API with `http://localhost:1234` default endpoint
+- **Model listing from provider APIs** — when adding a node, ailloy fetches available models from OpenAI, Anthropic, Ollama, and LM Studio APIs and presents them in a Select prompt (with 5-second timeout and manual entry fallback)
+- **Connection config reuse** — when adding a new node for a provider that already has configured nodes, offers to reuse existing connection settings (auth + endpoint)
+- **Per-model capability selection** — when adding a node, users select which capabilities the model supports via multi-select prompt (auto-assigned when provider supports only one capability)
+- **Think block filtering** — `<think>...</think>` reasoning blocks from models like Qwen and DeepSeek are stripped from displayed output in both streaming and non-streaming modes (full response preserved in conversation history)
+- **Image generation spinner** — animated spinner shown during image generation to indicate progress
+- **Smart update checker** — update notifications are suppressed when running from source (`cargo run`), and the upgrade hint adapts to install method (`brew upgrade` vs `cargo install`)
+
+### Changed
+
+- **Config format** — `nodes` map replaces `providers` map; `ProviderConfig` replaced by `AiNode`; this is a clean break (no migration from old format)
+- **Config UI** — `ailloy config` replaced crossterm-based TUI with sequential `inquire` prompts (Select/Confirm/Text)
+- **Interactive mode always streams** — `ailloy chat -i` now streams responses by default for real-time token display
+- **`create_provider_from_node()`** replaces `create_provider_from_config()` in client.rs
+- **`ailloy providers`** command replaced by **`ailloy nodes`**
+- **OpenAI provider auth is optional** — nodes with `ProviderKind::OpenAi` and no auth configured (e.g., LM Studio) no longer fail; an empty API key is used instead
+
+### Removed
+
+- **`provider.rs`** — legacy `AiProvider` enum removed
+- **`providers.rs`** — `ailloy providers list/detect` command replaced by `ailloy nodes list` and `ailloy discover`
+- **`tui.rs`** — custom crossterm-based TUI replaced by `inquire` prompts
+- **Old config format support** — configs without `nodes` key are treated as empty (clean break)
+
 ## [0.3.1] - 2026-03-04
 
 _Patch release — no functional changes._

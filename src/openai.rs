@@ -182,6 +182,42 @@ impl OpenAiClient {
         &self.model
     }
 
+    /// List available models from the API.
+    ///
+    /// Works with OpenAI and any OpenAI-compatible endpoint (LM Studio, vLLM, etc.).
+    pub async fn list_models(&self) -> Result<Vec<String>> {
+        let url = format!("{}/v1/models", self.base_url());
+
+        let response = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await
+            .context("Failed to list models")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to list models ({}): {}", status.as_u16(), body);
+        }
+
+        #[derive(Deserialize)]
+        struct ModelsResponse {
+            data: Vec<ModelInfo>,
+        }
+
+        #[derive(Deserialize)]
+        struct ModelInfo {
+            id: String,
+        }
+
+        let models: ModelsResponse = response.json().await?;
+        let mut ids: Vec<String> = models.data.into_iter().map(|m| m.id).collect();
+        ids.sort();
+        Ok(ids)
+    }
+
     fn base_url(&self) -> String {
         self.endpoint.trim_end_matches('/').to_string()
     }

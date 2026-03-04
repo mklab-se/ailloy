@@ -2,8 +2,6 @@ use anyhow::Result;
 
 use ailloy::config::Config;
 
-use super::tui::tui_select;
-
 /// Result of a consent prompt.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConsentResult {
@@ -24,21 +22,23 @@ pub fn check_consent(config: &Config, key: &str) -> Option<bool> {
 pub fn prompt_consent(tool_name: &str, description: &str) -> Result<ConsentResult> {
     let message = format!("Allow ailloy to use {} to {}?", tool_name, description,);
 
-    let options: Vec<String> = [
+    let options = vec![
         "Yes, and remember my choice",
         "Yes, just this once",
         "No, I'll configure manually",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
+    ];
 
-    let selected =
-        tui_select(&message, &options).map_err(|e| anyhow::anyhow!("TUI error: {}", e))?;
+    let selected = match inquire::Select::new(&message, options).prompt() {
+        Ok(s) => s,
+        Err(
+            inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted,
+        ) => return Ok(ConsentResult::Denied),
+        Err(e) => return Err(e.into()),
+    };
 
     Ok(match selected {
-        Some(0) => ConsentResult::AllowAndRemember,
-        Some(1) => ConsentResult::AllowOnce,
+        "Yes, and remember my choice" => ConsentResult::AllowAndRemember,
+        "Yes, just this once" => ConsentResult::AllowOnce,
         _ => ConsentResult::Denied,
     })
 }

@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "ailloy"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -21,7 +21,6 @@ dependencies = [
  "clap",
  "clap_complete",
  "colored",
- "crossterm",
  "dirs",
  "futures-util",
  "inquire",

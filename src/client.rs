@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 
-use crate::config::{Config, ProviderKind};
+use crate::config::{AiNode, Auth, Config, ProviderKind};
 use crate::error::ClientError;
 use crate::types::{
     ChatOptions, ChatResponse, ChatStream, EmbeddingResponse, ImageOptions, ImageResponse, Message,
@@ -56,26 +56,44 @@ pub struct Client {
 }
 
 impl Client {
-    /// Create a client from the default config (uses `defaults.chat` provider).
+    /// Create a client from the default config (uses `defaults.chat` node).
     pub fn from_config() -> Result<Self> {
         let config = Config::load()?;
-        let (name, _) = config.default_provider_config()?;
-        let name = name.to_string();
-        Self::from_config_provider(&config, &name)
+        let (id, node) = config.default_chat_node()?;
+        let provider = create_provider_from_node(id, node)?;
+        Ok(Self { provider })
     }
 
-    /// Create a client using a specific named provider from config.
-    pub fn with_provider(provider_name: &str) -> Result<Self> {
+    /// Create a client using a specific node by ID or alias.
+    pub fn with_node(id_or_alias: &str) -> Result<Self> {
         let config = Config::load()?;
-        Self::from_config_provider(&config, provider_name)
+        let (id, node) = config.get_node(id_or_alias).ok_or_else(|| {
+            ClientError::NodeNotFound(format!(
+                "Node '{}' not found in config. Run `ailloy config` to add it.",
+                id_or_alias
+            ))
+        })?;
+        let provider = create_provider_from_node(id, node)?;
+        Ok(Self { provider })
     }
 
-    /// Create a client for a specific task type (uses the task's default provider from config).
+    /// Create a client for a specific capability (uses the capability's default node).
+    pub fn for_capability(cap: &str) -> Result<Self> {
+        let config = Config::load()?;
+        let (id, node) = config.default_node_for(cap)?;
+        let provider = create_provider_from_node(id, node)?;
+        Ok(Self { provider })
+    }
+
+    /// Create a client for a specific task type (uses the task's default node).
     pub fn for_task(task: Task) -> Result<Self> {
-        let config = Config::load()?;
-        let (name, _) = config.provider_for_task(task.config_key())?;
-        let name = name.to_string();
-        Self::from_config_provider(&config, &name)
+        Self::for_capability(task.config_key())
+    }
+
+    /// Create a client directly from an [`AiNode`] (no config file needed).
+    pub fn from_node(node: &AiNode) -> Result<Self> {
+        let provider = create_provider_from_node("inline", node)?;
+        Ok(Self { provider })
     }
 
     /// Create a client wrapping an existing provider.
@@ -156,13 +174,6 @@ impl Client {
         Ok(Self {
             provider: Box::new(client),
         })
-    }
-
-    // Internal: create a provider from config by name.
-    fn from_config_provider(config: &Config, name: &str) -> Result<Self> {
-        let provider_config = config.provider_config(name)?;
-        let provider = create_provider_from_config(name, provider_config)?;
-        Ok(Self { provider })
     }
 
     /// Send a simple chat request (no options).
@@ -389,42 +400,82 @@ impl ClientBuilder {
     }
 }
 
-/// Create a `Box<dyn Provider>` from a config entry.
-pub fn create_provider_from_config(
-    name: &str,
-    config: &crate::config::ProviderConfig,
-) -> Result<Box<dyn Provider>> {
-    match config.kind {
+// ---------------------------------------------------------------------------
+// Auth resolution
+// ---------------------------------------------------------------------------
+
+/// Resolve an `Auth` enum to an API key string, if applicable.
+fn resolve_auth_api_key(auth: &Auth, node_id: &str) -> Result<String> {
+    match auth {
+        Auth::Env(var_name) => std::env::var(var_name).with_context(|| {
+            format!(
+                "Environment variable '{}' not set for node '{}'. Set it or run `ailloy config` to change auth.",
+                var_name, node_id
+            )
+        }),
+        Auth::ApiKey(key) => Ok(key.clone()),
+        Auth::AzureCli(_) | Auth::GcloudCli(_) => {
+            anyhow::bail!(
+                "Node '{}' uses CLI-based auth, not an API key",
+                node_id
+            )
+        }
+    }
+}
+
+/// Resolve the Azure auth method from an `AiNode`.
+fn resolve_azure_auth(node: &AiNode, node_id: &str) -> Result<crate::azure::AzureAuth> {
+    match &node.auth {
+        Some(Auth::ApiKey(key)) => Ok(crate::azure::AzureAuth::ApiKey(key.clone())),
+        Some(Auth::Env(var_name)) => {
+            let key = std::env::var(var_name).with_context(|| {
+                format!(
+                    "Environment variable '{}' not set for node '{}'",
+                    var_name, node_id
+                )
+            })?;
+            Ok(crate::azure::AzureAuth::ApiKey(key))
+        }
+        Some(Auth::AzureCli(_)) | None => Ok(crate::azure::AzureAuth::AzureCli),
+        Some(Auth::GcloudCli(_)) => {
+            anyhow::bail!(
+                "Node '{}' uses gcloud auth but is an Azure provider",
+                node_id
+            )
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Provider creation from AiNode
+// ---------------------------------------------------------------------------
+
+/// Create a `Box<dyn Provider>` from an AI node.
+pub fn create_provider_from_node(node_id: &str, node: &AiNode) -> Result<Box<dyn Provider>> {
+    match node.provider {
         ProviderKind::OpenAi => {
-            let api_key = config
-                .api_key
-                .clone()
-                .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-                .with_context(|| {
-                    format!(
-                        "No API key for provider '{}'. Set it in config or via OPENAI_API_KEY env var.",
-                        name
-                    )
-                })?;
-            let model = config.model.clone().unwrap_or_else(|| "gpt-4o".to_string());
+            let api_key = match &node.auth {
+                Some(auth) => resolve_auth_api_key(auth, node_id)?,
+                None => std::env::var("OPENAI_API_KEY").unwrap_or_default(),
+            };
+            let model = node.model.clone().unwrap_or_else(|| "gpt-4o".to_string());
             Ok(Box::new(crate::openai::OpenAiClient::new(
                 api_key,
                 model,
-                config.endpoint.clone(),
+                node.endpoint.clone(),
             )))
         }
         ProviderKind::Anthropic => {
-            let api_key = config
-                .api_key
-                .clone()
-                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
-                .with_context(|| {
+            let api_key = match &node.auth {
+                Some(auth) => resolve_auth_api_key(auth, node_id)?,
+                None => std::env::var("ANTHROPIC_API_KEY").with_context(|| {
                     format!(
-                        "No API key for provider '{}'. Set it in config or via ANTHROPIC_API_KEY env var.",
-                        name
+                        "No auth configured for node '{}'. Set ANTHROPIC_API_KEY or add auth to config.",
+                        node_id
                     )
-                })?;
-            let model = config
+                })?,
+            };
+            let model = node
                 .model
                 .clone()
                 .unwrap_or_else(|| "claude-sonnet-4-6".to_string());
@@ -433,34 +484,19 @@ pub fn create_provider_from_config(
             )))
         }
         ProviderKind::AzureOpenAi => {
-            let endpoint = config
+            let endpoint = node
                 .endpoint
                 .clone()
-                .with_context(|| format!("No endpoint for Azure provider '{}'", name))?;
-            let deployment = config
+                .with_context(|| format!("No endpoint for Azure node '{}'", node_id))?;
+            let deployment = node
                 .deployment
                 .clone()
-                .with_context(|| format!("No deployment for Azure provider '{}'", name))?;
-            let api_version = config
+                .with_context(|| format!("No deployment for Azure node '{}'", node_id))?;
+            let api_version = node
                 .api_version
                 .clone()
                 .unwrap_or_else(|| "2025-04-01-preview".to_string());
-            let auth = match config.auth.as_deref() {
-                Some("azure-cli") | None => {
-                    if let Some(key) = config.api_key.clone() {
-                        crate::azure::AzureAuth::ApiKey(key)
-                    } else {
-                        crate::azure::AzureAuth::AzureCli
-                    }
-                }
-                Some(other) => {
-                    anyhow::bail!(
-                        "Unknown auth method '{}' for Azure provider '{}'",
-                        other,
-                        name
-                    )
-                }
-            };
+            let auth = resolve_azure_auth(node, node_id)?;
             Ok(Box::new(crate::azure::AzureOpenAiClient::new(
                 endpoint,
                 deployment,
@@ -469,33 +505,19 @@ pub fn create_provider_from_config(
             )))
         }
         ProviderKind::MicrosoftFoundry => {
-            let endpoint = config.endpoint.clone().with_context(|| {
-                format!("No endpoint for Microsoft Foundry provider '{}'", name)
-            })?;
-            let model = config
+            let endpoint = node
+                .endpoint
+                .clone()
+                .with_context(|| format!("No endpoint for Foundry node '{}'", node_id))?;
+            let model = node
                 .model
                 .clone()
-                .with_context(|| format!("No model for Microsoft Foundry provider '{}'", name))?;
-            let api_version = config
+                .with_context(|| format!("No model for Foundry node '{}'", node_id))?;
+            let api_version = node
                 .api_version
                 .clone()
                 .unwrap_or_else(|| "2024-05-01-preview".to_string());
-            let auth = match config.auth.as_deref() {
-                Some("azure-cli") | None => {
-                    if let Some(key) = config.api_key.clone() {
-                        crate::azure::AzureAuth::ApiKey(key)
-                    } else {
-                        crate::azure::AzureAuth::AzureCli
-                    }
-                }
-                Some(other) => {
-                    anyhow::bail!(
-                        "Unknown auth method '{}' for Microsoft Foundry provider '{}'",
-                        other,
-                        name
-                    )
-                }
-            };
+            let auth = resolve_azure_auth(node, node_id)?;
             Ok(Box::new(crate::foundry::FoundryClient::new(
                 endpoint,
                 model,
@@ -504,15 +526,15 @@ pub fn create_provider_from_config(
             )))
         }
         ProviderKind::VertexAi => {
-            let project = config
+            let project = node
                 .project
                 .clone()
-                .with_context(|| format!("No project for Vertex AI provider '{}'", name))?;
-            let location = config
+                .with_context(|| format!("No project for Vertex AI node '{}'", node_id))?;
+            let location = node
                 .location
                 .clone()
                 .unwrap_or_else(|| "us-central1".to_string());
-            let model = config
+            let model = node
                 .model
                 .clone()
                 .unwrap_or_else(|| "gemini-3.1-pro".to_string());
@@ -521,18 +543,15 @@ pub fn create_provider_from_config(
             )))
         }
         ProviderKind::Ollama => {
-            let model = config
-                .model
-                .clone()
-                .unwrap_or_else(|| "llama3.2".to_string());
+            let model = node.model.clone().unwrap_or_else(|| "llama3.2".to_string());
             Ok(Box::new(crate::ollama::OllamaClient::new(
                 model,
-                config.endpoint.clone(),
+                node.endpoint.clone(),
             )))
         }
         ProviderKind::LocalAgent => {
-            let binary = config.binary.clone().with_context(|| {
-                format!("No binary specified for local-agent provider '{}'", name)
+            let binary = node.binary.clone().with_context(|| {
+                format!("No binary specified for local-agent node '{}'", node_id)
             })?;
             Ok(Box::new(crate::local_agent::LocalAgentClient::new(binary)))
         }
@@ -581,6 +600,107 @@ mod tests {
     fn test_client_from_provider() {
         let provider = crate::ollama::OllamaClient::new("test-model", None);
         let client = Client::from_provider(Box::new(provider));
+        assert_eq!(client.provider_name(), "ollama");
+    }
+
+    #[test]
+    fn test_create_provider_from_node_ollama() {
+        let node = AiNode {
+            provider: ProviderKind::Ollama,
+            alias: None,
+            capabilities: vec![],
+            auth: None,
+            model: Some("llama3.2".to_string()),
+            endpoint: None,
+            deployment: None,
+            api_version: None,
+            binary: None,
+            project: None,
+            location: None,
+            node_defaults: None,
+        };
+        let provider = create_provider_from_node("ollama/llama3.2", &node).unwrap();
+        assert_eq!(provider.name(), "ollama");
+    }
+
+    #[test]
+    fn test_create_provider_from_node_local_agent() {
+        let node = AiNode {
+            provider: ProviderKind::LocalAgent,
+            alias: None,
+            capabilities: vec![],
+            auth: None,
+            model: None,
+            endpoint: None,
+            deployment: None,
+            api_version: None,
+            binary: Some("claude".to_string()),
+            project: None,
+            location: None,
+            node_defaults: None,
+        };
+        let provider = create_provider_from_node("local-agent/claude", &node).unwrap();
+        assert_eq!(provider.name(), "claude");
+    }
+
+    #[test]
+    fn test_create_provider_from_node_missing_binary() {
+        let node = AiNode {
+            provider: ProviderKind::LocalAgent,
+            alias: None,
+            capabilities: vec![],
+            auth: None,
+            model: None,
+            endpoint: None,
+            deployment: None,
+            api_version: None,
+            binary: None,
+            project: None,
+            location: None,
+            node_defaults: None,
+        };
+        assert!(create_provider_from_node("local-agent/missing", &node).is_err());
+    }
+
+    #[test]
+    fn test_create_provider_openai_no_auth() {
+        // LM Studio and similar local servers don't require auth
+        unsafe { std::env::remove_var("OPENAI_API_KEY") };
+        let node = AiNode {
+            provider: ProviderKind::OpenAi,
+            alias: None,
+            capabilities: vec![],
+            auth: None,
+            model: Some("local-model".to_string()),
+            endpoint: Some("http://localhost:1234".to_string()),
+            deployment: None,
+            api_version: None,
+            binary: None,
+            project: None,
+            location: None,
+            node_defaults: None,
+        };
+        let provider = create_provider_from_node("lm-studio/local-model", &node).unwrap();
+        assert_eq!(provider.name(), "openai");
+    }
+
+    #[test]
+    fn test_client_from_node() {
+        let node = AiNode {
+            provider: ProviderKind::Ollama,
+            alias: None,
+            capabilities: vec![],
+            auth: None,
+            model: Some("llama3.2".to_string()),
+            endpoint: None,
+            deployment: None,
+            api_version: None,
+            binary: None,
+            project: None,
+            location: None,
+            node_defaults: None,
+        };
+        let client = Client::from_node(&node).unwrap();
         assert_eq!(client.provider_name(), "ollama");
     }
 }

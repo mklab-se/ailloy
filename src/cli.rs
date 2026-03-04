@@ -27,9 +27,12 @@ pub enum Commands {
     /// Manage ailloy configuration
     Config(ConfigArgs),
 
-    /// List and manage AI providers
+    /// List and manage AI nodes
     #[command(subcommand)]
-    Providers(ProviderCommands),
+    Nodes(NodeCommands),
+
+    /// Discover available AI providers and models
+    Discover(DiscoverArgs),
 
     /// Generate shell completions
     Completion(CompletionArgs),
@@ -43,8 +46,12 @@ pub struct ChatArgs {
     /// The message to send (optional if piped via stdin or using -i)
     pub message: Option<String>,
 
-    /// Provider to use (overrides default)
+    /// Node to use (overrides default, accepts ID or alias)
     #[arg(short, long)]
+    pub node: Option<String>,
+
+    /// Provider to use (hidden alias for --node)
+    #[arg(short, long, hide = true)]
     pub provider: Option<String>,
 
     /// System prompt
@@ -76,6 +83,13 @@ pub struct ChatArgs {
     pub raw: bool,
 }
 
+impl ChatArgs {
+    /// Resolve the effective node identifier from --node or --provider (hidden alias).
+    pub fn effective_node(&self) -> Option<&str> {
+        self.node.as_deref().or(self.provider.as_deref())
+    }
+}
+
 #[derive(clap::Args)]
 pub struct ConfigArgs {
     #[command(subcommand)]
@@ -89,31 +103,68 @@ pub enum ConfigCommands {
     Init,
     /// Show current configuration
     Show,
-    /// Set a config value (dot notation: defaults.chat, providers.openai.model)
+    /// Set a config value (dot notation: defaults.chat, nodes.openai/gpt-4o.model)
     Set {
-        /// Key in dot notation (e.g., defaults.chat, providers.openai.model)
+        /// Key in dot notation (e.g., defaults.chat, nodes.openai/gpt-4o.model)
         key: String,
         /// Value to set
         value: String,
     },
-    /// Get a config value (dot notation: defaults.chat, providers.openai)
+    /// Get a config value (dot notation: defaults.chat, nodes.openai/gpt-4o)
     Get {
-        /// Key in dot notation (e.g., defaults.chat, providers.openai)
+        /// Key in dot notation (e.g., defaults.chat, nodes.openai/gpt-4o)
         key: String,
     },
-    /// Remove a config value (dot notation: defaults.chat, providers.openai)
+    /// Remove a config value (dot notation: defaults.chat, nodes.openai/gpt-4o)
     Unset {
-        /// Key in dot notation (e.g., defaults.chat, providers.openai)
+        /// Key in dot notation (e.g., defaults.chat, nodes.openai/gpt-4o)
         key: String,
     },
 }
 
 #[derive(Subcommand)]
-pub enum ProviderCommands {
-    /// List configured providers
+pub enum NodeCommands {
+    /// List all configured nodes
     List,
-    /// Auto-detect available providers
-    Detect,
+    /// Add a new node interactively
+    Add,
+    /// Edit a node's configuration
+    Edit {
+        /// Node ID or alias
+        id: String,
+    },
+    /// Remove a node
+    Remove {
+        /// Node ID or alias
+        id: String,
+    },
+    /// Set or show the default node for a capability
+    Default {
+        /// Capability (chat, image, embedding)
+        capability: String,
+        /// Node ID to set as default (omit to show current default)
+        node_id: Option<String>,
+    },
+    /// Show detailed information about a node
+    Show {
+        /// Node ID or alias
+        id: String,
+    },
+}
+
+#[derive(clap::Args)]
+pub struct DiscoverArgs {
+    /// Discover local agents and Ollama models
+    #[arg(long)]
+    pub locally: bool,
+
+    /// Discover Azure OpenAI resources
+    #[arg(long)]
+    pub azure: bool,
+
+    /// Discover all available sources
+    #[arg(long)]
+    pub all: bool,
 }
 
 #[derive(clap::Args)]
@@ -126,7 +177,8 @@ pub struct CompletionArgs {
 pub const KNOWN_SUBCOMMANDS: &[&str] = &[
     "chat",
     "config",
-    "providers",
+    "nodes",
+    "discover",
     "completion",
     "version",
     "help",

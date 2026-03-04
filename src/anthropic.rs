@@ -101,6 +101,45 @@ impl AnthropicClient {
         }
     }
 
+    /// List available models from the Anthropic API.
+    pub async fn list_models(&self) -> Result<Vec<String>> {
+        let url = format!("{}/v1/models?limit=100", API_ENDPOINT);
+
+        let response = self
+            .client
+            .get(&url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", API_VERSION)
+            .send()
+            .await
+            .context("Failed to list Anthropic models")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "Failed to list Anthropic models ({}): {}",
+                status.as_u16(),
+                body
+            );
+        }
+
+        #[derive(Deserialize)]
+        struct ModelsResponse {
+            data: Vec<ModelInfo>,
+        }
+
+        #[derive(Deserialize)]
+        struct ModelInfo {
+            id: String,
+        }
+
+        let models: ModelsResponse = response.json().await?;
+        let mut ids: Vec<String> = models.data.into_iter().map(|m| m.id).collect();
+        ids.sort();
+        Ok(ids)
+    }
+
     /// Get the model name.
     pub fn model(&self) -> &str {
         &self.model

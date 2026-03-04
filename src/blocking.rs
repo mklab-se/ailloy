@@ -31,7 +31,7 @@ pub struct Client {
 }
 
 impl Client {
-    /// Create a client from the default config (uses `defaults.chat` provider).
+    /// Create a client from the default config (uses `defaults.chat` node).
     pub fn from_config() -> Result<Self> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -40,12 +40,21 @@ impl Client {
         Ok(Self { inner, runtime })
     }
 
-    /// Create a client using a specific named provider from config.
-    pub fn with_provider(provider_name: &str) -> Result<Self> {
+    /// Create a client using a specific node by ID or alias.
+    pub fn with_node(id_or_alias: &str) -> Result<Self> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let inner = crate::Client::with_provider(provider_name)?;
+        let inner = crate::Client::with_node(id_or_alias)?;
+        Ok(Self { inner, runtime })
+    }
+
+    /// Create a client for a specific capability (uses the capability's default node).
+    pub fn for_capability(cap: &str) -> Result<Self> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let inner = crate::Client::for_capability(cap)?;
         Ok(Self { inner, runtime })
     }
 

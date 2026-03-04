@@ -6,6 +6,25 @@ use tracing::debug;
 const CACHE_DURATION: Duration = Duration::from_secs(24 * 60 * 60);
 const CRATE_NAME: &str = "ailloy";
 
+/// Returns true if the binary appears to be running from a Cargo build directory.
+pub fn is_running_from_source() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.to_str().map(|s| s.contains("/target/")))
+        .unwrap_or(false)
+}
+
+/// Returns the appropriate upgrade command based on how ailloy was installed.
+pub fn upgrade_hint() -> String {
+    if let Ok(exe) = std::env::current_exe() {
+        let path = exe.to_string_lossy();
+        if path.contains("/Cellar/") || path.contains("/homebrew/") {
+            return "brew upgrade ailloy".to_string();
+        }
+    }
+    "cargo install ailloy".to_string()
+}
+
 fn cache_path() -> Option<PathBuf> {
     let base = if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
         PathBuf::from(xdg)
@@ -74,4 +93,22 @@ pub async fn check_for_update() -> Option<String> {
     }
 
     Some(latest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_running_from_source() {
+        // When running tests, the binary is in target/debug/deps/ — so this should be true
+        assert!(is_running_from_source());
+    }
+
+    #[test]
+    fn test_upgrade_hint_defaults_to_cargo() {
+        // In a test/dev environment, exe is in target/ — not Cellar or homebrew
+        let hint = upgrade_hint();
+        assert_eq!(hint, "cargo install ailloy");
+    }
 }
