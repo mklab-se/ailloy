@@ -25,8 +25,7 @@ pub enum Commands {
     Chat(ChatArgs),
 
     /// Manage ailloy configuration
-    #[command(subcommand)]
-    Config(ConfigCommands),
+    Config(ConfigArgs),
 
     /// List and manage AI providers
     #[command(subcommand)]
@@ -71,14 +70,42 @@ pub struct ChatArgs {
     /// Interactive conversation mode
     #[arg(short, long)]
     pub interactive: bool,
+
+    /// Output only the raw model response (no newline, no metadata, no color)
+    #[arg(long)]
+    pub raw: bool,
+}
+
+#[derive(clap::Args)]
+pub struct ConfigArgs {
+    #[command(subcommand)]
+    pub command: Option<ConfigCommands>,
 }
 
 #[derive(Subcommand)]
 pub enum ConfigCommands {
     /// Interactive configuration setup
+    #[command(hide = true)]
     Init,
     /// Show current configuration
     Show,
+    /// Set a config value (dot notation: defaults.chat, providers.openai.model)
+    Set {
+        /// Key in dot notation (e.g., defaults.chat, providers.openai.model)
+        key: String,
+        /// Value to set
+        value: String,
+    },
+    /// Get a config value (dot notation: defaults.chat, providers.openai)
+    Get {
+        /// Key in dot notation (e.g., defaults.chat, providers.openai)
+        key: String,
+    },
+    /// Remove a config value (dot notation: defaults.chat, providers.openai)
+    Unset {
+        /// Key in dot notation (e.g., defaults.chat, providers.openai)
+        key: String,
+    },
 }
 
 #[derive(Subcommand)]

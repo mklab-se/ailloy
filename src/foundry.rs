@@ -1,41 +1,34 @@
-//! Azure OpenAI Service client.
+//! Microsoft Foundry client.
+//!
+//! Supports chat completions, streaming, and embeddings via the Model
+//! Inference API (`*.services.ai.azure.com`).
 
 use std::process::Stdio;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use base64::Engine;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+use crate::azure::AzureAuth;
 use crate::client::Provider;
 use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, EmbeddingResponse, ImageFormat, ImageOptions,
-    ImageResponse, Message, StreamEvent, Usage,
+    ChatOptions, ChatResponse, ChatStream, EmbeddingResponse, Message, StreamEvent, Usage,
 };
 
-/// Authentication method for Azure OpenAI.
-#[derive(Debug, Clone)]
-pub enum AzureAuth {
-    /// API key passed as a header.
-    ApiKey(String),
-    /// Authenticate via `az` CLI (Azure Active Directory).
-    AzureCli,
-}
-
-/// Client for the Azure OpenAI Service.
-pub struct AzureOpenAiClient {
+/// Client for Microsoft Foundry (AI Services).
+pub struct FoundryClient {
     client: reqwest::Client,
     endpoint: String,
-    deployment: String,
+    model: String,
     api_version: String,
     auth: AzureAuth,
 }
 
-// Request types
 #[derive(Serialize)]
 struct ChatRequest<'a> {
+    model: &'a str,
     messages: &'a [Message],
     #[serde(skip_serializing_if = "Option::is_none")]
     max_completion_tokens: Option<u32>,
@@ -98,32 +91,10 @@ struct StreamDelta {
     content: Option<String>,
 }
 
-// Image generation types
-#[derive(Serialize)]
-struct ImageGenRequest<'a> {
-    prompt: &'a str,
-    n: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    size: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    quality: Option<&'a str>,
-    response_format: &'a str,
-}
-
-#[derive(Deserialize)]
-struct ImageGenResponse {
-    data: Vec<ImageData>,
-}
-
-#[derive(Deserialize)]
-struct ImageData {
-    b64_json: Option<String>,
-    revised_prompt: Option<String>,
-}
-
 // Embedding types
 #[derive(Serialize)]
 struct EmbeddingRequest<'a> {
+    model: &'a str,
     input: &'a str,
 }
 
@@ -145,81 +116,43 @@ struct EmbeddingUsage {
     total_tokens: u32,
 }
 
-impl AzureOpenAiClient {
-    /// Create a new Azure OpenAI client.
+impl FoundryClient {
+    /// Create a new Microsoft Foundry client.
     pub fn new(
         endpoint: impl Into<String>,
-        deployment: impl Into<String>,
+        model: impl Into<String>,
         api_version: impl Into<String>,
         auth: AzureAuth,
     ) -> Self {
         Self {
             client: reqwest::Client::new(),
             endpoint: endpoint.into(),
-            deployment: deployment.into(),
+            model: model.into(),
             api_version: api_version.into(),
             auth,
         }
     }
 
     fn base_url(&self) -> String {
-        self.endpoint.trim_end_matches('/').to_string()
+        let url = self.endpoint.trim_end_matches('/').to_string();
+        // Model Inference API lives on *.services.ai.azure.com, not *.cognitiveservices.azure.com
+        url.replace(".cognitiveservices.azure.com", ".services.ai.azure.com")
     }
 
     fn chat_url(&self) -> String {
         format!(
-            "{}/openai/deployments/{}/chat/completions?api-version={}",
+            "{}/models/chat/completions?api-version={}",
             self.base_url(),
-            self.deployment,
-            self.api_version
-        )
-    }
-
-    fn image_url(&self) -> String {
-        format!(
-            "{}/openai/deployments/{}/images/generations?api-version={}",
-            self.base_url(),
-            self.deployment,
             self.api_version
         )
     }
 
     fn embedding_url(&self) -> String {
         format!(
-            "{}/openai/deployments/{}/embeddings?api-version={}",
+            "{}/models/embeddings?api-version={}",
             self.base_url(),
-            self.deployment,
             self.api_version
         )
-    }
-
-    fn format_api_error(&self, status: u16, body: &str) -> String {
-        if let Ok(err) = serde_json::from_str::<ApiError>(body) {
-            let code = err.error.code.as_deref().unwrap_or("");
-            let msg = &err.error.message;
-            match (status, code) {
-                (404, _) => {
-                    format!(
-                        "Azure OpenAI: deployment '{}' not found at {} (HTTP 404: {}). \
-                         Check that the deployment exists and the endpoint is correct. \
-                         Run 'ailloy config' to reconfigure.",
-                        self.deployment, self.endpoint, msg
-                    )
-                }
-                (401, _) | (403, _) => {
-                    format!(
-                        "Azure OpenAI: authentication failed (HTTP {}: {}). \
-                         Run 'az login' to refresh credentials, or check your API key.",
-                        status, msg
-                    )
-                }
-                _ => {
-                    format!("Azure OpenAI API error (HTTP {}): {}", status, msg)
-                }
-            }
-        } else {
-            format!("Azure OpenAI API error (HTTP {}): {}", status, body)
-        }
     }
 
     async fn get_auth_header(&self) -> Result<(&'static str, String)> {
@@ -257,12 +190,41 @@ impl AzureOpenAiClient {
             }
         }
     }
+
+    fn format_api_error(&self, status: u16, body: &str) -> String {
+        if let Ok(err) = serde_json::from_str::<ApiError>(body) {
+            let code = err.error.code.as_deref().unwrap_or("");
+            let msg = &err.error.message;
+            match (status, code) {
+                (404, _) => {
+                    format!(
+                        "Microsoft Foundry: model '{}' not found at {} (HTTP 404: {}). \
+                         Check that the model is deployed and the endpoint is correct. \
+                         Run 'ailloy config' to reconfigure.",
+                        self.model, self.endpoint, msg
+                    )
+                }
+                (401, _) | (403, _) => {
+                    format!(
+                        "Microsoft Foundry: authentication failed (HTTP {}: {}). \
+                         Run 'az login' to refresh credentials, or check your API key.",
+                        status, msg
+                    )
+                }
+                _ => {
+                    format!("Microsoft Foundry API error (HTTP {}): {}", status, msg)
+                }
+            }
+        } else {
+            format!("Microsoft Foundry API error (HTTP {}): {}", status, body)
+        }
+    }
 }
 
 #[async_trait]
-impl Provider for AzureOpenAiClient {
+impl Provider for FoundryClient {
     fn name(&self) -> &str {
-        "azure-openai"
+        "microsoft-foundry"
     }
 
     async fn chat(
@@ -271,11 +233,12 @@ impl Provider for AzureOpenAiClient {
         options: Option<&ChatOptions>,
     ) -> Result<ChatResponse> {
         let url = self.chat_url();
-        debug!(url = %url, deployment = %self.deployment, "Sending chat request to Azure OpenAI");
+        debug!(url = %url, model = %self.model, "Sending chat request to Microsoft Foundry");
 
         let (header_name, header_value) = self.get_auth_header().await?;
 
         let request = ChatRequest {
+            model: &self.model,
             messages,
             max_completion_tokens: options.and_then(|o| o.max_tokens),
             temperature: options.and_then(|o| o.temperature),
@@ -289,7 +252,7 @@ impl Provider for AzureOpenAiClient {
             .json(&request)
             .send()
             .await
-            .context("Failed to send request to Azure OpenAI")?;
+            .context("Failed to send request to Microsoft Foundry")?;
 
         let status = response.status();
         if !status.is_success() {
@@ -300,7 +263,7 @@ impl Provider for AzureOpenAiClient {
         let api_response: ChatApiResponse = response
             .json()
             .await
-            .context("Failed to parse Azure OpenAI API response")?;
+            .context("Failed to parse Microsoft Foundry API response")?;
 
         let content = api_response
             .choices
@@ -325,11 +288,12 @@ impl Provider for AzureOpenAiClient {
         options: Option<&ChatOptions>,
     ) -> Result<ChatStream> {
         let url = self.chat_url();
-        debug!(url = %url, deployment = %self.deployment, "Sending streaming chat request to Azure OpenAI");
+        debug!(url = %url, model = %self.model, "Sending streaming chat request to Microsoft Foundry");
 
         let (header_name, header_value) = self.get_auth_header().await?;
 
         let request = ChatRequest {
+            model: &self.model,
             messages,
             max_completion_tokens: options.and_then(|o| o.max_tokens),
             temperature: options.and_then(|o| o.temperature),
@@ -343,7 +307,7 @@ impl Provider for AzureOpenAiClient {
             .json(&request)
             .send()
             .await
-            .context("Failed to send streaming request to Azure OpenAI")?;
+            .context("Failed to send streaming request to Microsoft Foundry")?;
 
         let status = response.status();
         if !status.is_success() {
@@ -351,12 +315,12 @@ impl Provider for AzureOpenAiClient {
             anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
         }
 
-        let deployment = self.deployment.clone();
+        let model = self.model.clone();
         let byte_stream = response.bytes_stream();
 
         let stream = futures_util::stream::unfold(
-            (byte_stream, String::new(), String::new(), deployment),
-            |(mut byte_stream, mut buffer, mut assembled, deployment)| async move {
+            (byte_stream, String::new(), String::new(), model),
+            |(mut byte_stream, mut buffer, mut assembled, model)| async move {
                 loop {
                     while let Some(newline_pos) = buffer.find('\n') {
                         let line = buffer[..newline_pos].trim().to_string();
@@ -370,12 +334,12 @@ impl Provider for AzureOpenAiClient {
                             if data == "[DONE]" {
                                 let response = ChatResponse {
                                     content: assembled.clone(),
-                                    model: deployment.clone(),
+                                    model: model.clone(),
                                     usage: None,
                                 };
                                 return Some((
                                     Ok(StreamEvent::Done(response)),
-                                    (byte_stream, buffer, assembled, deployment),
+                                    (byte_stream, buffer, assembled, model),
                                 ));
                             }
 
@@ -386,7 +350,7 @@ impl Provider for AzureOpenAiClient {
                                             assembled.push_str(text);
                                             return Some((
                                                 Ok(StreamEvent::Delta(text.clone())),
-                                                (byte_stream, buffer, assembled, deployment),
+                                                (byte_stream, buffer, assembled, model),
                                             ));
                                         }
                                     }
@@ -400,22 +364,19 @@ impl Provider for AzureOpenAiClient {
                             buffer.push_str(&String::from_utf8_lossy(&bytes));
                         }
                         Some(Err(e)) => {
-                            return Some((
-                                Err(e.into()),
-                                (byte_stream, buffer, assembled, deployment),
-                            ));
+                            return Some((Err(e.into()), (byte_stream, buffer, assembled, model)));
                         }
                         None => {
                             if !assembled.is_empty() {
                                 let response = ChatResponse {
                                     content: assembled.clone(),
-                                    model: deployment.clone(),
+                                    model: model.clone(),
                                     usage: None,
                                 };
                                 assembled.clear();
                                 return Some((
                                     Ok(StreamEvent::Done(response)),
-                                    (byte_stream, buffer, assembled, deployment),
+                                    (byte_stream, buffer, assembled, model),
                                 ));
                             }
                             return None;
@@ -428,26 +389,15 @@ impl Provider for AzureOpenAiClient {
         Ok(Box::pin(stream))
     }
 
-    async fn generate_image(
-        &self,
-        prompt: &str,
-        options: Option<&ImageOptions>,
-    ) -> Result<ImageResponse> {
-        let url = self.image_url();
-        debug!(url = %url, "Sending image generation request to Azure OpenAI");
+    async fn embed(&self, input: &str) -> Result<EmbeddingResponse> {
+        let url = self.embedding_url();
+        debug!(url = %url, model = %self.model, "Sending embedding request to Microsoft Foundry");
 
         let (header_name, header_value) = self.get_auth_header().await?;
 
-        let size = options
-            .and_then(|o| o.size)
-            .map(|(w, h)| format!("{}x{}", w, h));
-
-        let request = ImageGenRequest {
-            prompt,
-            n: 1,
-            size,
-            quality: options.and_then(|o| o.quality.as_deref()),
-            response_format: "b64_json",
+        let request = EmbeddingRequest {
+            model: &self.model,
+            input,
         };
 
         let response = self
@@ -457,62 +407,7 @@ impl Provider for AzureOpenAiClient {
             .json(&request)
             .send()
             .await
-            .context("Failed to send image generation request to Azure OpenAI")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
-        }
-
-        let api_response: ImageGenResponse = response
-            .json()
-            .await
-            .context("Failed to parse Azure image generation response")?;
-
-        let image_data = api_response
-            .data
-            .first()
-            .context("No image data in response")?;
-
-        let b64 = image_data
-            .b64_json
-            .as_ref()
-            .context("No base64 image data in response")?;
-
-        let data = base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .context("Failed to decode base64 image data")?;
-
-        let (width, height) = crate::types::image_dimensions(&data)
-            .or_else(|| options.and_then(|o| o.size))
-            .unwrap_or((1024, 1024));
-
-        Ok(ImageResponse {
-            data,
-            width,
-            height,
-            format: ImageFormat::Png,
-            revised_prompt: image_data.revised_prompt.clone(),
-        })
-    }
-
-    async fn embed(&self, input: &str) -> Result<EmbeddingResponse> {
-        let url = self.embedding_url();
-        debug!(url = %url, "Sending embedding request to Azure OpenAI");
-
-        let (header_name, header_value) = self.get_auth_header().await?;
-
-        let request = EmbeddingRequest { input };
-
-        let response = self
-            .client
-            .post(&url)
-            .header(header_name, &header_value)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send embedding request to Azure OpenAI")?;
+            .context("Failed to send embedding request to Microsoft Foundry")?;
 
         let status = response.status();
         if !status.is_success() {
@@ -523,7 +418,7 @@ impl Provider for AzureOpenAiClient {
         let api_response: EmbeddingApiResponse = response
             .json()
             .await
-            .context("Failed to parse Azure embedding response")?;
+            .context("Failed to parse Microsoft Foundry embedding response")?;
 
         let vector = api_response
             .data

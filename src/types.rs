@@ -129,6 +129,68 @@ pub enum ImageFormat {
     Webp,
 }
 
+impl std::fmt::Display for ImageFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ImageFormat::Png => write!(f, "PNG"),
+            ImageFormat::Jpeg => write!(f, "JPEG"),
+            ImageFormat::Webp => write!(f, "WebP"),
+        }
+    }
+}
+
+/// Read image dimensions from raw PNG/JPEG/WebP data.
+///
+/// Parses the header bytes to extract width and height without
+/// requiring a full image decoding library.
+pub fn image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    // PNG: 8-byte signature, then IHDR chunk (4 length + 4 "IHDR" + 4 width + 4 height)
+    if data.len() >= 24 && &data[..8] == b"\x89PNG\r\n\x1a\n" {
+        let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+        let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+        return Some((width, height));
+    }
+
+    // JPEG: starts with 0xFF 0xD8, scan for SOF0 (0xFF 0xC0) or SOF2 (0xFF 0xC2)
+    if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
+        let mut i = 2;
+        while i + 1 < data.len() {
+            if data[i] != 0xFF {
+                i += 1;
+                continue;
+            }
+            let marker = data[i + 1];
+            // SOF0 or SOF2 (baseline/progressive)
+            if (marker == 0xC0 || marker == 0xC2) && i + 9 <= data.len() {
+                let height = u16::from_be_bytes([data[i + 5], data[i + 6]]) as u32;
+                let width = u16::from_be_bytes([data[i + 7], data[i + 8]]) as u32;
+                return Some((width, height));
+            }
+            // Skip to next marker using segment length
+            if i + 3 < data.len() {
+                let len = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
+                i += 2 + len;
+            } else {
+                break;
+            }
+        }
+    }
+
+    // WebP: "RIFF" + size + "WEBP", then VP8 chunk
+    if data.len() >= 30
+        && &data[..4] == b"RIFF"
+        && &data[8..12] == b"WEBP"
+        && &data[12..16] == b"VP8 "
+    {
+        // Simple lossy VP8: dimensions at bytes 26-29
+        let width = u16::from_le_bytes([data[26], data[27]]) as u32 & 0x3FFF;
+        let height = u16::from_le_bytes([data[28], data[29]]) as u32 & 0x3FFF;
+        return Some((width, height));
+    }
+
+    None
+}
+
 /// Options for image generation.
 #[derive(Debug, Clone, Default)]
 pub struct ImageOptions {
@@ -274,5 +336,46 @@ mod tests {
         assert_eq!(Task::ImageGeneration.config_key(), "image");
         assert_eq!(Task::Embedding.config_key(), "embedding");
         assert_eq!(Task::Transcription.config_key(), "transcription");
+    }
+
+    #[test]
+    fn test_image_format_display() {
+        assert_eq!(format!("{}", ImageFormat::Png), "PNG");
+        assert_eq!(format!("{}", ImageFormat::Jpeg), "JPEG");
+        assert_eq!(format!("{}", ImageFormat::Webp), "WebP");
+    }
+
+    #[test]
+    fn test_image_dimensions_png() {
+        // Minimal PNG header: signature + IHDR chunk
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        // IHDR chunk: length (13) + "IHDR" + width (1536) + height (1024)
+        png.extend_from_slice(&[0, 0, 0, 13]); // chunk length
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&1536u32.to_be_bytes()); // width
+        png.extend_from_slice(&1024u32.to_be_bytes()); // height
+        assert_eq!(image_dimensions(&png), Some((1536, 1024)));
+    }
+
+    #[test]
+    fn test_image_dimensions_jpeg() {
+        // Minimal JPEG with SOI + SOF0 marker
+        let mut jpeg = vec![0xFF, 0xD8]; // SOI
+        // APP0 marker (to skip past)
+        jpeg.extend_from_slice(&[0xFF, 0xE0, 0x00, 0x10]); // marker + length=16
+        jpeg.extend_from_slice(&[0; 14]); // padding for APP0 body
+        // SOF0 marker
+        jpeg.extend_from_slice(&[0xFF, 0xC0]);
+        jpeg.extend_from_slice(&[0x00, 0x11]); // length=17
+        jpeg.push(0x08); // precision
+        jpeg.extend_from_slice(&768u16.to_be_bytes()); // height
+        jpeg.extend_from_slice(&1024u16.to_be_bytes()); // width
+        assert_eq!(image_dimensions(&jpeg), Some((1024, 768)));
+    }
+
+    #[test]
+    fn test_image_dimensions_too_short() {
+        assert_eq!(image_dimensions(&[]), None);
+        assert_eq!(image_dimensions(&[0x89, b'P']), None);
     }
 }

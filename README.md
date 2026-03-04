@@ -36,7 +36,7 @@ cargo binstall ailloy
 ### Configure a provider
 
 ```bash
-ailloy config init
+ailloy config
 ```
 
 ### Send a message
@@ -123,6 +123,7 @@ async fn main() -> anyhow::Result<()> {
 | OpenAI | `openai` | yes | yes | DALL-E | yes | API key |
 | Anthropic | `anthropic` | yes | yes | — | — | API key |
 | Azure OpenAI | `azure-openai` | yes | yes | yes | yes | API key / `az` CLI |
+| Microsoft Foundry | `microsoft-foundry` | yes | yes | — | yes | API key / `az` CLI |
 | Google Vertex AI | `vertex-ai` | yes | yes | Imagen | yes | `gcloud` CLI |
 | Ollama | `ollama` | yes | yes | — | yes | None |
 | Local Agent | `local-agent` | yes | yes | — | — | None |
@@ -168,7 +169,7 @@ Create `.ailloy.yaml` in your project root to override or add providers for that
 | `ailloy <message>` | Send a message (shorthand for `ailloy chat`) |
 | `ailloy chat <message>` | Send a message to the configured AI provider |
 | `ailloy chat -i` | Interactive conversation mode |
-| `ailloy config init` | Interactive provider setup wizard |
+| `ailloy config` | Interactive provider configuration |
 | `ailloy config show` | Display current configuration |
 | `ailloy providers list` | List configured providers |
 | `ailloy providers detect` | Auto-detect available providers |

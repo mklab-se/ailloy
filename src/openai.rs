@@ -30,7 +30,7 @@ struct ChatRequest<'a> {
     model: &'a str,
     messages: &'a [Message],
     #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<u32>,
+    max_completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     stream: bool,
@@ -89,21 +89,18 @@ struct StreamDelta {
     content: Option<String>,
 }
 
-// Image generation types
-#[derive(Serialize)]
-struct ImageGenRequest<'a> {
-    model: &'a str,
-    prompt: &'a str,
-    n: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    size: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    quality: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    style: Option<&'a str>,
-    response_format: &'a str,
+// Image generation uses two different API paths:
+// - Dedicated image models (dall-e-*, gpt-image-*) → Images API (/v1/images/generations)
+// - Chat models (gpt-5, gpt-4o, etc.) → Responses API (/v1/responses) with image_generation tool
+fn is_dedicated_image_model(model: &str) -> bool {
+    model.starts_with("gpt-image") || model.starts_with("dall-e")
 }
 
+fn is_gpt_image_model(model: &str) -> bool {
+    model.starts_with("gpt-image")
+}
+
+// Images API response types
 #[derive(Deserialize)]
 struct ImageGenResponse {
     data: Vec<ImageData>,
@@ -113,6 +110,24 @@ struct ImageGenResponse {
 struct ImageData {
     b64_json: Option<String>,
     revised_prompt: Option<String>,
+}
+
+// Responses API response types (for chat models with image_generation tool)
+#[derive(Deserialize)]
+struct ResponsesApiResponse {
+    output: Vec<ResponsesOutput>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum ResponsesOutput {
+    #[serde(rename = "image_generation_call")]
+    ImageGenerationCall {
+        result: Option<String>,
+        revised_prompt: Option<String>,
+    },
+    #[serde(other)]
+    Other,
 }
 
 // Embedding types
@@ -170,6 +185,180 @@ impl OpenAiClient {
     fn base_url(&self) -> String {
         self.endpoint.trim_end_matches('/').to_string()
     }
+
+    /// Generate an image using the Images API (`/v1/images/generations`).
+    /// For dedicated image models: dall-e-*, gpt-image-*.
+    async fn generate_image_via_images_api(
+        &self,
+        prompt: &str,
+        options: Option<&ImageOptions>,
+    ) -> Result<ImageResponse> {
+        let url = format!("{}/v1/images/generations", self.base_url());
+        debug!(url = %url, model = %self.model, "Sending image generation request (Images API)");
+
+        let size = options
+            .and_then(|o| o.size)
+            .map(|(w, h)| format!("{}x{}", w, h));
+
+        let mut body = serde_json::json!({
+            "model": &self.model,
+            "prompt": prompt,
+            "n": 1,
+        });
+        if let Some(size) = &size {
+            body["size"] = serde_json::json!(size);
+        }
+        if let Some(quality) = options.and_then(|o| o.quality.as_deref()) {
+            body["quality"] = serde_json::json!(quality);
+        }
+
+        if is_gpt_image_model(&self.model) {
+            // gpt-image models: no response_format/style, use output_format instead
+            body["output_format"] = serde_json::json!("png");
+        } else {
+            // DALL-E models: use response_format and style
+            body["response_format"] = serde_json::json!("b64_json");
+            if let Some(style) = options.and_then(|o| o.style.as_deref()) {
+                body["style"] = serde_json::json!(style);
+            }
+        }
+
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context("Failed to send image generation request")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            let message = serde_json::from_str::<ApiError>(&body)
+                .map(|e| e.error.message)
+                .unwrap_or(body);
+            anyhow::bail!(
+                "OpenAI image generation error ({}): {}",
+                status.as_u16(),
+                message
+            );
+        }
+
+        let api_response: ImageGenResponse = response
+            .json()
+            .await
+            .context("Failed to parse image generation response")?;
+
+        let image_data = api_response
+            .data
+            .first()
+            .context("No image data in response")?;
+
+        let b64 = image_data
+            .b64_json
+            .as_ref()
+            .context("No base64 image data in response")?;
+
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .context("Failed to decode base64 image data")?;
+
+        let (width, height) = crate::types::image_dimensions(&data)
+            .or_else(|| options.and_then(|o| o.size))
+            .unwrap_or((1024, 1024));
+
+        Ok(ImageResponse {
+            data,
+            width,
+            height,
+            format: ImageFormat::Png,
+            revised_prompt: image_data.revised_prompt.clone(),
+        })
+    }
+
+    /// Generate an image using the Responses API (`/v1/responses`).
+    /// For chat models (gpt-5, gpt-4o, etc.) via the image_generation tool.
+    async fn generate_image_via_responses_api(
+        &self,
+        prompt: &str,
+        options: Option<&ImageOptions>,
+    ) -> Result<ImageResponse> {
+        let url = format!("{}/v1/responses", self.base_url());
+        debug!(url = %url, model = %self.model, "Sending image generation request (Responses API)");
+
+        let mut tool = serde_json::json!({
+            "type": "image_generation",
+        });
+        if let Some(size) = options.and_then(|o| o.size) {
+            tool["size"] = serde_json::json!(format!("{}x{}", size.0, size.1));
+        }
+        if let Some(quality) = options.and_then(|o| o.quality.as_deref()) {
+            tool["quality"] = serde_json::json!(quality);
+        }
+
+        let body = serde_json::json!({
+            "model": &self.model,
+            "input": prompt,
+            "tools": [tool],
+        });
+
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context("Failed to send image generation request")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            let message = serde_json::from_str::<ApiError>(&body)
+                .map(|e| e.error.message)
+                .unwrap_or(body);
+            anyhow::bail!(
+                "OpenAI image generation error ({}): {}",
+                status.as_u16(),
+                message
+            );
+        }
+
+        let api_response: ResponsesApiResponse = response
+            .json()
+            .await
+            .context("Failed to parse Responses API response")?;
+
+        // Find the first image_generation_call in the output
+        let (b64, revised_prompt) = api_response
+            .output
+            .iter()
+            .find_map(|o| match o {
+                ResponsesOutput::ImageGenerationCall {
+                    result,
+                    revised_prompt,
+                } => result.as_ref().map(|r| (r.clone(), revised_prompt.clone())),
+                ResponsesOutput::Other => None,
+            })
+            .context("No image_generation_call in response output")?;
+
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(&b64)
+            .context("Failed to decode base64 image data")?;
+
+        let (width, height) = crate::types::image_dimensions(&data)
+            .or_else(|| options.and_then(|o| o.size))
+            .unwrap_or((1024, 1024));
+
+        Ok(ImageResponse {
+            data,
+            width,
+            height,
+            format: ImageFormat::Png,
+            revised_prompt,
+        })
+    }
 }
 
 #[async_trait]
@@ -189,7 +378,7 @@ impl Provider for OpenAiClient {
         let request = ChatRequest {
             model: &self.model,
             messages,
-            max_tokens: options.and_then(|o| o.max_tokens),
+            max_completion_tokens: options.and_then(|o| o.max_tokens),
             temperature: options.and_then(|o| o.temperature),
             stream: false,
         };
@@ -245,7 +434,7 @@ impl Provider for OpenAiClient {
         let request = ChatRequest {
             model: &self.model,
             messages,
-            max_tokens: options.and_then(|o| o.max_tokens),
+            max_completion_tokens: options.and_then(|o| o.max_tokens),
             temperature: options.and_then(|o| o.temperature),
             stream: true,
         };
@@ -350,73 +539,11 @@ impl Provider for OpenAiClient {
         prompt: &str,
         options: Option<&ImageOptions>,
     ) -> Result<ImageResponse> {
-        let url = format!("{}/v1/images/generations", self.base_url());
-        debug!(url = %url, "Sending image generation request");
-
-        let size = options
-            .and_then(|o| o.size)
-            .map(|(w, h)| format!("{}x{}", w, h));
-
-        let request = ImageGenRequest {
-            model: &self.model,
-            prompt,
-            n: 1,
-            size,
-            quality: options.and_then(|o| o.quality.as_deref()),
-            style: options.and_then(|o| o.style.as_deref()),
-            response_format: "b64_json",
-        };
-
-        let response = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.api_key)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send image generation request")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            let message = serde_json::from_str::<ApiError>(&body)
-                .map(|e| e.error.message)
-                .unwrap_or(body);
-            anyhow::bail!(
-                "OpenAI image generation error ({}): {}",
-                status.as_u16(),
-                message
-            );
+        if is_dedicated_image_model(&self.model) {
+            self.generate_image_via_images_api(prompt, options).await
+        } else {
+            self.generate_image_via_responses_api(prompt, options).await
         }
-
-        let api_response: ImageGenResponse = response
-            .json()
-            .await
-            .context("Failed to parse image generation response")?;
-
-        let image_data = api_response
-            .data
-            .first()
-            .context("No image data in response")?;
-
-        let b64 = image_data
-            .b64_json
-            .as_ref()
-            .context("No base64 image data in response")?;
-
-        let data = base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .context("Failed to decode base64 image data")?;
-
-        let (width, height) = options.and_then(|o| o.size).unwrap_or((1024, 1024));
-
-        Ok(ImageResponse {
-            data,
-            width,
-            height,
-            format: ImageFormat::Png,
-            revised_prompt: image_data.revised_prompt.clone(),
-        })
     }
 
     async fn embed(&self, input: &str) -> Result<EmbeddingResponse> {

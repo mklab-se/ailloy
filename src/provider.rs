@@ -77,6 +77,12 @@ pub fn create_provider_by_name(name: &str, config: &Config) -> Result<AiProvider
                  Use the new Client API instead."
             )
         }
+        ProviderKind::MicrosoftFoundry => {
+            bail!(
+                "Microsoft Foundry provider is not yet fully integrated into the legacy AiProvider. \
+                 Use the new Client API instead."
+            )
+        }
         ProviderKind::VertexAi => {
             bail!(
                 "Vertex AI provider is not yet fully integrated into the legacy AiProvider. \
@@ -105,7 +111,7 @@ pub fn create_provider_by_name(name: &str, config: &Config) -> Result<AiProvider
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     use crate::config::ProviderConfig;
 
@@ -113,12 +119,13 @@ mod tests {
         Config {
             default_provider: None,
             defaults: default_chat
-                .map(|d| HashMap::from([("chat".to_string(), d.to_string())]))
+                .map(|d| BTreeMap::from([("chat".to_string(), d.to_string())]))
                 .unwrap_or_default(),
             providers: providers
                 .into_iter()
                 .map(|(n, c)| (n.to_string(), c))
                 .collect(),
+            consents: BTreeMap::new(),
         }
     }
 

@@ -1,6 +1,6 @@
 //! Configuration types and loading.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -13,9 +13,29 @@ pub enum ProviderKind {
     OpenAi,
     Anthropic,
     AzureOpenAi,
+    MicrosoftFoundry,
     VertexAi,
     Ollama,
     LocalAgent,
+}
+
+impl std::str::FromStr for ProviderKind {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "openai" | "open-ai" => Ok(Self::OpenAi),
+            "anthropic" => Ok(Self::Anthropic),
+            "azure-openai" | "azure-open-ai" => Ok(Self::AzureOpenAi),
+            "microsoft-foundry" => Ok(Self::MicrosoftFoundry),
+            "vertex-ai" => Ok(Self::VertexAi),
+            "ollama" => Ok(Self::Ollama),
+            "local-agent" => Ok(Self::LocalAgent),
+            _ => Err(format!(
+                "Unknown provider kind '{}'. Valid: openai, anthropic, azure-openai, microsoft-foundry, vertex-ai, ollama, local-agent",
+                s
+            )),
+        }
+    }
 }
 
 impl std::fmt::Display for ProviderKind {
@@ -24,6 +44,7 @@ impl std::fmt::Display for ProviderKind {
             Self::OpenAi => write!(f, "openai"),
             Self::Anthropic => write!(f, "anthropic"),
             Self::AzureOpenAi => write!(f, "azure-openai"),
+            Self::MicrosoftFoundry => write!(f, "microsoft-foundry"),
             Self::VertexAi => write!(f, "vertex-ai"),
             Self::Ollama => write!(f, "ollama"),
             Self::LocalAgent => write!(f, "local-agent"),
@@ -31,8 +52,44 @@ impl std::fmt::Display for ProviderKind {
     }
 }
 
+/// Ordered list of task keys with human-readable labels.
+pub const ALL_TASKS: &[(&str, &str)] = &[
+    ("chat", "Chat"),
+    ("image", "Image Generation"),
+    ("embedding", "Embeddings"),
+];
+
+impl ProviderKind {
+    /// Returns whether this provider kind supports a given task.
+    ///
+    /// Platforms like Ollama and Microsoft Foundry can support image generation
+    /// and embeddings depending on the deployed model.
+    pub fn supports_task(&self, task: &str) -> bool {
+        matches!(
+            (self, task),
+            (_, "chat")
+                | (
+                    Self::OpenAi
+                        | Self::AzureOpenAi
+                        | Self::MicrosoftFoundry
+                        | Self::VertexAi
+                        | Self::Ollama,
+                    "image",
+                )
+                | (
+                    Self::OpenAi
+                        | Self::AzureOpenAi
+                        | Self::MicrosoftFoundry
+                        | Self::VertexAi
+                        | Self::Ollama,
+                    "embedding",
+                )
+        )
+    }
+}
+
 /// Configuration for a single AI provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub kind: ProviderKind,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -56,7 +113,15 @@ pub struct ProviderConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<String>,
     #[serde(default, rename = "defaults", skip_serializing_if = "Option::is_none")]
-    pub provider_defaults: Option<HashMap<String, String>>,
+    pub provider_defaults: Option<BTreeMap<String, String>>,
+}
+
+/// Well-known consent keys for external CLI tools.
+pub mod consent_keys {
+    /// Azure CLI (`az`) — used for Azure OpenAI discovery and authentication.
+    pub const AZURE_CLI: &str = "azure-cli";
+    /// Google Cloud CLI (`gcloud`) — used for Vertex AI authentication.
+    pub const GCLOUD_CLI: &str = "gcloud-cli";
 }
 
 /// Top-level ailloy configuration.
@@ -67,20 +132,31 @@ pub struct Config {
     pub default_provider: Option<String>,
 
     /// Task-level defaults: maps task names ("chat", "image", "embedding") to provider names.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub defaults: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub defaults: BTreeMap<String, String>,
 
     #[serde(default)]
-    pub providers: HashMap<String, ProviderConfig>,
+    pub providers: BTreeMap<String, ProviderConfig>,
+
+    /// User consent for external CLI tools (e.g. "azure-cli" → true).
+    /// Security decisions — not overridable by local `.ailloy.yaml`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub consents: BTreeMap<String, bool>,
 }
 
 impl Config {
-    /// Returns the platform config directory for ailloy.
+    /// Returns the config directory for ailloy (`~/.config/ailloy`).
+    ///
+    /// Respects `XDG_CONFIG_HOME` if set, otherwise uses `~/.config/ailloy`.
     pub fn config_dir() -> Result<PathBuf> {
-        let dir = dirs::config_dir()
-            .context("Could not determine config directory")?
-            .join("ailloy");
-        Ok(dir)
+        let base = if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+            PathBuf::from(xdg)
+        } else {
+            dirs::home_dir()
+                .context("Could not determine home directory")?
+                .join(".config")
+        };
+        Ok(base.join("ailloy"))
     }
 
     /// Returns the path to the config file.
@@ -146,10 +222,14 @@ impl Config {
             providers.insert(k, v);
         }
 
+        // Consents are security decisions — always use global, never overridden by local config.
+        let consents = global.consents;
+
         Self {
             default_provider: None,
             defaults,
             providers,
+            consents,
         }
     }
 
@@ -172,11 +252,21 @@ impl Config {
         }
     }
 
+    /// Remove a provider by name and clean up any defaults that reference it.
+    pub fn remove_provider(&mut self, name: &str) -> bool {
+        if self.providers.remove(name).is_some() {
+            self.defaults.retain(|_, v| v != name);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Get the provider name and config for a given task (e.g. "chat", "image", "embedding").
     pub fn provider_for_task(&self, task: &str) -> Result<(&str, &ProviderConfig)> {
         let name = self.defaults.get(task).with_context(|| {
             format!(
-                "No default provider configured for task '{}'. Run `ailloy config init` to set one up.",
+                "No default provider configured for task '{}'. Run `ailloy config` to set one up.",
                 task
             )
         })?;
@@ -211,8 +301,8 @@ mod tests {
     fn test_config_roundtrip() {
         let config = Config {
             default_provider: None,
-            defaults: HashMap::from([("chat".to_string(), "openai".to_string())]),
-            providers: HashMap::from([(
+            defaults: BTreeMap::from([("chat".to_string(), "openai".to_string())]),
+            providers: BTreeMap::from([(
                 "openai".to_string(),
                 ProviderConfig {
                     kind: ProviderKind::OpenAi,
@@ -229,6 +319,7 @@ mod tests {
                     provider_defaults: None,
                 },
             )]),
+            consents: BTreeMap::new(),
         };
 
         let yaml = serde_yaml::to_string(&config).unwrap();
@@ -244,6 +335,7 @@ mod tests {
         let config = Config::default();
         assert!(config.defaults.is_empty());
         assert!(config.providers.is_empty());
+        assert!(config.consents.is_empty());
     }
 
     #[test]
@@ -257,6 +349,10 @@ mod tests {
         assert_eq!(ProviderKind::OpenAi.to_string(), "openai");
         assert_eq!(ProviderKind::Anthropic.to_string(), "anthropic");
         assert_eq!(ProviderKind::AzureOpenAi.to_string(), "azure-openai");
+        assert_eq!(
+            ProviderKind::MicrosoftFoundry.to_string(),
+            "microsoft-foundry"
+        );
         assert_eq!(ProviderKind::VertexAi.to_string(), "vertex-ai");
         assert_eq!(ProviderKind::Ollama.to_string(), "ollama");
         assert_eq!(ProviderKind::LocalAgent.to_string(), "local-agent");
@@ -273,8 +369,8 @@ mod tests {
     fn test_migrate_default_provider() {
         let mut config = Config {
             default_provider: Some("openai".to_string()),
-            defaults: HashMap::new(),
-            providers: HashMap::from([(
+            defaults: BTreeMap::new(),
+            providers: BTreeMap::from([(
                 "openai".to_string(),
                 ProviderConfig {
                     kind: ProviderKind::OpenAi,
@@ -291,6 +387,7 @@ mod tests {
                     provider_defaults: None,
                 },
             )]),
+            consents: BTreeMap::new(),
         };
 
         config.migrate();
@@ -302,8 +399,9 @@ mod tests {
     fn test_migrate_preserves_existing_defaults() {
         let mut config = Config {
             default_provider: Some("old-provider".to_string()),
-            defaults: HashMap::from([("chat".to_string(), "existing".to_string())]),
-            providers: HashMap::new(),
+            defaults: BTreeMap::from([("chat".to_string(), "existing".to_string())]),
+            providers: BTreeMap::new(),
+            consents: BTreeMap::new(),
         };
 
         config.migrate();
@@ -314,11 +412,11 @@ mod tests {
     fn test_provider_for_task() {
         let config = Config {
             default_provider: None,
-            defaults: HashMap::from([
+            defaults: BTreeMap::from([
                 ("chat".to_string(), "openai".to_string()),
                 ("image".to_string(), "dalle".to_string()),
             ]),
-            providers: HashMap::from([
+            providers: BTreeMap::from([
                 (
                     "openai".to_string(),
                     ProviderConfig {
@@ -354,6 +452,7 @@ mod tests {
                     },
                 ),
             ]),
+            consents: BTreeMap::new(),
         };
 
         let (name, _) = config.provider_for_task("chat").unwrap();
@@ -396,5 +495,190 @@ defaults:
         assert_eq!(parsed.kind, ProviderKind::VertexAi);
         assert_eq!(parsed.project.unwrap(), "my-project");
         assert_eq!(parsed.location.unwrap(), "us-central1");
+    }
+
+    #[test]
+    fn test_microsoft_foundry_kind_serde() {
+        let yaml = "kind: microsoft-foundry\nendpoint: https://test.services.ai.azure.com\nmodel: gpt-4o\n";
+        let parsed: ProviderConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(parsed.kind, ProviderKind::MicrosoftFoundry);
+        assert_eq!(parsed.model.unwrap(), "gpt-4o");
+    }
+
+    #[test]
+    fn test_consents_roundtrip() {
+        let config = Config {
+            default_provider: None,
+            defaults: BTreeMap::from([("chat".to_string(), "azure".to_string())]),
+            providers: BTreeMap::new(),
+            consents: BTreeMap::from([
+                ("azure-cli".to_string(), true),
+                ("gcloud-cli".to_string(), false),
+            ]),
+        };
+
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let parsed: Config = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(parsed.consents.get("azure-cli"), Some(&true));
+        assert_eq!(parsed.consents.get("gcloud-cli"), Some(&false));
+    }
+
+    #[test]
+    fn test_consents_backward_compat() {
+        // YAML without consents field should parse fine with empty default.
+        let yaml = "providers: {}\n";
+        let parsed: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(parsed.consents.is_empty());
+    }
+
+    #[test]
+    fn test_consents_skip_serializing_when_empty() {
+        let config = Config::default();
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        assert!(!yaml.contains("consents"));
+    }
+
+    #[test]
+    fn test_provider_kind_from_str() {
+        assert_eq!(
+            "openai".parse::<ProviderKind>().unwrap(),
+            ProviderKind::OpenAi
+        );
+        assert_eq!(
+            "open-ai".parse::<ProviderKind>().unwrap(),
+            ProviderKind::OpenAi
+        );
+        assert_eq!(
+            "anthropic".parse::<ProviderKind>().unwrap(),
+            ProviderKind::Anthropic
+        );
+        assert_eq!(
+            "azure-openai".parse::<ProviderKind>().unwrap(),
+            ProviderKind::AzureOpenAi
+        );
+        assert_eq!(
+            "azure-open-ai".parse::<ProviderKind>().unwrap(),
+            ProviderKind::AzureOpenAi
+        );
+        assert_eq!(
+            "microsoft-foundry".parse::<ProviderKind>().unwrap(),
+            ProviderKind::MicrosoftFoundry
+        );
+        assert_eq!(
+            "vertex-ai".parse::<ProviderKind>().unwrap(),
+            ProviderKind::VertexAi
+        );
+        assert_eq!(
+            "ollama".parse::<ProviderKind>().unwrap(),
+            ProviderKind::Ollama
+        );
+        assert_eq!(
+            "local-agent".parse::<ProviderKind>().unwrap(),
+            ProviderKind::LocalAgent
+        );
+        assert!("invalid".parse::<ProviderKind>().is_err());
+    }
+
+    #[test]
+    fn test_remove_provider() {
+        let mut config = Config {
+            default_provider: None,
+            defaults: BTreeMap::from([
+                ("chat".to_string(), "openai".to_string()),
+                ("image".to_string(), "openai".to_string()),
+                ("embedding".to_string(), "other".to_string()),
+            ]),
+            providers: BTreeMap::from([(
+                "openai".to_string(),
+                ProviderConfig {
+                    kind: ProviderKind::OpenAi,
+                    api_key: None,
+                    endpoint: None,
+                    model: None,
+                    deployment: None,
+                    api_version: None,
+                    binary: None,
+                    task: None,
+                    auth: None,
+                    project: None,
+                    location: None,
+                    provider_defaults: None,
+                },
+            )]),
+            consents: BTreeMap::new(),
+        };
+
+        assert!(config.remove_provider("openai"));
+        assert!(config.providers.is_empty());
+        // Defaults pointing to removed provider should be cleaned up
+        assert!(!config.defaults.contains_key("chat"));
+        assert!(!config.defaults.contains_key("image"));
+        // Defaults pointing to other providers should be preserved
+        assert_eq!(config.defaults.get("embedding").unwrap(), "other");
+
+        // Removing nonexistent provider returns false
+        assert!(!config.remove_provider("nonexistent"));
+    }
+
+    #[test]
+    fn test_merge_uses_global_consents_only() {
+        let global = Config {
+            default_provider: None,
+            defaults: BTreeMap::new(),
+            providers: BTreeMap::new(),
+            consents: BTreeMap::from([("azure-cli".to_string(), true)]),
+        };
+        let local = Config {
+            default_provider: None,
+            defaults: BTreeMap::new(),
+            providers: BTreeMap::new(),
+            consents: BTreeMap::from([("azure-cli".to_string(), false)]),
+        };
+
+        let merged = Config::merge(global, Some(local));
+        // Global consents should win — local cannot override security decisions.
+        assert_eq!(merged.consents.get("azure-cli"), Some(&true));
+    }
+
+    #[test]
+    fn test_supports_task_chat() {
+        // All providers support chat.
+        assert!(ProviderKind::OpenAi.supports_task("chat"));
+        assert!(ProviderKind::Anthropic.supports_task("chat"));
+        assert!(ProviderKind::AzureOpenAi.supports_task("chat"));
+        assert!(ProviderKind::MicrosoftFoundry.supports_task("chat"));
+        assert!(ProviderKind::VertexAi.supports_task("chat"));
+        assert!(ProviderKind::Ollama.supports_task("chat"));
+        assert!(ProviderKind::LocalAgent.supports_task("chat"));
+    }
+
+    #[test]
+    fn test_supports_task_image() {
+        assert!(ProviderKind::OpenAi.supports_task("image"));
+        assert!(!ProviderKind::Anthropic.supports_task("image"));
+        assert!(ProviderKind::AzureOpenAi.supports_task("image"));
+        assert!(ProviderKind::MicrosoftFoundry.supports_task("image"));
+        assert!(ProviderKind::VertexAi.supports_task("image"));
+        assert!(ProviderKind::Ollama.supports_task("image"));
+        assert!(!ProviderKind::LocalAgent.supports_task("image"));
+    }
+
+    #[test]
+    fn test_supports_task_embedding() {
+        assert!(ProviderKind::OpenAi.supports_task("embedding"));
+        assert!(!ProviderKind::Anthropic.supports_task("embedding"));
+        assert!(ProviderKind::AzureOpenAi.supports_task("embedding"));
+        assert!(ProviderKind::MicrosoftFoundry.supports_task("embedding"));
+        assert!(ProviderKind::VertexAi.supports_task("embedding"));
+        assert!(ProviderKind::Ollama.supports_task("embedding"));
+        assert!(!ProviderKind::LocalAgent.supports_task("embedding"));
+    }
+
+    #[test]
+    fn test_supports_task_unknown() {
+        // Unknown task names should return false.
+        assert!(!ProviderKind::OpenAi.supports_task("unknown"));
+        assert!(!ProviderKind::OpenAi.supports_task(""));
     }
 }

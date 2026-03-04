@@ -20,7 +20,8 @@ Single crate with feature-flagged CLI, similar to how `clap` separates derive fe
 ```
 src/
   lib.rs              # Public library API — always compiled
-  config.rs           # Config types, load/save, local config merge, migration
+  config.rs           # Config types, load/save, local config merge, migration,
+                      #   ProviderKind::supports_task(), ALL_TASKS constant
   types.rs            # Message, Role, ChatResponse, ChatOptions, StreamEvent, ChatStream,
                       #   ImageResponse, ImageOptions, EmbeddingResponse, Task, Usage
   error.rs            # ClientError enum (thiserror) — Http, Api, Json, NotConfigured,
@@ -32,6 +33,7 @@ src/
   openai.rs           # OpenAI client — chat, stream (SSE), image gen, embeddings
   anthropic.rs        # Anthropic client — chat, stream (SSE)
   azure.rs            # Azure OpenAI client — chat, stream (SSE), image gen, embeddings
+  foundry.rs          # Microsoft Foundry client — chat, stream (SSE), embeddings
   vertex.rs           # Vertex AI client — Gemini chat/stream, Imagen, embeddings
   ollama.rs           # Ollama client — chat, stream (NDJSON), embeddings
   local_agent.rs      # Local CLI agent (claude, codex, copilot) — chat, stream (line-buffered)
@@ -41,9 +43,14 @@ src/
   update.rs           # Background update checker via crates.io (requires "cli" feature)
   commands/
     mod.rs            # Command module exports
+    azure_discover.rs # Azure CLI wrappers: list subscriptions, resources, deployments
     chat.rs           # `ailloy chat` — chat, streaming, image gen, SVG, interactive, stdin
-    config_cmd.rs     # `ailloy config init/show` — interactive setup (all 6 provider types)
+    config_cmd.rs     # `ailloy config` — interactive config orchestrator, provider detail/edit,
+                      #   `config show/set/get/unset`, add-provider flows (Azure/Foundry discovery)
+    tui.rs            # Custom crossterm-based TUI for `ailloy config` — task-grouped provider list,
+                      #   keyboard-driven (Space/Enter/Delete/A/Q), section headers, `*` defaults
     completion.rs     # `ailloy completion` — shell completions
+    consent.rs        # Reusable CLI tool consent prompt/check (ConsentResult, ensure_consent)
     providers.rs      # `ailloy providers list/detect` — list and auto-detect providers
 ```
 
@@ -60,9 +67,12 @@ src/
 - **Provider trait** (`client.rs`): unified `async_trait` with default methods returning `Unsupported` — `name()`, `chat()`, `chat_stream()`, `generate_image()`, `embed()`
 - **Client** wraps `Box<dyn Provider>` — constructed via `from_config()`, `with_provider()`, `for_task()`, `from_provider()`, `builder()`, or direct constructors (`Client::openai()`, `Client::anthropic()`, etc.)
 - **Streaming**: SSE parsing for OpenAI/Anthropic/Azure/Vertex via `futures_util::stream::unfold`, NDJSON for Ollama, line-buffered for local agents
-- **Config v2**: `defaults` map routes task names (chat, image, embedding) to provider names; `ProviderConfig` has `task`, `auth`, `project`, `location`, `provider_defaults` fields
+- **Config v2**: `defaults` map routes task names (chat, image, embedding) to provider names; `ProviderConfig` has `task`, `auth`, `project`, `location`, `provider_defaults` fields; all config maps use `BTreeMap` for deterministic serialization
+- **Task-centric config TUI**: `ailloy config` home screen groups providers by task (Chat, Image Generation, Embeddings); section headers trigger filtered add-provider flows; `ProviderKind::supports_task()` drives capability filtering
 - **Local config**: `.ailloy.yaml` in current or parent directories, merged with global config
 - **Config migration**: old `default_provider` auto-migrated to `defaults.chat` on load
+- **CLI tool consent**: `consents` map in config tracks user permission for external tools (`azure-cli`, `gcloud-cli`); security decisions use global config only (not overridable by local `.ailloy.yaml`)
+- **Azure auto-discovery**: `azure_discover.rs` wraps `az` CLI for subscription/resource/deployment listing; discovers both `kind=='OpenAI'` and `kind=='AIServices'` resources; `ailloy config` uses it when user consents
 - **Blocking wrapper**: `blocking::Client` with internal `tokio::runtime::Builder::new_current_thread()` — mirrors async Client API
 - **Conversation**: `Conversation` struct with pluggable `ChatHistory` trait and `InMemoryHistory` default
 - CLI built with `clap` derive macros + `clap_complete` for shell completions
@@ -73,7 +83,7 @@ src/
 - Logging: `tracing` + `tracing-subscriber` (CLI only) with `-v`/`-vv` verbosity levels
 - Colored output via `colored` crate (respects `--no-color`)
 - Interactive prompts via `inquire`
-- Error handling: `anyhow` for CLI commands, `thiserror` for `ClientError` in library code
+- Error handling: `anyhow` for CLI commands, `thiserror` for `ClientError` in library code. **All error messages must be actionable** — tell the user what went wrong, what resource/config is involved, and what to do next (e.g. "run 'az login'", "run 'ailloy config'"). Never show raw API errors like "Resource not found" without context.
 - Config: `~/.config/ailloy/config.yaml` (via `dirs::config_dir()`)
 - Update checker: background task, cached at `~/.cache/ailloy/`, skip with `AILLOY_NO_UPDATE_CHECK=1`
 - Environment variable support: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` as fallback for providers

@@ -7,15 +7,29 @@ use futures_util::StreamExt;
 
 use ailloy::client::create_provider_from_config;
 use ailloy::config::Config;
+use ailloy::terminal::hyperlink;
 use ailloy::types::{ChatOptions, ImageOptions, Message, StreamEvent};
 
 use crate::cli::ChatArgs;
 
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp"];
+
+/// Create a terminal hyperlink for a file path.
+fn file_hyperlink(path: &str) -> String {
+    let url = std::fs::canonicalize(path)
+        .map(|p| format!("file://{}", p.display()))
+        .unwrap_or_default();
+    if url.is_empty() {
+        path.to_string()
+    } else {
+        hyperlink(&url, path)
+    }
+}
 const SVG_SYSTEM_PROMPT: &str =
     "Generate valid SVG markup. Output only the raw SVG code with no explanation or markdown.";
 
 pub async fn run(args: ChatArgs, quiet: bool) -> Result<()> {
+    let raw = args.raw;
     let config = Config::load()?;
 
     // Detect piped stdin
@@ -106,7 +120,9 @@ pub async fn run(args: ChatArgs, quiet: bool) -> Result<()> {
                     output_writer.flush()?;
                 }
                 StreamEvent::Done(response) => {
-                    writeln!(output_writer)?;
+                    if !raw {
+                        writeln!(output_writer)?;
+                    }
                     if !quiet {
                         if let Some(usage) = &response.usage {
                             eprintln!(
@@ -129,8 +145,10 @@ pub async fn run(args: ChatArgs, quiet: bool) -> Result<()> {
             std::fs::write(path, &response.content)
                 .with_context(|| format!("Failed to write output to: {}", path))?;
             if !quiet {
-                eprintln!("{} {}", "Saved to:".dimmed(), path);
+                eprintln!("{} {}", "Saved to:".dimmed(), file_hyperlink(path));
             }
+        } else if raw {
+            print!("{}", response.content);
         } else {
             println!("{}", response.content);
         }
@@ -191,9 +209,9 @@ async fn run_image_generation(
 
     if !quiet {
         eprintln!(
-            "{} {} ({}x{}, {:?})",
+            "{} {} ({}x{}, {})",
             "Saved to:".dimmed(),
-            output,
+            file_hyperlink(output),
             image.width,
             image.height,
             image.format
@@ -239,7 +257,7 @@ async fn run_svg_generation(
         .with_context(|| format!("Failed to write SVG to: {}", output))?;
 
     if !quiet {
-        eprintln!("{} {}", "Saved to:".dimmed(), output);
+        eprintln!("{} {}", "Saved to:".dimmed(), file_hyperlink(output));
     }
 
     Ok(())

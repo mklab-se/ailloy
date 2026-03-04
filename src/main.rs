@@ -8,7 +8,7 @@ use clap::Parser;
 use colored::Colorize;
 use tracing_subscriber::EnvFilter;
 
-use cli::{Cli, Commands, KNOWN_SUBCOMMANDS};
+use cli::{Cli, Commands, ConfigCommands, KNOWN_SUBCOMMANDS};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -41,19 +41,27 @@ async fn main() -> Result<()> {
         .with_target(false)
         .init();
 
-    if cli.no_color {
+    // --raw on chat implies --quiet and --no-color
+    let is_raw_chat = matches!(&cli.command, Commands::Chat(args) if args.raw);
+    let quiet = cli.quiet || is_raw_chat;
+
+    if cli.no_color || is_raw_chat {
         colored::control::set_override(false);
     }
 
-    let update_handle = if !cli.quiet {
+    let update_handle = if !quiet {
         Some(tokio::spawn(update::check_for_update()))
     } else {
         None
     };
 
     let result = match cli.command {
-        Commands::Chat(args) => commands::chat::run(args, cli.quiet).await,
-        Commands::Config(cmd) => commands::config_cmd::run(cmd).await,
+        Commands::Chat(args) => commands::chat::run(args, quiet).await,
+        Commands::Config(args) => match args.command {
+            None => commands::config_cmd::run_interactive().await,
+            Some(ConfigCommands::Init) => commands::config_cmd::run_interactive().await,
+            Some(cmd) => commands::config_cmd::run(cmd).await,
+        },
         Commands::Providers(cmd) => commands::providers::run(cmd).await,
         Commands::Completion(args) => commands::completion::run(args),
         Commands::Version => {

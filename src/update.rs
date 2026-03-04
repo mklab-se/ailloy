@@ -7,7 +7,12 @@ const CACHE_DURATION: Duration = Duration::from_secs(24 * 60 * 60);
 const CRATE_NAME: &str = "ailloy";
 
 fn cache_path() -> Option<PathBuf> {
-    dirs::cache_dir().map(|d| d.join("ailloy").join("latest_version"))
+    let base = if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
+        PathBuf::from(xdg)
+    } else {
+        dirs::home_dir()?.join(".cache")
+    };
+    Some(base.join("ailloy").join("latest_version"))
 }
 
 pub async fn check_for_update() -> Option<String> {

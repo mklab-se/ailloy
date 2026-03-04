@@ -129,6 +129,23 @@ impl Client {
         })
     }
 
+    /// Create a client for Microsoft Foundry programmatically (no config needed).
+    pub fn foundry(
+        endpoint: impl Into<String>,
+        model: impl Into<String>,
+        api_version: impl Into<String>,
+    ) -> Result<Self> {
+        let client = crate::foundry::FoundryClient::new(
+            endpoint,
+            model,
+            api_version,
+            crate::azure::AzureAuth::AzureCli,
+        );
+        Ok(Self {
+            provider: Box::new(client),
+        })
+    }
+
     /// Create a client for Google Vertex AI programmatically (no config needed).
     pub fn vertex(
         project: impl Into<String>,
@@ -222,6 +239,11 @@ impl ClientBuilder {
         self
     }
 
+    pub fn foundry(mut self) -> Self {
+        self.kind = Some(ProviderKind::MicrosoftFoundry);
+        self
+    }
+
     pub fn vertex(mut self) -> Self {
         self.kind = Some(ProviderKind::VertexAi);
         self
@@ -312,7 +334,9 @@ impl ClientBuilder {
                 let deployment = self
                     .deployment
                     .context("Deployment required for Azure OpenAI")?;
-                let api_version = self.api_version.unwrap_or_else(|| "2025-01-01".to_string());
+                let api_version = self
+                    .api_version
+                    .unwrap_or_else(|| "2025-04-01-preview".to_string());
                 let auth = if let Some(key) = self.api_key {
                     crate::azure::AzureAuth::ApiKey(key)
                 } else {
@@ -321,6 +345,26 @@ impl ClientBuilder {
                 Box::new(crate::azure::AzureOpenAiClient::new(
                     endpoint,
                     deployment,
+                    api_version,
+                    auth,
+                ))
+            }
+            ProviderKind::MicrosoftFoundry => {
+                let endpoint = self
+                    .endpoint
+                    .context("Endpoint required for Microsoft Foundry")?;
+                let model = self.model.context("Model required for Microsoft Foundry")?;
+                let api_version = self
+                    .api_version
+                    .unwrap_or_else(|| "2024-05-01-preview".to_string());
+                let auth = if let Some(key) = self.api_key {
+                    crate::azure::AzureAuth::ApiKey(key)
+                } else {
+                    crate::azure::AzureAuth::AzureCli
+                };
+                Box::new(crate::foundry::FoundryClient::new(
+                    endpoint,
+                    model,
                     api_version,
                     auth,
                 ))
@@ -400,7 +444,7 @@ pub fn create_provider_from_config(
             let api_version = config
                 .api_version
                 .clone()
-                .unwrap_or_else(|| "2025-01-01".to_string());
+                .unwrap_or_else(|| "2025-04-01-preview".to_string());
             let auth = match config.auth.as_deref() {
                 Some("azure-cli") | None => {
                     if let Some(key) = config.api_key.clone() {
@@ -420,6 +464,41 @@ pub fn create_provider_from_config(
             Ok(Box::new(crate::azure::AzureOpenAiClient::new(
                 endpoint,
                 deployment,
+                api_version,
+                auth,
+            )))
+        }
+        ProviderKind::MicrosoftFoundry => {
+            let endpoint = config.endpoint.clone().with_context(|| {
+                format!("No endpoint for Microsoft Foundry provider '{}'", name)
+            })?;
+            let model = config
+                .model
+                .clone()
+                .with_context(|| format!("No model for Microsoft Foundry provider '{}'", name))?;
+            let api_version = config
+                .api_version
+                .clone()
+                .unwrap_or_else(|| "2024-05-01-preview".to_string());
+            let auth = match config.auth.as_deref() {
+                Some("azure-cli") | None => {
+                    if let Some(key) = config.api_key.clone() {
+                        crate::azure::AzureAuth::ApiKey(key)
+                    } else {
+                        crate::azure::AzureAuth::AzureCli
+                    }
+                }
+                Some(other) => {
+                    anyhow::bail!(
+                        "Unknown auth method '{}' for Microsoft Foundry provider '{}'",
+                        other,
+                        name
+                    )
+                }
+            };
+            Ok(Box::new(crate::foundry::FoundryClient::new(
+                endpoint,
+                model,
                 api_version,
                 auth,
             )))

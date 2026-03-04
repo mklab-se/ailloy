@@ -1,9 +1,10 @@
 use anyhow::Result;
 use colored::Colorize;
 
-use ailloy::config::Config;
+use ailloy::config::{Config, consent_keys};
 
 use crate::cli::ProviderCommands;
+use crate::commands::consent;
 
 pub async fn run(cmd: ProviderCommands) -> Result<()> {
     match cmd {
@@ -20,7 +21,7 @@ fn run_list() -> Result<()> {
 
     if config.providers.is_empty() {
         println!("  {}", "No providers configured.".dimmed());
-        println!("  Run {} to add one.", "ailloy config init".bold());
+        println!("  Run {} to add one.", "ailloy config".bold());
         println!();
         println!("{}", "Available Provider Types".bold());
         println!();
@@ -30,6 +31,10 @@ fn run_list() -> Result<()> {
             "anthropic".bold()
         );
         println!("  {} — Azure OpenAI Service", "azure-openai".bold());
+        println!(
+            "  {} — Microsoft Foundry (GPT, Llama, Mistral, etc.)",
+            "microsoft-foundry".bold()
+        );
         println!("  {} — Google Vertex AI (Gemini, etc.)", "vertex-ai".bold());
         println!("  {} — Local LLMs via Ollama", "ollama".bold());
         println!(
@@ -127,53 +132,72 @@ async fn run_detect() -> Result<()> {
         }
     }
 
-    // Check Azure CLI
-    let az_check = tokio::process::Command::new("az")
-        .args(["account", "show", "--query", "name", "-o", "tsv"])
-        .output()
-        .await;
-    match az_check {
-        Ok(output) if output.status.success() => {
-            let name = String::from_utf8_lossy(&output.stdout);
-            println!(
-                "  {} {}  {}",
-                "✓".green().bold(),
-                "azure".bold(),
-                format!("az CLI authenticated ({})", name.trim()).dimmed()
-            );
+    // Check Azure CLI (only if user has consented)
+    let config = Config::load()?;
+    if consent::check_consent(&config, consent_keys::AZURE_CLI) == Some(true) {
+        let az_check = tokio::process::Command::new("az")
+            .args(["account", "show", "--query", "name", "-o", "tsv"])
+            .output()
+            .await;
+        match az_check {
+            Ok(output) if output.status.success() => {
+                let name = String::from_utf8_lossy(&output.stdout);
+                println!(
+                    "  {} {}  {}",
+                    "✓".green().bold(),
+                    "azure".bold(),
+                    format!("az CLI authenticated ({})", name.trim()).dimmed()
+                );
+            }
+            _ => {
+                println!(
+                    "  {} {}  {}",
+                    "✗".red(),
+                    "azure".dimmed(),
+                    "az CLI not authenticated or not installed".dimmed()
+                );
+            }
         }
-        _ => {
-            println!(
-                "  {} {}  {}",
-                "✗".red(),
-                "azure".dimmed(),
-                "az CLI not authenticated or not installed".dimmed()
-            );
-        }
+    } else {
+        println!(
+            "  {} {}  {}",
+            "-".dimmed(),
+            "azure".dimmed(),
+            "skipped (not authorized — run 'ailloy config' to grant)".dimmed()
+        );
     }
 
-    // Check gcloud CLI
-    let gcloud_check = tokio::process::Command::new("gcloud")
-        .args(["auth", "print-access-token"])
-        .output()
-        .await;
-    match gcloud_check {
-        Ok(output) if output.status.success() => {
-            println!(
-                "  {} {}  {}",
-                "✓".green().bold(),
-                "vertex".bold(),
-                "gcloud CLI authenticated".dimmed()
-            );
+    // Check gcloud CLI (only if user has consented)
+    if consent::check_consent(&config, consent_keys::GCLOUD_CLI) == Some(true) {
+        let gcloud_check = tokio::process::Command::new("gcloud")
+            .args(["auth", "print-access-token"])
+            .output()
+            .await;
+        match gcloud_check {
+            Ok(output) if output.status.success() => {
+                println!(
+                    "  {} {}  {}",
+                    "✓".green().bold(),
+                    "vertex".bold(),
+                    "gcloud CLI authenticated".dimmed()
+                );
+            }
+            _ => {
+                println!(
+                    "  {} {}  {}",
+                    "✗".red(),
+                    "vertex".dimmed(),
+                    "gcloud CLI not authenticated or not installed".dimmed()
+                );
+            }
         }
-        _ => {
-            println!(
-                "  {} {}  {}",
-                "✗".red(),
-                "vertex".dimmed(),
-                "gcloud CLI not authenticated or not installed".dimmed()
-            );
-        }
+    } else {
+        println!(
+            "  {} {}  {}",
+            "-".dimmed(),
+            "vertex".dimmed(),
+            "skipped (not authorized — run 'ailloy config' to grant)".dimmed()
+        );
     }
 
     // Check local agents
@@ -205,7 +229,7 @@ async fn run_detect() -> Result<()> {
     println!();
     println!(
         "Run {} to configure detected providers.",
-        "'ailloy config init'".bold()
+        "'ailloy config'".bold()
     );
 
     Ok(())

@@ -24,10 +24,12 @@ pub mod client;
 pub mod config;
 pub mod conversation;
 pub mod error;
+pub mod foundry;
 pub mod local_agent;
 pub mod ollama;
 pub mod openai;
 pub mod provider;
+pub mod terminal;
 pub mod types;
 pub mod vertex;
 

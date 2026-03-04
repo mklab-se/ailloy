@@ -495,10 +495,12 @@ impl Provider for VertexAiClient {
                 _ => ImageFormat::Png,
             };
 
+            let (width, height) = crate::types::image_dimensions(&data).unwrap_or((1024, 1024));
+
             Ok(ImageResponse {
                 data,
-                width: 1024,
-                height: 1024,
+                width,
+                height,
                 format,
                 revised_prompt: None,
             })
@@ -565,10 +567,12 @@ impl Provider for VertexAiClient {
                 _ => ImageFormat::Png,
             };
 
+            let (width, height) = crate::types::image_dimensions(&data).unwrap_or((1024, 1024));
+
             Ok(ImageResponse {
                 data,
-                width: 1024,
-                height: 1024,
+                width,
+                height,
                 format,
                 revised_prompt: None,
             })
