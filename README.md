@@ -45,6 +45,12 @@ ailloy config
 ailloy "Explain the Rust borrow checker in one sentence"
 ```
 
+### Generate an image
+
+```bash
+ailloy "A sunset over the ocean" -o sunset.png
+```
+
 ## Use as a Library
 
 Add ailloy to your project without CLI dependencies:
@@ -116,6 +122,21 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
+### Image generation
+
+```rust
+use ailloy::Client;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let image = client.generate_image("A sunset over the ocean").await?;
+    std::fs::write("sunset.png", &image.data)?;
+    println!("{}x{} {}", image.width, image.height, image.format);
+    Ok(())
+}
+```
+
 ## Providers
 
 | Provider | Kind | Chat | Stream | Images | Embeddings | Auth |
@@ -126,7 +147,10 @@ async fn main() -> anyhow::Result<()> {
 | Microsoft Foundry | `microsoft-foundry` | yes | yes | — | yes | API key / `az` CLI |
 | Google Vertex AI | `vertex-ai` | yes | yes | Imagen | yes | `gcloud` CLI |
 | Ollama | `ollama` | yes | yes | — | yes | None |
+| LM Studio | `openai` | yes | yes | — | — | None |
 | Local Agent | `local-agent` | yes | yes | — | — | None |
+
+**LM Studio** uses the OpenAI-compatible API (`http://localhost:1234` by default). **Local Agent** delegates to CLI tools installed on your system: `claude`, `codex`, or `copilot`.
 
 ## Configuration
 
@@ -152,6 +176,12 @@ nodes:
     provider: ollama
     model: llama3.2
     endpoint: http://localhost:11434
+    capabilities: [chat]
+
+  lm-studio/qwen3.5:
+    provider: openai
+    model: qwen3.5
+    endpoint: http://localhost:1234
     capabilities: [chat]
 
 defaults:
@@ -184,13 +214,14 @@ Create `.ailloy.yaml` in your project root to override or add nodes for that pro
 ```bash
 ailloy "message" --node ollama/llama3.2  # Use a specific node
 ailloy "message" --system "Be brief"     # Set a system prompt
-ailloy "message" --stream                # Stream response tokens
+ailloy "message" --stream                # Stream response tokens (always on in -i mode)
 ailloy "message" --max-tokens 100        # Limit response length
 ailloy "message" --temperature 0.7       # Control randomness
 ailloy "message" -o response.txt         # Save response to file
 ailloy "message" -o image.png            # Generate an image
 ailloy "message" -o diagram.svg          # Generate SVG via chat
 echo "prompt" | ailloy                   # Pipe input via stdin
+ailloy "message" --raw                   # Raw output (no newline, no metadata)
 ailloy -v chat "message"                 # Debug logging
 ailloy -q chat "message"                 # Quiet mode
 ```

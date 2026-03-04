@@ -68,14 +68,7 @@ impl ProviderKind {
         matches!(
             (self, task),
             (_, "chat")
-                | (
-                    Self::OpenAi
-                        | Self::AzureOpenAi
-                        | Self::MicrosoftFoundry
-                        | Self::VertexAi
-                        | Self::Ollama,
-                    "image",
-                )
+                | (Self::OpenAi | Self::AzureOpenAi | Self::VertexAi, "image",)
                 | (
                     Self::OpenAi
                         | Self::AzureOpenAi
@@ -963,9 +956,9 @@ mod tests {
         assert!(ProviderKind::OpenAi.supports_task("image"));
         assert!(!ProviderKind::Anthropic.supports_task("image"));
         assert!(ProviderKind::AzureOpenAi.supports_task("image"));
-        assert!(ProviderKind::MicrosoftFoundry.supports_task("image"));
+        assert!(!ProviderKind::MicrosoftFoundry.supports_task("image"));
         assert!(ProviderKind::VertexAi.supports_task("image"));
-        assert!(ProviderKind::Ollama.supports_task("image"));
+        assert!(!ProviderKind::Ollama.supports_task("image"));
         assert!(!ProviderKind::LocalAgent.supports_task("image"));
     }
 
@@ -1049,7 +1042,7 @@ consents:
     fn test_supported_capabilities_ollama() {
         let caps = ProviderKind::Ollama.supported_capabilities();
         assert!(caps.contains(&Capability::Chat));
-        assert!(caps.contains(&Capability::Image));
+        assert!(!caps.contains(&Capability::Image));
         assert!(caps.contains(&Capability::Embedding));
     }
 
