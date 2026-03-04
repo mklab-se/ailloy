@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-03-04
+
+### Fixed
+
+- **Local agent CLI invocation** — each local agent binary now uses its correct non-interactive invocation: `codex exec`, `copilot --prompt`, `claude --print`. Previously all agents were invoked with `--print`, which only works for Claude.
+
 ## [0.4.0] - 2026-03-04
 
 ### Added

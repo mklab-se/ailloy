@@ -45,6 +45,38 @@ impl LocalAgentClient {
             .collect::<Vec<_>>()
             .join("\n")
     }
+
+    /// Build the command arguments for a non-interactive invocation.
+    /// Each binary has a different CLI interface:
+    /// - `claude`: `claude --print <prompt>`
+    /// - `codex`: `codex exec <prompt>`
+    /// - `copilot`: `copilot --prompt <prompt>`
+    /// - Others: fall back to `<binary> --print <prompt>`
+    fn build_command(&self, prompt: &str) -> Command {
+        let mut cmd = Command::new(&self.binary);
+        let base = self
+            .binary
+            .rsplit('/')
+            .next()
+            .unwrap_or(&self.binary)
+            .to_lowercase();
+        match base.as_str() {
+            "codex" => {
+                cmd.arg("exec").arg(prompt);
+            }
+            "copilot" => {
+                cmd.arg("--prompt").arg(prompt);
+            }
+            _ => {
+                // claude and others use --print
+                cmd.arg("--print").arg(prompt);
+            }
+        }
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        cmd
+    }
 }
 
 #[async_trait]
@@ -62,12 +94,8 @@ impl Provider for LocalAgentClient {
 
         debug!(binary = %self.binary, "Sending prompt to local agent");
 
-        let output = Command::new(&self.binary)
-            .arg("--print")
-            .arg(&prompt)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+        let output = self
+            .build_command(&prompt)
             .output()
             .await
             .with_context(|| {
@@ -100,19 +128,12 @@ impl Provider for LocalAgentClient {
 
         debug!(binary = %self.binary, "Sending streaming prompt to local agent");
 
-        let mut child = Command::new(&self.binary)
-            .arg("--print")
-            .arg(&prompt)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .with_context(|| {
-                format!(
-                    "Failed to execute '{}'. Is it installed and in your PATH?",
-                    self.binary
-                )
-            })?;
+        let mut child = self.build_command(&prompt).spawn().with_context(|| {
+            format!(
+                "Failed to execute '{}'. Is it installed and in your PATH?",
+                self.binary
+            )
+        })?;
 
         let stdout = child
             .stdout
@@ -162,5 +183,70 @@ impl Provider for LocalAgentClient {
         );
 
         Ok(Box::pin(stream))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to extract args from a Command (via Debug format).
+    fn command_args(cmd: &Command) -> String {
+        format!("{:?}", cmd)
+    }
+
+    #[test]
+    fn test_build_command_claude() {
+        let client = LocalAgentClient::new("claude");
+        let cmd = client.build_command("Hello");
+        let debug = command_args(&cmd);
+        assert!(debug.contains("\"--print\""), "claude should use --print");
+        assert!(debug.contains("\"Hello\""));
+    }
+
+    #[test]
+    fn test_build_command_codex() {
+        let client = LocalAgentClient::new("codex");
+        let cmd = client.build_command("Hello");
+        let debug = command_args(&cmd);
+        assert!(
+            debug.contains("\"exec\""),
+            "codex should use exec subcommand"
+        );
+        assert!(debug.contains("\"Hello\""));
+    }
+
+    #[test]
+    fn test_build_command_copilot() {
+        let client = LocalAgentClient::new("copilot");
+        let cmd = client.build_command("Hello");
+        let debug = command_args(&cmd);
+        assert!(
+            debug.contains("\"--prompt\""),
+            "copilot should use --prompt"
+        );
+        assert!(debug.contains("\"Hello\""));
+    }
+
+    #[test]
+    fn test_build_command_full_path() {
+        let client = LocalAgentClient::new("/usr/local/bin/codex");
+        let cmd = client.build_command("Hello");
+        let debug = command_args(&cmd);
+        assert!(
+            debug.contains("\"exec\""),
+            "full path codex should use exec"
+        );
+    }
+
+    #[test]
+    fn test_build_command_unknown_binary() {
+        let client = LocalAgentClient::new("my-custom-agent");
+        let cmd = client.build_command("Hello");
+        let debug = command_args(&cmd);
+        assert!(
+            debug.contains("\"--print\""),
+            "unknown binary should fall back to --print"
+        );
     }
 }
