@@ -17,6 +17,9 @@ pub fn print_banner() {
         "ailloy".bold(),
         env!("CARGO_PKG_VERSION").dimmed()
     );
-    println!("  {}", "An AI abstraction layer for Rust".dimmed());
+    println!(
+        "  {}",
+        "Build Rust tools with AI, without vendor lock-in".dimmed()
+    );
     println!();
 }

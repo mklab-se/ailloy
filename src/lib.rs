@@ -1,8 +1,11 @@
-//! Ailloy — An AI abstraction layer for Rust.
+//! Ailloy — Vendor-flexible AI integration for Rust tools.
 //!
-//! This crate provides a unified interface for interacting with multiple AI providers
-//! including OpenAI, Anthropic, Azure OpenAI, Google Vertex AI, Ollama, and local CLI
-//! agents (Claude, Codex, Copilot).
+//! Ailloy is built for developers shipping tools to other users when those users may
+//! have access to different AI vendors or environments. Integrate once in Rust, then
+//! let each user configure the AI path they already have.
+//!
+//! Supported options include OpenAI, Anthropic, Azure OpenAI, Microsoft Foundry,
+//! Google Vertex AI, Ollama, and local CLI agents (Claude, Codex, Copilot).
 //!
 //! # Quick start
 //!

@@ -1,10 +1,10 @@
 # Ailloy API Vision
 
-This document describes the target API for ailloy — both the CLI interface and the Rust library API. It serves as a design validation tool: if we can read through these examples and they feel right, we're building the right thing.
+This document describes the target API for ailloy. The primary product is the Rust library API for tool builders; the CLI is a secondary convenience layer. It serves as a design validation tool: if these examples feel right, we're building the right thing.
 
 ---
 
-## Part 1: CLI Use Cases
+## Part 1: Optional CLI Use Cases
 
 ### The default command
 

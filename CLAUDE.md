@@ -1,6 +1,6 @@
 # ailloy
 
-An AI abstraction layer for Rust.
+Vendor-flexible AI integration for Rust tools, with an optional CLI.
 
 ## Commands
 

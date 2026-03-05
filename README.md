@@ -4,7 +4,7 @@
 
 <h1 align="center">ailloy</h1>
 
-<p align="center">An AI abstraction layer for Rust</p>
+<p align="center">Build Rust tools with AI, without locking your users to one vendor</p>
 
 <p align="center">
   <a href="https://github.com/mklab-se/ailloy/actions/workflows/ci.yml"><img src="https://github.com/mklab-se/ailloy/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -16,44 +16,58 @@
 
 ---
 
-Ailloy provides a unified interface for interacting with multiple AI providers from Rust — both as a **CLI tool** for quick tasks and scripting, and as a **library** for integration into your own projects.
+If you build Rust tools for other people, Ailloy is for you.
 
-## Quick Start
+Build once. Let your users choose their AI.
 
-### Install the CLI
+Most teams adding AI to a Rust product face the same problem: you do not know what AI access your users have.
+Some users have OpenAI API keys. Others only have Azure OpenAI or Foundry access. Others can only use locally installed agents like `claude`, `codex`, or `copilot`.
 
-```bash
-# Homebrew (macOS/Linux)
-brew install mklab-se/tap/ailloy
+Ailloy solves that distribution problem.
 
-# Cargo
-cargo install ailloy
+You integrate one Rust library once, and your users can bring their own AI path through configuration.
 
-# Cargo binstall (pre-built binary)
-cargo binstall ailloy
-```
+## The Core Promise
 
-### Configure a provider
+- You add AI features once in Rust.
+- Your users keep freedom to use the AI access they already have.
+- You avoid re-implementing provider setup, auth flows, and selection UX in every new tool.
 
-```bash
-ailloy config
-```
+## What Ailloy Is
 
-### Send a message
+- **First: a Rust library for shipping AI-enabled tools to diverse users.**
+  Ailloy helps you ship AI features when your users have different vendor access, security constraints, and account setups.
 
-```bash
-ailloy "Explain the Rust borrow checker in one sentence"
-```
+- **Second: an abstraction layer for AI interaction from Rust.**
+  The main goal is not to hide SDK ergonomics just for convenience. The main goal is to avoid hard-coding one vendor SDK into your product when your users may need another.
 
-### Generate an image
+- **Third: an optional standalone CLI.**
+  The `ailloy` binary is useful for quick terminal prompts, scripting, and setting global configuration, but it is not the primary reason the project exists.
 
-```bash
-ailloy "A sunset over the ocean" -o sunset.png
-```
+## Why Teams Adopt Ailloy
 
-## Use as a Library
+Imagine you are building a Rust diff tool and want AI to generate a plain-English explanation of file changes.
 
-Add ailloy to your project without CLI dependencies:
+Without Ailloy, you either:
+
+- implement and maintain multiple provider integrations yourself,
+- build repeated node/config/auth UX in each new tool,
+- or lock your users to one vendor.
+
+With Ailloy, you integrate once and let users pick what they already have:
+
+- OpenAI API key,
+- Azure OpenAI or Foundry,
+- Ollama or LM Studio,
+- or a local agent CLI like Claude Code.
+
+That means faster delivery for you, less vendor lock-in for your users, and reusable AI plumbing across all your Rust tools.
+
+If you are building multiple Rust tools over time, this compounds quickly: integrate once, reuse everywhere.
+
+## Library Quick Start (Primary)
+
+Add Ailloy to your project without CLI dependencies:
 
 ```toml
 [dependencies]
@@ -61,6 +75,8 @@ ailloy = { version = "0.4", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 anyhow = "1"
 ```
+
+Then call Ailloy from your app and let runtime config decide which provider is used:
 
 ### Async (recommended)
 
@@ -135,6 +151,34 @@ async fn main() -> anyhow::Result<()> {
     println!("{}x{} {}", image.width, image.height, image.format);
     Ok(())
 }
+```
+
+## Optional CLI (Secondary)
+
+If you want a terminal workflow or scripting support, install the CLI:
+
+```bash
+# Homebrew (macOS/Linux)
+brew install mklab-se/tap/ailloy
+
+# Cargo
+cargo install ailloy
+
+# Cargo binstall (pre-built binary)
+cargo binstall ailloy
+```
+
+Configure your nodes:
+
+```bash
+ailloy config
+```
+
+Use it directly:
+
+```bash
+ailloy "Explain the Rust borrow checker in one sentence"
+ailloy "A sunset over the ocean" -o sunset.png
 ```
 
 ## Providers

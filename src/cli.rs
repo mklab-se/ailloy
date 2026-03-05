@@ -1,7 +1,11 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "ailloy", version, about = "An AI abstraction layer for Rust")]
+#[command(
+    name = "ailloy",
+    version,
+    about = "Vendor-flexible AI for Rust tools (CLI optional)"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
