@@ -11,8 +11,8 @@ use tracing::debug;
 
 use crate::client::Provider;
 use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, EmbeddingResponse, ImageFormat, ImageOptions,
-    ImageResponse, Message, StreamEvent, Usage,
+    ChatOptions, ChatResponse, ChatStream, ImageFormat, ImageOptions, ImageResponse, Message,
+    StreamEvent, Usage,
 };
 
 const DEFAULT_ENDPOINT: &str = "https://api.openai.com";
@@ -128,31 +128,6 @@ enum ResponsesOutput {
     },
     #[serde(other)]
     Other,
-}
-
-// Embedding types
-#[derive(Serialize)]
-struct EmbeddingRequest<'a> {
-    model: &'a str,
-    input: &'a str,
-}
-
-#[derive(Deserialize)]
-struct EmbeddingApiResponse {
-    data: Vec<EmbeddingData>,
-    model: String,
-    usage: Option<EmbeddingUsage>,
-}
-
-#[derive(Deserialize)]
-struct EmbeddingData {
-    embedding: Vec<f32>,
-}
-
-#[derive(Deserialize)]
-struct EmbeddingUsage {
-    prompt_tokens: u32,
-    total_tokens: u32,
 }
 
 impl OpenAiClient {
@@ -580,54 +555,5 @@ impl Provider for OpenAiClient {
         } else {
             self.generate_image_via_responses_api(prompt, options).await
         }
-    }
-
-    async fn embed(&self, input: &str) -> Result<EmbeddingResponse> {
-        let url = format!("{}/v1/embeddings", self.base_url());
-        debug!(url = %url, "Sending embedding request");
-
-        let request = EmbeddingRequest {
-            model: &self.model,
-            input,
-        };
-
-        let response = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.api_key)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send embedding request")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            let message = serde_json::from_str::<ApiError>(&body)
-                .map(|e| e.error.message)
-                .unwrap_or(body);
-            anyhow::bail!("OpenAI embedding error ({}): {}", status.as_u16(), message);
-        }
-
-        let api_response: EmbeddingApiResponse = response
-            .json()
-            .await
-            .context("Failed to parse embedding response")?;
-
-        let vector = api_response
-            .data
-            .first()
-            .map(|d| d.embedding.clone())
-            .unwrap_or_default();
-
-        Ok(EmbeddingResponse {
-            vector,
-            model: api_response.model,
-            usage: api_response.usage.map(|u| Usage {
-                prompt_tokens: u.prompt_tokens,
-                completion_tokens: 0,
-                total_tokens: u.total_tokens,
-            }),
-        })
     }
 }

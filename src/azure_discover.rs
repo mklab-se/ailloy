@@ -1,3 +1,8 @@
+//! Azure CLI wrappers for discovering subscriptions, resources, and deployments.
+//!
+//! Gated behind the `config-tui` feature. Wraps the `az` CLI to discover
+//! Azure OpenAI and Microsoft Foundry resources.
+
 use anyhow::{Context, Result};
 use serde::Deserialize;
 

@@ -1,6 +1,6 @@
 [package]
 name = "ailloy"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
 authors = ["Kristofer Liljeblad <kristofer@mklab.se>"]
 license = "MIT"
@@ -19,15 +19,15 @@ required-features = ["cli"]
 [features]
 default = ["cli"]
 cli = [
+    "config-tui",
     "dep:clap",
     "dep:clap_complete",
-    "dep:inquire",
-    "dep:colored",
     "dep:tracing-subscriber",
     "dep:semver",
     "tokio/rt-multi-thread",
     "tokio/macros",
 ]
+config-tui = ["dep:inquire", "dep:colored", "dep:crossterm"]
 
 [dependencies]
 # Core (always included)
@@ -49,6 +49,7 @@ clap = { version = "4.5", features = ["derive", "env", "wrap_help"], optional = 
 clap_complete = { version = "4.5", optional = true }
 inquire = { version = "0.7", optional = true }
 colored = { version = "2.1", optional = true }
+crossterm = { version = "0.28", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 semver = { version = "1.0", optional = true }
 

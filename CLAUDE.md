@@ -23,8 +23,13 @@ src/
   config.rs           # Config types (AiNode, Capability, Auth, ProviderKind, Config),
                       #   load/save, local config merge, node CRUD, alias resolution,
                       #   capability filtering, ALL_CAPABILITIES constant
+  config_tui.rs       # Shared interactive config TUI (requires "config-tui" feature) —
+                      #   consent prompts, interactive wizard, node setup, enable/disable,
+                      #   status display, test chat, reset, Azure/Foundry discovery flows
+  azure_discover.rs   # Azure CLI wrappers (requires "config-tui" feature) —
+                      #   list subscriptions, resources, deployments via `az` CLI
   types.rs            # Message, Role, ChatResponse, ChatOptions, StreamEvent, ChatStream,
-                      #   ImageResponse, ImageOptions, EmbeddingResponse, Task, Usage
+                      #   ImageResponse, ImageOptions, Task, Usage
   error.rs            # ClientError enum (thiserror) — Http, Api, Json, NotConfigured,
                       #   BinaryNotFound, NodeNotFound, Unsupported, Other
   client.rs           # Provider trait, Client struct, ClientBuilder, create_provider_from_node()
@@ -32,12 +37,12 @@ src/
   blocking.rs         # Sync client wrapper (internal tokio current-thread runtime)
   discover.rs         # Discovery library API — discover_env_keys(), discover_local(),
                       #   discover_ollama(), DiscoveredNode struct
-  openai.rs           # OpenAI client — chat, stream (SSE), image gen, embeddings
+  openai.rs           # OpenAI client — chat, stream (SSE), image gen
   anthropic.rs        # Anthropic client — chat, stream (SSE)
-  azure.rs            # Azure OpenAI client — chat, stream (SSE), image gen, embeddings
-  foundry.rs          # Microsoft Foundry client — chat, stream (SSE), embeddings
-  vertex.rs           # Vertex AI client — Gemini chat/stream, Imagen, embeddings
-  ollama.rs           # Ollama client — chat, stream (NDJSON), embeddings
+  azure.rs            # Azure OpenAI client — chat, stream (SSE), image gen
+  foundry.rs          # Microsoft Foundry client — chat, stream (SSE)
+  vertex.rs           # Vertex AI client — Gemini chat/stream, Imagen
+  ollama.rs           # Ollama client — chat, stream (NDJSON)
   local_agent.rs      # Local CLI agent (claude, codex, copilot) — chat, stream (line-buffered)
   main.rs             # CLI entry point (requires "cli" feature)
   cli.rs              # Clap CLI definitions (requires "cli" feature)
@@ -45,36 +50,34 @@ src/
   update.rs           # Background update checker via crates.io (requires "cli" feature)
   commands/
     mod.rs            # Command module exports
-    azure_discover.rs # Azure CLI wrappers: list subscriptions, resources, deployments
+    ai.rs             # `ailloy ai` — unified AI management dispatcher, backward-compat handlers
     chat.rs           # `ailloy chat` — chat, streaming, image gen, SVG, interactive, stdin
-    config_cmd.rs     # `ailloy config` — interactive wizard (inquire prompts), node detail/edit,
-                      #   `config show/set/get/unset`, add-node flows (Azure/Foundry discovery)
+    config_cmd.rs     # Non-interactive config commands: `show/set/get/unset`
     completion.rs     # `ailloy completion` — shell completions
-    consent.rs        # Reusable CLI tool consent prompt/check (ConsentResult, ensure_consent)
-    nodes.rs          # `ailloy nodes list/add/edit/remove/default/show` — node management
-    discover.rs       # `ailloy discover` — auto-detect available AI providers/models
 ```
 
 ## Feature Flags
 
 - `default = ["cli"]` — includes CLI binary and all CLI dependencies
-- `cli` — enables clap, inquire, colored, tracing-subscriber, semver, and tokio runtime features
-- Library users: `ailloy = { version = "0.4", default-features = false }`
+- `cli` — enables `config-tui`, clap, tracing-subscriber, semver, and tokio runtime features
+- `config-tui` — enables interactive config wizards, table-based TUI, status display, enable/disable (inquire, colored, crossterm); consumer projects use this without pulling in clap
+- Library users (pure): `ailloy = { version = "0.5", default-features = false }`
+- Library users (with TUI): `ailloy = { version = "0.5", default-features = false, features = ["config-tui"] }`
 - CLI users: `cargo install ailloy` (uses default features)
 
 ## Key Patterns
 
 - Feature-flagged single crate: library code always compiles, CLI code gated behind `cli` feature via `required-features` on `[[bin]]`
 - **AI Nodes**: atomic config units representing a specific model from a specific provider with connection details and capability tags; node IDs follow `{provider}/{model|deployment|binary}` pattern with optional `alias` for shorthand
-- **Provider trait** (`client.rs`): unified `async_trait` with default methods returning `Unsupported` — `name()`, `chat()`, `chat_stream()`, `generate_image()`, `embed()`
+- **Provider trait** (`client.rs`): unified `async_trait` with default methods returning `Unsupported` — `name()`, `chat()`, `chat_stream()`, `generate_image()`
 - **Client** wraps `Box<dyn Provider>` — constructed via `from_config()`, `with_node()`, `for_capability()`, `from_node()`, `builder()`, or direct constructors (`Client::openai()`, `Client::anthropic()`, etc.)
 - **Streaming**: SSE parsing for OpenAI/Anthropic/Azure/Vertex via `futures_util::stream::unfold`, NDJSON for Ollama, line-buffered for local agents
-- **Config**: `nodes` map of `AiNode` structs; `defaults` map routes capability names (chat, image, embedding) to node IDs; `Auth` enum supports `env`, `api_key`, `azure_cli`, `gcloud_cli`; all config maps use `BTreeMap` for deterministic serialization
-- **Interactive config wizard**: `ailloy config` uses sequential `inquire` prompts (Select/Confirm/Text) — no TUI framework; `ProviderKind::supports_task()` drives capability filtering
-- **Discovery**: `discover.rs` library provides `discover_env_keys()`, `discover_local()`, `discover_ollama()` returning data only; CLI layer (`commands/discover.rs`) handles interaction
+- **Config**: `nodes` map of `AiNode` structs; `defaults` map routes capability names (chat, image) to node IDs; `Auth` enum supports `env`, `api_key`, `azure_cli`, `gcloud_cli`; all config maps use `BTreeMap` for deterministic serialization
+- **Interactive config TUI**: `ailloy ai config` shows a crossterm-based table of nodes with capability columns; form-based editor for adding/editing nodes; `ProviderKind::supports_task()` drives capability filtering; TUI logic lives in `config_tui.rs` (library level, gated on `config-tui` feature) so consumer projects can reuse it
+- **Discovery**: `discover.rs` library provides `discover_env_keys()`, `discover_local()`, `discover_ollama()` returning data only; Azure/Foundry discovery is in `azure_discover.rs` (library level, gated on `config-tui`), integrated into the `ai config` wizard's add-node flow
 - **Local config**: `.ailloy.yaml` in current or parent directories, merged with global config (nodes/defaults merge, consents are global-only)
 - **CLI tool consent**: `consents` map in config tracks user permission for external tools (`azure-cli`, `gcloud-cli`); security decisions use global config only (not overridable by local `.ailloy.yaml`)
-- **Azure auto-discovery**: `azure_discover.rs` wraps `az` CLI for subscription/resource/deployment listing; discovers both `kind=='OpenAI'` and `kind=='AIServices'` resources; `ailloy config` uses it when user consents
+- **Azure auto-discovery**: `azure_discover.rs` wraps `az` CLI for subscription/resource/deployment listing; discovers both `kind=='OpenAI'` and `kind=='AIServices'` resources; `ailloy ai config` wizard uses it when user consents
 - **Blocking wrapper**: `blocking::Client` with internal `tokio::runtime::Builder::new_current_thread()` — mirrors async Client API
 - **Conversation**: `Conversation` struct with pluggable `ChatHistory` trait and `InMemoryHistory` default
 - CLI built with `clap` derive macros + `clap_complete` for shell completions

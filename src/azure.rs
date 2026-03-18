@@ -11,8 +11,8 @@ use tracing::debug;
 
 use crate::client::Provider;
 use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, EmbeddingResponse, ImageFormat, ImageOptions,
-    ImageResponse, Message, StreamEvent, Usage,
+    ChatOptions, ChatResponse, ChatStream, ImageFormat, ImageOptions, ImageResponse, Message,
+    StreamEvent, Usage,
 };
 
 /// Authentication method for Azure OpenAI.
@@ -121,30 +121,6 @@ struct ImageData {
     revised_prompt: Option<String>,
 }
 
-// Embedding types
-#[derive(Serialize)]
-struct EmbeddingRequest<'a> {
-    input: &'a str,
-}
-
-#[derive(Deserialize)]
-struct EmbeddingApiResponse {
-    data: Vec<EmbeddingData>,
-    model: String,
-    usage: Option<EmbeddingUsage>,
-}
-
-#[derive(Deserialize)]
-struct EmbeddingData {
-    embedding: Vec<f32>,
-}
-
-#[derive(Deserialize)]
-struct EmbeddingUsage {
-    prompt_tokens: u32,
-    total_tokens: u32,
-}
-
 impl AzureOpenAiClient {
     /// Create a new Azure OpenAI client.
     pub fn new(
@@ -178,15 +154,6 @@ impl AzureOpenAiClient {
     fn image_url(&self) -> String {
         format!(
             "{}/openai/deployments/{}/images/generations?api-version={}",
-            self.base_url(),
-            self.deployment,
-            self.api_version
-        )
-    }
-
-    fn embedding_url(&self) -> String {
-        format!(
-            "{}/openai/deployments/{}/embeddings?api-version={}",
             self.base_url(),
             self.deployment,
             self.api_version
@@ -494,51 +461,6 @@ impl Provider for AzureOpenAiClient {
             height,
             format: ImageFormat::Png,
             revised_prompt: image_data.revised_prompt.clone(),
-        })
-    }
-
-    async fn embed(&self, input: &str) -> Result<EmbeddingResponse> {
-        let url = self.embedding_url();
-        debug!(url = %url, "Sending embedding request to Azure OpenAI");
-
-        let (header_name, header_value) = self.get_auth_header().await?;
-
-        let request = EmbeddingRequest { input };
-
-        let response = self
-            .client
-            .post(&url)
-            .header(header_name, &header_value)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send embedding request to Azure OpenAI")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
-        }
-
-        let api_response: EmbeddingApiResponse = response
-            .json()
-            .await
-            .context("Failed to parse Azure embedding response")?;
-
-        let vector = api_response
-            .data
-            .first()
-            .map(|d| d.embedding.clone())
-            .unwrap_or_default();
-
-        Ok(EmbeddingResponse {
-            vector,
-            model: api_response.model,
-            usage: api_response.usage.map(|u| Usage {
-                prompt_tokens: u.prompt_tokens,
-                completion_tokens: 0,
-                total_tokens: u.total_tokens,
-            }),
         })
     }
 }

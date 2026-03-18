@@ -1,6 +1,6 @@
 //! Microsoft Foundry client.
 //!
-//! Supports chat completions, streaming, and embeddings via the Model
+//! Supports chat completions and streaming via the Model
 //! Inference API (`*.services.ai.azure.com`).
 
 use std::process::Stdio;
@@ -13,9 +13,7 @@ use tracing::debug;
 
 use crate::azure::AzureAuth;
 use crate::client::Provider;
-use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, EmbeddingResponse, Message, StreamEvent, Usage,
-};
+use crate::types::{ChatOptions, ChatResponse, ChatStream, Message, StreamEvent, Usage};
 
 /// Client for Microsoft Foundry (AI Services).
 pub struct FoundryClient {
@@ -91,31 +89,6 @@ struct StreamDelta {
     content: Option<String>,
 }
 
-// Embedding types
-#[derive(Serialize)]
-struct EmbeddingRequest<'a> {
-    model: &'a str,
-    input: &'a str,
-}
-
-#[derive(Deserialize)]
-struct EmbeddingApiResponse {
-    data: Vec<EmbeddingData>,
-    model: String,
-    usage: Option<EmbeddingUsage>,
-}
-
-#[derive(Deserialize)]
-struct EmbeddingData {
-    embedding: Vec<f32>,
-}
-
-#[derive(Deserialize)]
-struct EmbeddingUsage {
-    prompt_tokens: u32,
-    total_tokens: u32,
-}
-
 impl FoundryClient {
     /// Create a new Microsoft Foundry client.
     pub fn new(
@@ -142,14 +115,6 @@ impl FoundryClient {
     fn chat_url(&self) -> String {
         format!(
             "{}/models/chat/completions?api-version={}",
-            self.base_url(),
-            self.api_version
-        )
-    }
-
-    fn embedding_url(&self) -> String {
-        format!(
-            "{}/models/embeddings?api-version={}",
             self.base_url(),
             self.api_version
         )
@@ -387,53 +352,5 @@ impl Provider for FoundryClient {
         );
 
         Ok(Box::pin(stream))
-    }
-
-    async fn embed(&self, input: &str) -> Result<EmbeddingResponse> {
-        let url = self.embedding_url();
-        debug!(url = %url, model = %self.model, "Sending embedding request to Microsoft Foundry");
-
-        let (header_name, header_value) = self.get_auth_header().await?;
-
-        let request = EmbeddingRequest {
-            model: &self.model,
-            input,
-        };
-
-        let response = self
-            .client
-            .post(&url)
-            .header(header_name, &header_value)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send embedding request to Microsoft Foundry")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
-        }
-
-        let api_response: EmbeddingApiResponse = response
-            .json()
-            .await
-            .context("Failed to parse Microsoft Foundry embedding response")?;
-
-        let vector = api_response
-            .data
-            .first()
-            .map(|d| d.embedding.clone())
-            .unwrap_or_default();
-
-        Ok(EmbeddingResponse {
-            vector,
-            model: api_response.model,
-            usage: api_response.usage.map(|u| Usage {
-                prompt_tokens: u.prompt_tokens,
-                completion_tokens: 0,
-                total_tokens: u.total_tokens,
-            }),
-        })
     }
 }

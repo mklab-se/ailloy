@@ -5,11 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-03-18
+
+### Added
+
+- **Interactive table-based config TUI** — `ailloy ai config` now shows a keyboard-navigable table of all AI nodes with capability columns. Arrow keys to navigate, `a` to add, `Enter` to edit, `d` to delete, `q` to quit
+- **Form-based node editor** — pressing Enter on a node opens an inline form with text fields, capability checkboxes, and default toggles. No more dropping out of the TUI into a different prompt style
+- **`config-tui` feature flag** — new feature that gates interactive config wizards, status display, enable/disable, and test functions behind `inquire` + `colored` + `crossterm` deps. The `cli` feature implies `config-tui`. Library consumers can opt into `config-tui` without pulling in clap: `ailloy = { version = "0.5", default-features = false, features = ["config-tui"] }`
+- **`ailloy::config_tui` module** — shared interactive configuration TUI for consumer projects (hoist, cosq, mdeck). Provides `print_ai_status()`, `print_nodes_list()`, `run_interactive_config()`, `add_node_interactive()`, `edit_node_interactive()`, `run_test_chat()`, `enable_ai()`, `disable_ai()`, `is_ai_active()`, `reset_config()`, and consent helpers
+- **`ailloy::azure_discover` module** — Azure CLI wrappers moved from CLI-only to library level, accessible to consumer projects with `config-tui` feature
+- **`ailloy ai` command** — new unified AI management command with subcommands: `config`, `test`, `enable`, `disable`
+- **`ailloy ai config` subcommands** — `add-node`, `edit-node`, `delete-node`, `set-default`, `list-nodes`, `show-node`, `show`, `set`, `get`, `unset`, `reset`
 
 ### Changed
 
+- **CLI command restructure** — `ailloy config`, `ailloy nodes`, and `ailloy discover` are now under `ailloy ai config`. Old commands still work with deprecation notices
 - **Positioning and docs messaging** — clarified Ailloy as library-first for Rust tool builders who need vendor-flexible AI integration for end users; reframed CLI as optional/secondary across README, install docs, crate metadata, and CLI-facing text
+
+### Removed
+
+- **Embedding support** — `Capability::Embedding`, `EmbeddingResponse`, `Task::Embedding`, and all provider `embed()` implementations removed. Ailloy now supports Chat and Image Generation only
+- **`Client::embed()` and `blocking::Client::embed()`** — embedding API methods removed from both async and sync clients
+
+### Deprecated
+
+- **`ailloy config`** — use `ailloy ai config` instead
+- **`ailloy nodes`** — use `ailloy ai config` subcommands instead
+- **`ailloy discover`** — discovery is now integrated into `ailloy ai config` wizard
 
 ## [0.4.2] - 2026-03-04
 

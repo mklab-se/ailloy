@@ -67,16 +67,7 @@ impl ProviderKind {
     pub fn supports_task(&self, task: &str) -> bool {
         matches!(
             (self, task),
-            (_, "chat")
-                | (Self::OpenAi | Self::AzureOpenAi | Self::VertexAi, "image",)
-                | (
-                    Self::OpenAi
-                        | Self::AzureOpenAi
-                        | Self::MicrosoftFoundry
-                        | Self::VertexAi
-                        | Self::Ollama,
-                    "embedding",
-                )
+            (_, "chat") | (Self::OpenAi | Self::AzureOpenAi | Self::VertexAi, "image",)
         )
     }
 
@@ -90,9 +81,6 @@ impl ProviderKind {
         let mut caps = vec![Capability::Chat];
         if self.supports_task("image") {
             caps.push(Capability::Image);
-        }
-        if self.supports_task("embedding") {
-            caps.push(Capability::Embedding);
         }
         caps
     }
@@ -108,7 +96,6 @@ impl ProviderKind {
 pub enum Capability {
     Chat,
     Image,
-    Embedding,
 }
 
 impl Capability {
@@ -117,7 +104,6 @@ impl Capability {
         match self {
             Self::Chat => "chat",
             Self::Image => "image",
-            Self::Embedding => "embedding",
         }
     }
 
@@ -126,7 +112,6 @@ impl Capability {
         match self {
             Self::Chat => "Chat",
             Self::Image => "Image Generation",
-            Self::Embedding => "Embeddings",
         }
     }
 }
@@ -143,11 +128,7 @@ impl std::str::FromStr for Capability {
         match s {
             "chat" => Ok(Self::Chat),
             "image" => Ok(Self::Image),
-            "embedding" => Ok(Self::Embedding),
-            _ => Err(format!(
-                "Unknown capability '{}'. Valid: chat, image, embedding",
-                s
-            )),
+            _ => Err(format!("Unknown capability '{}'. Valid: chat, image", s)),
         }
     }
 }
@@ -303,11 +284,7 @@ impl AiNode {
 // ---------------------------------------------------------------------------
 
 /// Ordered list of capability keys with human-readable labels.
-pub const ALL_CAPABILITIES: &[(&str, &str)] = &[
-    ("chat", "Chat"),
-    ("image", "Image Generation"),
-    ("embedding", "Embeddings"),
-];
+pub const ALL_CAPABILITIES: &[(&str, &str)] = &[("chat", "Chat"), ("image", "Image Generation")];
 
 /// Ordered list of task keys with human-readable labels (backward-compatible alias).
 pub const ALL_TASKS: &[(&str, &str)] = ALL_CAPABILITIES;
@@ -331,7 +308,7 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub nodes: BTreeMap<String, AiNode>,
 
-    /// Capability-level defaults: maps capability names ("chat", "image", "embedding")
+    /// Capability-level defaults: maps capability names ("chat", "image")
     /// to node IDs.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub defaults: BTreeMap<String, String>,
@@ -505,13 +482,13 @@ impl Config {
     pub fn default_node_for(&self, cap: &str) -> Result<(&str, &AiNode)> {
         let node_id = self.defaults.get(cap).with_context(|| {
             format!(
-                "No default node configured for '{}'. Run `ailloy config` to set one up.",
+                "No default node configured for '{}'. Run `ailloy ai config` to set one up.",
                 cap
             )
         })?;
         self.get_node(node_id).with_context(|| {
             format!(
-                "Default node '{}' for '{}' not found in config. Run `ailloy config` to fix.",
+                "Default node '{}' for '{}' not found in config. Run `ailloy ai config` to fix.",
                 node_id, cap
             )
         })
@@ -667,9 +644,6 @@ mod tests {
         let image_nodes = config.nodes_for_capability(&Capability::Image);
         assert_eq!(image_nodes.len(), 1);
         assert_eq!(image_nodes[0].0, "openai/gpt-4o");
-
-        let embed_nodes = config.nodes_for_capability(&Capability::Embedding);
-        assert_eq!(embed_nodes.len(), 0);
     }
 
     #[test]
@@ -701,13 +675,11 @@ mod tests {
         );
         config.set_default("chat", "openai/gpt-4o");
         config.set_default("image", "openai/gpt-4o");
-        config.set_default("embedding", "other/node");
 
         assert!(config.remove_node("openai/gpt-4o"));
         assert!(config.nodes.is_empty());
         assert!(!config.defaults.contains_key("chat"));
         assert!(!config.defaults.contains_key("image"));
-        assert_eq!(config.defaults.get("embedding").unwrap(), "other/node");
     }
 
     #[test]
@@ -782,7 +754,7 @@ mod tests {
 
     #[test]
     fn test_capability_serde() {
-        let yaml = "capabilities: [chat, image, embedding]\n";
+        let yaml = "capabilities: [chat, image]\n";
 
         #[derive(Deserialize)]
         struct Wrapper {
@@ -791,7 +763,7 @@ mod tests {
         let parsed: Wrapper = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(
             parsed.capabilities,
-            vec![Capability::Chat, Capability::Image, Capability::Embedding]
+            vec![Capability::Chat, Capability::Image]
         );
     }
 
@@ -799,10 +771,7 @@ mod tests {
     fn test_capability_from_str() {
         assert_eq!("chat".parse::<Capability>().unwrap(), Capability::Chat);
         assert_eq!("image".parse::<Capability>().unwrap(), Capability::Image);
-        assert_eq!(
-            "embedding".parse::<Capability>().unwrap(),
-            Capability::Embedding
-        );
+        assert!("embedding".parse::<Capability>().is_err());
         assert!("invalid".parse::<Capability>().is_err());
     }
 
@@ -963,17 +932,6 @@ mod tests {
     }
 
     #[test]
-    fn test_supports_task_embedding() {
-        assert!(ProviderKind::OpenAi.supports_task("embedding"));
-        assert!(!ProviderKind::Anthropic.supports_task("embedding"));
-        assert!(ProviderKind::AzureOpenAi.supports_task("embedding"));
-        assert!(ProviderKind::MicrosoftFoundry.supports_task("embedding"));
-        assert!(ProviderKind::VertexAi.supports_task("embedding"));
-        assert!(ProviderKind::Ollama.supports_task("embedding"));
-        assert!(!ProviderKind::LocalAgent.supports_task("embedding"));
-    }
-
-    #[test]
     fn test_supports_task_unknown() {
         assert!(!ProviderKind::OpenAi.supports_task("unknown"));
         assert!(!ProviderKind::OpenAi.supports_task(""));
@@ -1027,7 +985,6 @@ consents:
         let caps = ProviderKind::OpenAi.supported_capabilities();
         assert!(caps.contains(&Capability::Chat));
         assert!(caps.contains(&Capability::Image));
-        assert!(caps.contains(&Capability::Embedding));
     }
 
     #[test]
@@ -1035,7 +992,6 @@ consents:
         let caps = ProviderKind::Anthropic.supported_capabilities();
         assert!(caps.contains(&Capability::Chat));
         assert!(!caps.contains(&Capability::Image));
-        assert!(!caps.contains(&Capability::Embedding));
     }
 
     #[test]
@@ -1043,7 +999,6 @@ consents:
         let caps = ProviderKind::Ollama.supported_capabilities();
         assert!(caps.contains(&Capability::Chat));
         assert!(!caps.contains(&Capability::Image));
-        assert!(caps.contains(&Capability::Embedding));
     }
 
     #[test]
@@ -1051,6 +1006,5 @@ consents:
         let caps = ProviderKind::LocalAgent.supported_capabilities();
         assert!(caps.contains(&Capability::Chat));
         assert!(!caps.contains(&Capability::Image));
-        assert!(!caps.contains(&Capability::Embedding));
     }
 }

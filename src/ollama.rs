@@ -7,9 +7,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::client::Provider;
-use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, EmbeddingResponse, Message, StreamEvent,
-};
+use crate::types::{ChatOptions, ChatResponse, ChatStream, Message, StreamEvent};
 
 const DEFAULT_ENDPOINT: &str = "http://localhost:11434";
 
@@ -54,19 +52,6 @@ struct StreamChunk {
     message: Option<ResponseMessage>,
     model: Option<String>,
     done: bool,
-}
-
-// Embedding types
-#[derive(Serialize)]
-struct EmbedRequest<'a> {
-    model: &'a str,
-    input: &'a str,
-}
-
-#[derive(Deserialize)]
-struct EmbedResponse {
-    model: String,
-    embeddings: Vec<Vec<f32>>,
 }
 
 impl OllamaClient {
@@ -274,46 +259,5 @@ impl Provider for OllamaClient {
         );
 
         Ok(Box::pin(stream))
-    }
-
-    async fn embed(&self, input: &str) -> Result<EmbeddingResponse> {
-        let url = format!("{}/api/embed", self.base_url());
-        debug!(url = %url, model = %self.model, "Sending embedding request to Ollama");
-
-        let request = EmbedRequest {
-            model: &self.model,
-            input,
-        };
-
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send embedding request to Ollama. Is Ollama running?")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Ollama embedding error ({}): {}", status.as_u16(), body);
-        }
-
-        let api_response: EmbedResponse = response
-            .json()
-            .await
-            .context("Failed to parse Ollama embedding response")?;
-
-        let vector = api_response
-            .embeddings
-            .into_iter()
-            .next()
-            .unwrap_or_default();
-
-        Ok(EmbeddingResponse {
-            vector,
-            model: api_response.model,
-            usage: None,
-        })
     }
 }

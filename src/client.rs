@@ -6,8 +6,7 @@ use async_trait::async_trait;
 use crate::config::{AiNode, Auth, Config, ProviderKind};
 use crate::error::ClientError;
 use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, EmbeddingResponse, ImageOptions, ImageResponse, Message,
-    Task,
+    ChatOptions, ChatResponse, ChatStream, ImageOptions, ImageResponse, Message, Task,
 };
 
 /// Unified provider trait. Override methods for the capabilities you support.
@@ -43,11 +42,6 @@ pub trait Provider: Send + Sync {
     ) -> Result<ImageResponse> {
         Err(ClientError::Unsupported("image generation".to_string()).into())
     }
-
-    /// Generate an embedding vector from text.
-    async fn embed(&self, _input: &str) -> Result<EmbeddingResponse> {
-        Err(ClientError::Unsupported("embeddings".to_string()).into())
-    }
 }
 
 /// A high-level client that wraps a [`Provider`] for convenient AI interactions.
@@ -69,7 +63,7 @@ impl Client {
         let config = Config::load()?;
         let (id, node) = config.get_node(id_or_alias).ok_or_else(|| {
             ClientError::NodeNotFound(format!(
-                "Node '{}' not found in config. Run `ailloy config` to add it.",
+                "Node '{}' not found in config. Run `ailloy ai config` to add it.",
                 id_or_alias
             ))
         })?;
@@ -207,11 +201,6 @@ impl Client {
         options: &ImageOptions,
     ) -> Result<ImageResponse> {
         self.provider.generate_image(prompt, Some(options)).await
-    }
-
-    /// Generate an embedding vector from text.
-    pub async fn embed(&self, input: &str) -> Result<EmbeddingResponse> {
-        self.provider.embed(input).await
     }
 
     /// Get the provider name.
@@ -409,7 +398,7 @@ fn resolve_auth_api_key(auth: &Auth, node_id: &str) -> Result<String> {
     match auth {
         Auth::Env(var_name) => std::env::var(var_name).with_context(|| {
             format!(
-                "Environment variable '{}' not set for node '{}'. Set it or run `ailloy config` to change auth.",
+                "Environment variable '{}' not set for node '{}'. Set it or run `ailloy ai config` to change auth.",
                 var_name, node_id
             )
         }),

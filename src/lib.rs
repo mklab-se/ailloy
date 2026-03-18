@@ -22,9 +22,13 @@
 
 pub mod anthropic;
 pub mod azure;
+#[cfg(feature = "config-tui")]
+pub mod azure_discover;
 pub mod blocking;
 pub mod client;
 pub mod config;
+#[cfg(feature = "config-tui")]
+pub mod config_tui;
 pub mod conversation;
 pub mod discover;
 pub mod error;
@@ -42,6 +46,6 @@ pub use config::{AiNode, Auth, Capability};
 pub use conversation::{ChatHistory, Conversation, InMemoryHistory};
 pub use error::ClientError;
 pub use types::{
-    ChatOptions, ChatResponse, ChatStream, EmbeddingResponse, ImageFormat, ImageOptions,
-    ImageResponse, Message, Role, StreamEvent, Task, Usage,
+    ChatOptions, ChatResponse, ChatStream, ImageFormat, ImageOptions, ImageResponse, Message, Role,
+    StreamEvent, Task, Usage,
 };

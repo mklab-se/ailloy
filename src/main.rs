@@ -57,16 +57,48 @@ async fn main() -> Result<()> {
 
     let result = match cli.command {
         Commands::Chat(args) => commands::chat::run(args, quiet).await,
-        Commands::Config(args) => match args.command {
-            None => commands::config_cmd::run_interactive().await,
-            Some(ConfigCommands::Init) => commands::config_cmd::run_interactive().await,
-            Some(cmd) => commands::config_cmd::run(cmd).await,
-        },
-        Commands::Nodes(cmd) => commands::nodes::run(cmd).await,
-        Commands::Discover(args) => commands::discover::run(args).await,
+        Commands::Ai { command } => commands::ai::run(command).await,
         Commands::Completion(args) => commands::completion::run(args),
         Commands::Version => {
             banner::print_banner();
+            Ok(())
+        }
+
+        // Backward-compat: deprecated top-level commands
+        Commands::Config(args) => {
+            eprintln!(
+                "{}",
+                "Note: 'ailloy config' is deprecated, use 'ailloy ai config' instead."
+                    .yellow()
+                    .dimmed()
+            );
+            match args.command {
+                None | Some(ConfigCommands::Init) => {
+                    let mut config = ailloy::config::Config::load_global()?;
+                    ailloy::config_tui::run_interactive_config(&mut config, &["chat", "image"])
+                        .await?;
+                    Ok(())
+                }
+                Some(ConfigCommands::Show) => commands::config_cmd::run_show(),
+                Some(ConfigCommands::Set { key, value }) => {
+                    commands::config_cmd::run_set(&key, &value)
+                }
+                Some(ConfigCommands::Get { key }) => commands::config_cmd::run_get(&key),
+                Some(ConfigCommands::Unset { key }) => commands::config_cmd::run_unset(&key),
+            }
+        }
+        Commands::Nodes(cmd) => commands::ai::run_legacy_nodes(cmd).await,
+        Commands::Discover(_) => {
+            eprintln!(
+                "{}",
+                "Note: 'ailloy discover' has been removed. Discovery is now part of 'ailloy ai config'."
+                    .yellow()
+                    .dimmed()
+            );
+            eprintln!(
+                "Run {} to configure AI providers.",
+                "'ailloy ai config'".bold()
+            );
             Ok(())
         }
     };

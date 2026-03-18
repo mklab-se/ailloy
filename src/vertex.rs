@@ -11,8 +11,8 @@ use tracing::debug;
 
 use crate::client::Provider;
 use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, EmbeddingResponse, ImageFormat, ImageOptions,
-    ImageResponse, Message, Role, StreamEvent, Usage,
+    ChatOptions, ChatResponse, ChatStream, ImageFormat, ImageOptions, ImageResponse, Message, Role,
+    StreamEvent, Usage,
 };
 
 /// Client for Google Vertex AI (Gemini models, Imagen).
@@ -116,32 +116,6 @@ struct ImagenPrediction {
     bytes_base64_encoded: String,
     #[serde(rename = "mimeType")]
     mime_type: Option<String>,
-}
-
-// Embedding types
-#[derive(Serialize)]
-struct EmbedRequest {
-    instances: Vec<EmbedInstance>,
-}
-
-#[derive(Serialize)]
-struct EmbedInstance {
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct EmbedApiResponse {
-    predictions: Option<Vec<EmbedPrediction>>,
-}
-
-#[derive(Deserialize)]
-struct EmbedPrediction {
-    embeddings: EmbedValues,
-}
-
-#[derive(Deserialize)]
-struct EmbedValues {
-    values: Vec<f32>,
 }
 
 // Error types
@@ -577,51 +551,5 @@ impl Provider for VertexAiClient {
                 revised_prompt: None,
             })
         }
-    }
-
-    async fn embed(&self, input: &str) -> Result<EmbeddingResponse> {
-        let url = format!("{}:predict", self.base_url());
-        debug!(url = %url, model = %self.model, "Sending embedding request to Vertex AI");
-
-        let token = Self::get_access_token().await?;
-
-        let request = EmbedRequest {
-            instances: vec![EmbedInstance {
-                content: input.to_string(),
-            }],
-        };
-
-        let response = self
-            .client
-            .post(&url)
-            .bearer_auth(&token)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send embedding request to Vertex AI")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Vertex AI embedding error ({}): {}", status.as_u16(), body);
-        }
-
-        let api_response: EmbedApiResponse = response
-            .json()
-            .await
-            .context("Failed to parse Vertex AI embedding response")?;
-
-        let vector = api_response
-            .predictions
-            .as_ref()
-            .and_then(|p| p.first())
-            .map(|p| p.embeddings.values.clone())
-            .unwrap_or_default();
-
-        Ok(EmbeddingResponse {
-            vector,
-            model: self.model.clone(),
-            usage: None,
-        })
     }
 }

@@ -238,20 +238,11 @@ impl ImageOptionsBuilder {
     }
 }
 
-/// Response from an embedding request.
-#[derive(Debug, Clone)]
-pub struct EmbeddingResponse {
-    pub vector: Vec<f32>,
-    pub model: String,
-    pub usage: Option<Usage>,
-}
-
 /// Task types for provider routing.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Task {
     Chat,
     ImageGeneration,
-    Embedding,
     Transcription,
 }
 
@@ -261,7 +252,6 @@ impl Task {
         match self {
             Self::Chat => "chat",
             Self::ImageGeneration => "image",
-            Self::Embedding => "embedding",
             Self::Transcription => "transcription",
         }
     }
@@ -271,7 +261,6 @@ impl Task {
         match self {
             Self::Chat => Some(crate::config::Capability::Chat),
             Self::ImageGeneration => Some(crate::config::Capability::Image),
-            Self::Embedding => Some(crate::config::Capability::Embedding),
             Self::Transcription => None,
         }
     }
@@ -344,7 +333,6 @@ mod tests {
     fn test_task_config_key() {
         assert_eq!(Task::Chat.config_key(), "chat");
         assert_eq!(Task::ImageGeneration.config_key(), "image");
-        assert_eq!(Task::Embedding.config_key(), "embedding");
         assert_eq!(Task::Transcription.config_key(), "transcription");
     }
 

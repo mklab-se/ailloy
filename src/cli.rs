@@ -28,22 +28,119 @@ pub enum Commands {
     /// Send a message to the configured AI provider
     Chat(ChatArgs),
 
-    /// Manage ailloy configuration
-    Config(ConfigArgs),
-
-    /// List and manage AI nodes
-    #[command(subcommand)]
-    Nodes(NodeCommands),
-
-    /// Discover available AI providers and models
-    Discover(DiscoverArgs),
+    /// Manage AI configuration and providers
+    Ai {
+        #[command(subcommand)]
+        command: Option<AiCommands>,
+    },
 
     /// Generate shell completions
     Completion(CompletionArgs),
 
     /// Show version information
     Version,
+
+    // Hidden backward-compat aliases (deprecated)
+    #[command(hide = true)]
+    Config(ConfigArgs),
+
+    #[command(hide = true, subcommand)]
+    Nodes(NodeCommands),
+
+    #[command(hide = true)]
+    Discover(DiscoverArgs),
 }
+
+// ---------------------------------------------------------------------------
+// AI subcommands (new)
+// ---------------------------------------------------------------------------
+
+#[derive(Subcommand)]
+pub enum AiCommands {
+    /// Configure AI nodes and settings
+    Config {
+        #[command(subcommand)]
+        command: Option<AiConfigCommands>,
+    },
+
+    /// Test AI connectivity
+    Test {
+        /// Message to send (default: "Say hello in one sentence.")
+        message: Option<String>,
+    },
+
+    /// Enable AI features
+    Enable,
+
+    /// Disable AI features
+    Disable,
+}
+
+#[derive(Subcommand)]
+pub enum AiConfigCommands {
+    /// Add a new AI node
+    AddNode,
+
+    /// Edit an existing node
+    EditNode {
+        /// Node ID or alias
+        id: String,
+    },
+
+    /// Delete a node
+    DeleteNode {
+        /// Node ID or alias
+        id: String,
+    },
+
+    /// Set default node for a capability
+    SetDefault {
+        /// Node ID or alias
+        node_name: String,
+        /// Capability (chat, image)
+        #[arg(long)]
+        task: String,
+    },
+
+    /// List all configured nodes
+    ListNodes,
+
+    /// Show details of a specific node
+    ShowNode {
+        /// Node ID or alias
+        id: String,
+    },
+
+    /// Show full configuration
+    Show,
+
+    /// Set a config value (dot notation: defaults.chat, nodes.openai/gpt-4o.model)
+    Set {
+        /// Key in dot notation
+        key: String,
+        /// Value to set
+        value: String,
+    },
+
+    /// Get a config value (dot notation: defaults.chat, nodes.openai/gpt-4o)
+    Get {
+        /// Key in dot notation
+        key: String,
+    },
+
+    /// Remove a config value (dot notation: defaults.chat, nodes.openai/gpt-4o)
+    Unset {
+        /// Key in dot notation
+        key: String,
+    },
+
+    /// Reset all AI configuration
+    Reset,
+}
+
+// ---------------------------------------------------------------------------
+// Chat args
+// ---------------------------------------------------------------------------
 
 #[derive(clap::Args)]
 pub struct ChatArgs {
@@ -94,6 +191,10 @@ impl ChatArgs {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Backward-compat types (deprecated)
+// ---------------------------------------------------------------------------
+
 #[derive(clap::Args)]
 pub struct ConfigArgs {
     #[command(subcommand)]
@@ -107,23 +208,12 @@ pub enum ConfigCommands {
     Init,
     /// Show current configuration
     Show,
-    /// Set a config value (dot notation: defaults.chat, nodes.openai/gpt-4o.model)
-    Set {
-        /// Key in dot notation (e.g., defaults.chat, nodes.openai/gpt-4o.model)
-        key: String,
-        /// Value to set
-        value: String,
-    },
-    /// Get a config value (dot notation: defaults.chat, nodes.openai/gpt-4o)
-    Get {
-        /// Key in dot notation (e.g., defaults.chat, nodes.openai/gpt-4o)
-        key: String,
-    },
-    /// Remove a config value (dot notation: defaults.chat, nodes.openai/gpt-4o)
-    Unset {
-        /// Key in dot notation (e.g., defaults.chat, nodes.openai/gpt-4o)
-        key: String,
-    },
+    /// Set a config value
+    Set { key: String, value: String },
+    /// Get a config value
+    Get { key: String },
+    /// Remove a config value
+    Unset { key: String },
 }
 
 #[derive(Subcommand)]
@@ -144,7 +234,7 @@ pub enum NodeCommands {
     },
     /// Set or show the default node for a capability
     Default {
-        /// Capability (chat, image, embedding)
+        /// Capability (chat, image)
         capability: String,
         /// Node ID to set as default (omit to show current default)
         node_id: Option<String>,
@@ -171,6 +261,10 @@ pub struct DiscoverArgs {
     pub all: bool,
 }
 
+// ---------------------------------------------------------------------------
+// Completions
+// ---------------------------------------------------------------------------
+
 #[derive(clap::Args)]
 pub struct CompletionArgs {
     /// Shell to generate completions for
@@ -180,10 +274,12 @@ pub struct CompletionArgs {
 /// Known subcommand names for default command pre-parsing.
 pub const KNOWN_SUBCOMMANDS: &[&str] = &[
     "chat",
-    "config",
-    "nodes",
-    "discover",
+    "ai",
     "completion",
     "version",
     "help",
+    // Hidden backward-compat aliases:
+    "config",
+    "nodes",
+    "discover",
 ];

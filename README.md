@@ -171,7 +171,7 @@ cargo binstall ailloy
 Configure your nodes:
 
 ```bash
-ailloy config
+ailloy ai config
 ```
 
 Use it directly:
@@ -183,16 +183,16 @@ ailloy "A sunset over the ocean" -o sunset.png
 
 ## Providers
 
-| Provider | Kind | Chat | Stream | Images | Embeddings | Auth |
-|----------|------|:----:|:------:|:------:|:----------:|------|
-| OpenAI | `openai` | yes | yes | DALL-E | yes | API key |
-| Anthropic | `anthropic` | yes | yes | — | — | API key |
-| Azure OpenAI | `azure-openai` | yes | yes | yes | yes | API key / `az` CLI |
-| Microsoft Foundry | `microsoft-foundry` | yes | yes | — | yes | API key / `az` CLI |
-| Google Vertex AI | `vertex-ai` | yes | yes | Imagen | yes | `gcloud` CLI |
-| Ollama | `ollama` | yes | yes | — | yes | None |
-| LM Studio | `openai` | yes | yes | — | — | None |
-| Local Agent | `local-agent` | yes | yes | — | — | None |
+| Provider | Kind | Chat | Stream | Images | Auth |
+|----------|------|:----:|:------:|:------:|------|
+| OpenAI | `openai` | yes | yes | DALL-E | API key |
+| Anthropic | `anthropic` | yes | yes | — | API key |
+| Azure OpenAI | `azure-openai` | yes | yes | yes | API key / `az` CLI |
+| Microsoft Foundry | `microsoft-foundry` | yes | yes | — | API key / `az` CLI |
+| Google Vertex AI | `vertex-ai` | yes | yes | Imagen | `gcloud` CLI |
+| Ollama | `ollama` | yes | yes | — | None |
+| LM Studio | `openai` | yes | yes | — | None |
+| Local Agent | `local-agent` | yes | yes | — | None |
 
 **LM Studio** uses the OpenAI-compatible API (`http://localhost:1234` by default). **Local Agent** delegates to CLI tools installed on your system: `claude`, `codex`, or `copilot`.
 
@@ -244,12 +244,14 @@ Create `.ailloy.yaml` in your project root to override or add nodes for that pro
 | `ailloy <message>` | Send a message (shorthand for `ailloy chat`) |
 | `ailloy chat <message>` | Send a message to the configured AI node |
 | `ailloy chat -i` | Interactive conversation mode |
-| `ailloy config` | Interactive node configuration |
-| `ailloy config show` | Display current configuration |
-| `ailloy nodes list` | List configured AI nodes |
-| `ailloy nodes add` | Add a new AI node interactively |
-| `ailloy nodes default <cap> <id>` | Set the default node for a capability |
-| `ailloy discover` | Auto-detect available AI providers and models |
+| `ailloy ai` | Show AI status |
+| `ailloy ai config` | Interactive node configuration wizard |
+| `ailloy ai config list-nodes` | List configured AI nodes |
+| `ailloy ai config add-node` | Add a new AI node interactively |
+| `ailloy ai config show` | Display current configuration |
+| `ailloy ai config set-default <id> --task <cap>` | Set the default node for a capability |
+| `ailloy ai test` | Test AI connectivity |
+| `ailloy ai enable` / `disable` | Toggle AI features |
 | `ailloy completion <shell>` | Generate shell completions |
 | `ailloy version` | Show version and banner |
 
@@ -276,12 +278,21 @@ Ailloy uses feature flags to keep the library lean:
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `cli` | Yes | CLI binary and dependencies (clap, inquire, colored, etc.) |
+| `cli` | Yes | CLI binary and all dependencies (clap, inquire, colored, etc.) |
+| `config-tui` | No* | Interactive config wizards, status display, enable/disable (inquire, colored) |
 
-Library users should disable default features:
+\* `config-tui` is automatically included when `cli` is enabled.
+
+Library users should disable default features. To get interactive config TUI without the full CLI:
 
 ```toml
-ailloy = { version = "0.4", default-features = false }
+ailloy = { version = "0.5", default-features = false, features = ["config-tui"] }
+```
+
+For a pure library with no TUI deps:
+
+```toml
+ailloy = { version = "0.5", default-features = false }
 ```
 
 ## Development
