@@ -52,8 +52,10 @@ src/
     mod.rs            # Command module exports
     ai.rs             # `ailloy ai` — unified AI management dispatcher, backward-compat handlers
     chat.rs           # `ailloy chat` — chat, streaming, image gen, SVG, interactive, stdin
+    image.rs          # `ailloy image` — image generation, direct and interactive modes
     config_cmd.rs     # Non-interactive config commands: `show/set/get/unset`
     completion.rs     # `ailloy completion` — shell completions
+    util.rs           # Shared CLI utilities: Spinner, ThinkFilter, file_hyperlink
 ```
 
 ## Feature Flags

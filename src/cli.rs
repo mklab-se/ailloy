@@ -28,6 +28,9 @@ pub enum Commands {
     /// Send a message to the configured AI provider
     Chat(ChatArgs),
 
+    /// Generate an image from a text description
+    Image(ImageArgs),
+
     /// Manage AI configuration and providers
     Ai {
         #[command(subcommand)]
@@ -192,6 +195,44 @@ impl ChatArgs {
 }
 
 // ---------------------------------------------------------------------------
+// Image args
+// ---------------------------------------------------------------------------
+
+#[derive(clap::Args)]
+pub struct ImageArgs {
+    /// Image description / prompt
+    pub message: Option<String>,
+
+    /// Node to use for image generation (overrides default)
+    #[arg(short, long)]
+    pub node: Option<String>,
+
+    /// Output file path (auto-generated if omitted)
+    #[arg(short, long)]
+    pub output: Option<String>,
+
+    /// Interactive mode — AI helps you describe the image
+    #[arg(short, long)]
+    pub interactive: bool,
+
+    /// Image size (e.g. 1024x1024)
+    #[arg(long)]
+    pub size: Option<String>,
+
+    /// Image quality (e.g. hd, standard)
+    #[arg(long)]
+    pub quality: Option<String>,
+
+    /// Image style (e.g. natural, vivid)
+    #[arg(long)]
+    pub style: Option<String>,
+
+    /// Raw output (no banner, no metadata)
+    #[arg(long)]
+    pub raw: bool,
+}
+
+// ---------------------------------------------------------------------------
 // Backward-compat types (deprecated)
 // ---------------------------------------------------------------------------
 
@@ -274,6 +315,7 @@ pub struct CompletionArgs {
 /// Known subcommand names for default command pre-parsing.
 pub const KNOWN_SUBCOMMANDS: &[&str] = &[
     "chat",
+    "image",
     "ai",
     "completion",
     "version",

@@ -41,11 +41,12 @@ async fn main() -> Result<()> {
         .with_target(false)
         .init();
 
-    // --raw on chat implies --quiet and --no-color
-    let is_raw_chat = matches!(&cli.command, Commands::Chat(args) if args.raw);
-    let quiet = cli.quiet || is_raw_chat;
+    // --raw on chat/image implies --quiet and --no-color
+    let is_raw = matches!(&cli.command, Commands::Chat(args) if args.raw)
+        || matches!(&cli.command, Commands::Image(args) if args.raw);
+    let quiet = cli.quiet || is_raw;
 
-    if cli.no_color || is_raw_chat {
+    if cli.no_color || is_raw {
         colored::control::set_override(false);
     }
 
@@ -57,6 +58,7 @@ async fn main() -> Result<()> {
 
     let result = match cli.command {
         Commands::Chat(args) => commands::chat::run(args, quiet).await,
+        Commands::Image(args) => commands::image::run(args, quiet).await,
         Commands::Ai { command } => commands::ai::run(command).await,
         Commands::Completion(args) => commands::completion::run(args),
         Commands::Version => {

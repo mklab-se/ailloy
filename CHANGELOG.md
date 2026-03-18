@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-03-18
+
+### Added
+
+- **`ailloy image` command** — dedicated image generation command. `ailloy image "prompt"` generates an image directly, with auto-generated filenames, `--size`, `--quality`, and `--style` options
+- **`ailloy image -i`** — interactive mode where Ailloy interviews you about the image you want to create, then generates it with your approval before proceeding
+- **Interactive greetings** — `ailloy chat -i` and `ailloy image -i` now show a model-generated greeting when starting, with a spinner while waiting for the response. The assistant identifies itself as Ailloy
+
+### Changed
+
+- **Shared CLI utilities** — extracted `Spinner`, `ThinkFilter`, `strip_think_blocks`, and `file_hyperlink` into `commands/util.rs` for reuse across chat and image commands
+
 ## [0.5.0] - 2026-03-18
 
 ### Added
