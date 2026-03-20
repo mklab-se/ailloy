@@ -54,8 +54,11 @@ src/
     chat.rs           # `ailloy chat` — chat, streaming, image gen, SVG, interactive, stdin
     image.rs          # `ailloy image` — image generation, direct and interactive modes
     config_cmd.rs     # Non-interactive config commands: `show/set/get/unset`
+    skill.rs          # `ailloy ai skill` — skill setup guide, emit skill markdown, reference docs
     completion.rs     # `ailloy completion` — shell completions
     util.rs           # Shared CLI utilities: Spinner, ThinkFilter, file_hyperlink
+  doc/
+    ai-reference.md   # Full CLI reference documentation, embedded via include_str!
 ```
 
 ## Feature Flags

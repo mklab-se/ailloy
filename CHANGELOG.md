@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-20
+
+### Added
+
+- **`ailloy ai skill` command** — helps set up Claude Code skills for ailloy. `--emit` outputs a ready-to-save skill markdown file, `--reference` outputs full up-to-date CLI reference documentation for agent consumption
+- **`ailloy ai status` command** — show AI configuration status (same as running `ailloy ai` without a subcommand)
+- **Embedded AI reference documentation** — `src/doc/ai-reference.md` bundled into the binary via `include_str!` for runtime access
+
 ## [0.5.2] - 2026-03-18
 
 _Patch release — no functional changes._

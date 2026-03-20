@@ -77,6 +77,20 @@ pub enum AiCommands {
 
     /// Disable AI features
     Disable,
+
+    /// Show AI status (same as running `ailloy ai` without a subcommand)
+    Status,
+
+    /// AI agent skill information — helps set up Claude Code skills for ailloy
+    Skill {
+        /// Output the skill markdown content (ready to save as a skill file)
+        #[arg(long)]
+        emit: bool,
+
+        /// Output detailed reference documentation for AI agents
+        #[arg(long)]
+        reference: bool,
+    },
 }
 
 #[derive(Subcommand)]

@@ -13,6 +13,11 @@ pub async fn run(command: Option<AiCommands>) -> Result<()> {
         Some(AiCommands::Test { message }) => config_tui::run_test_chat("ailloy", message).await,
         Some(AiCommands::Enable) => config_tui::enable_ai("ailloy"),
         Some(AiCommands::Disable) => config_tui::disable_ai("ailloy"),
+        Some(AiCommands::Status) => config_tui::print_ai_status("ailloy", &["chat", "image"]),
+        Some(AiCommands::Skill { emit, reference }) => {
+            crate::commands::skill::run(emit, reference);
+            Ok(())
+        }
     }
 }
 
