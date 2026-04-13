@@ -11,8 +11,8 @@ use tracing::debug;
 
 use crate::client::Provider;
 use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, ImageFormat, ImageOptions, ImageResponse, Message, Role,
-    StreamEvent, Usage,
+    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageFormat, ImageOptions,
+    ImageResponse, Message, Role, StreamEvent, Usage,
 };
 
 /// Client for Google Vertex AI (Gemini models, Imagen).
@@ -116,6 +116,32 @@ struct ImagenPrediction {
     bytes_base64_encoded: String,
     #[serde(rename = "mimeType")]
     mime_type: Option<String>,
+}
+
+// Embedding types
+#[derive(Serialize)]
+struct EmbedPredictRequest {
+    instances: Vec<EmbedInstance>,
+}
+
+#[derive(Serialize)]
+struct EmbedInstance {
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct EmbedPredictResponse {
+    predictions: Vec<EmbedPrediction>,
+}
+
+#[derive(Deserialize)]
+struct EmbedPrediction {
+    embeddings: EmbedValues,
+}
+
+#[derive(Deserialize)]
+struct EmbedValues {
+    values: Vec<f32>,
 }
 
 // Error types
@@ -551,5 +577,53 @@ impl Provider for VertexAiClient {
                 revised_prompt: None,
             })
         }
+    }
+
+    async fn embed(&self, texts: &[&str], _options: Option<&EmbedOptions>) -> Result<EmbedResponse> {
+        let url = format!("{}:predict", self.base_url());
+        debug!(url = %url, model = %self.model, count = texts.len(), "Sending embedding request to Vertex AI");
+        let token = Self::get_access_token().await?;
+        let request = EmbedPredictRequest {
+            instances: texts.iter().map(|t| EmbedInstance { content: t.to_string() }).collect(),
+        };
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(&token)
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send embedding request to Vertex AI")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            let message = serde_json::from_str::<ApiError>(&body)
+                .ok()
+                .and_then(|e| e.error.map(|d| d.message))
+                .unwrap_or(body);
+            anyhow::bail!("Vertex AI embedding error ({}): {}", status.as_u16(), message);
+        }
+        let api_response: EmbedPredictResponse = response
+            .json()
+            .await
+            .context("Failed to parse Vertex AI embedding response")?;
+        Ok(EmbedResponse {
+            embeddings: api_response.predictions.into_iter().map(|p| p.embeddings.values).collect(),
+            model: self.model.clone(),
+            usage: None,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_embed_response_parsing() {
+        let json = r#"{"predictions":[{"embeddings":{"values":[0.1,0.2,0.3]}},{"embeddings":{"values":[0.4,0.5,0.6]}}]}"#;
+        let response: EmbedPredictResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.predictions.len(), 2);
+        assert_eq!(response.predictions[0].embeddings.values, vec![0.1, 0.2, 0.3]);
     }
 }

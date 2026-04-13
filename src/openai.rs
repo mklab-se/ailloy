@@ -11,8 +11,8 @@ use tracing::debug;
 
 use crate::client::Provider;
 use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, ImageFormat, ImageOptions, ImageResponse, Message,
-    StreamEvent, Usage,
+    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageFormat, ImageOptions,
+    ImageResponse, Message, StreamEvent, Usage,
 };
 
 const DEFAULT_ENDPOINT: &str = "https://api.openai.com";
@@ -128,6 +128,33 @@ enum ResponsesOutput {
     },
     #[serde(other)]
     Other,
+}
+
+// Embedding types
+#[derive(Serialize)]
+struct EmbedRequest<'a> {
+    model: &'a str,
+    input: &'a [&'a str],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dimensions: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct EmbedApiResponse {
+    data: Vec<EmbedData>,
+    model: String,
+    usage: EmbedApiUsage,
+}
+
+#[derive(Deserialize)]
+struct EmbedData {
+    embedding: Vec<f32>,
+}
+
+#[derive(Deserialize)]
+struct EmbedApiUsage {
+    prompt_tokens: u32,
+    total_tokens: u32,
 }
 
 impl OpenAiClient {
@@ -555,5 +582,87 @@ impl Provider for OpenAiClient {
         } else {
             self.generate_image_via_responses_api(prompt, options).await
         }
+    }
+
+    async fn embed(&self, texts: &[&str], options: Option<&EmbedOptions>) -> Result<EmbedResponse> {
+        let url = format!("{}/v1/embeddings", self.base_url());
+        debug!(url = %url, model = %self.model, count = texts.len(), "Sending embedding request");
+
+        let request = EmbedRequest {
+            model: &self.model,
+            input: texts,
+            dimensions: options.and_then(|o| o.dimensions),
+        };
+
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.api_key)
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send embedding request to OpenAI API")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            let message = serde_json::from_str::<ApiError>(&body)
+                .map(|e| e.error.message)
+                .unwrap_or(body);
+            anyhow::bail!("OpenAI embedding error ({}): {}", status.as_u16(), message);
+        }
+
+        let api_response: EmbedApiResponse = response
+            .json()
+            .await
+            .context("Failed to parse OpenAI embedding response")?;
+
+        Ok(EmbedResponse {
+            embeddings: api_response.data.into_iter().map(|d| d.embedding).collect(),
+            model: api_response.model,
+            usage: Some(Usage {
+                prompt_tokens: api_response.usage.prompt_tokens,
+                completion_tokens: 0,
+                total_tokens: api_response.usage.total_tokens,
+            }),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_embed_request_serialization() {
+        let request = EmbedRequest {
+            model: "text-embedding-3-small",
+            input: &["hello world", "test"],
+            dimensions: Some(1536),
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["model"], "text-embedding-3-small");
+        assert_eq!(json["input"], serde_json::json!(["hello world", "test"]));
+        assert_eq!(json["dimensions"], 1536);
+    }
+
+    #[test]
+    fn test_embed_request_no_dimensions() {
+        let request = EmbedRequest {
+            model: "text-embedding-3-small",
+            input: &["hello"],
+            dimensions: None,
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert!(json.get("dimensions").is_none());
+    }
+
+    #[test]
+    fn test_embed_response_parsing() {
+        let json = r#"{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2,0.3]},{"object":"embedding","index":1,"embedding":[0.4,0.5,0.6]}],"model":"text-embedding-3-small","usage":{"prompt_tokens":10,"total_tokens":10}}"#;
+        let response: EmbedApiResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.data.len(), 2);
+        assert_eq!(response.data[0].embedding, vec![0.1, 0.2, 0.3]);
+        assert_eq!(response.model, "text-embedding-3-small");
     }
 }

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::client::Provider;
-use crate::types::{ChatOptions, ChatResponse, ChatStream, Message, StreamEvent};
+use crate::types::{ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, Message, StreamEvent};
 
 const DEFAULT_ENDPOINT: &str = "http://localhost:11434";
 
@@ -44,6 +44,19 @@ struct ChatApiResponse {
 #[derive(Deserialize)]
 struct ResponseMessage {
     content: String,
+}
+
+// Embedding types
+#[derive(Serialize)]
+struct EmbedApiRequest<'a> {
+    model: &'a str,
+    input: &'a [&'a str],
+}
+
+#[derive(Deserialize)]
+struct EmbedApiResponse {
+    model: String,
+    embeddings: Vec<Vec<f32>>,
 }
 
 // Streaming response chunk
@@ -259,5 +272,41 @@ impl Provider for OllamaClient {
         );
 
         Ok(Box::pin(stream))
+    }
+
+    async fn embed(&self, texts: &[&str], _options: Option<&EmbedOptions>) -> Result<EmbedResponse> {
+        let url = format!("{}/api/embed", self.base_url());
+        debug!(url = %url, model = %self.model, count = texts.len(), "Sending embedding request to Ollama");
+        let request = EmbedApiRequest { model: &self.model, input: texts };
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send embedding request to Ollama. Is Ollama running?")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Ollama embedding error ({}): {}", status.as_u16(), body);
+        }
+        let api_response: EmbedApiResponse = response
+            .json()
+            .await
+            .context("Failed to parse Ollama embedding response")?;
+        Ok(EmbedResponse { embeddings: api_response.embeddings, model: api_response.model, usage: None })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_embed_response_parsing() {
+        let json = r#"{"model":"nomic-embed-text","embeddings":[[0.1,0.2,0.3],[0.4,0.5,0.6]]}"#;
+        let response: EmbedApiResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.model, "nomic-embed-text");
+        assert_eq!(response.embeddings.len(), 2);
     }
 }

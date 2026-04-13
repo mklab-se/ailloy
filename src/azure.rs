@@ -11,8 +11,8 @@ use tracing::debug;
 
 use crate::client::Provider;
 use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, ImageFormat, ImageOptions, ImageResponse, Message,
-    StreamEvent, Usage,
+    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageFormat, ImageOptions,
+    ImageResponse, Message, StreamEvent, Usage,
 };
 
 /// Authentication method for Azure OpenAI.
@@ -121,6 +121,32 @@ struct ImageData {
     revised_prompt: Option<String>,
 }
 
+// Embedding types
+#[derive(Serialize)]
+struct EmbedRequest<'a> {
+    input: &'a [&'a str],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dimensions: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct EmbedApiResponse {
+    data: Vec<EmbedData>,
+    model: String,
+    usage: EmbedApiUsage,
+}
+
+#[derive(Deserialize)]
+struct EmbedData {
+    embedding: Vec<f32>,
+}
+
+#[derive(Deserialize)]
+struct EmbedApiUsage {
+    prompt_tokens: u32,
+    total_tokens: u32,
+}
+
 impl AzureOpenAiClient {
     /// Create a new Azure OpenAI client.
     pub fn new(
@@ -154,6 +180,15 @@ impl AzureOpenAiClient {
     fn image_url(&self) -> String {
         format!(
             "{}/openai/deployments/{}/images/generations?api-version={}",
+            self.base_url(),
+            self.deployment,
+            self.api_version
+        )
+    }
+
+    fn embed_url(&self) -> String {
+        format!(
+            "{}/openai/deployments/{}/embeddings?api-version={}",
             self.base_url(),
             self.deployment,
             self.api_version
@@ -462,5 +497,60 @@ impl Provider for AzureOpenAiClient {
             format: ImageFormat::Png,
             revised_prompt: image_data.revised_prompt.clone(),
         })
+    }
+
+    async fn embed(&self, texts: &[&str], options: Option<&EmbedOptions>) -> Result<EmbedResponse> {
+        let url = self.embed_url();
+        debug!(url = %url, deployment = %self.deployment, count = texts.len(), "Sending embedding request to Azure OpenAI");
+
+        let (header_name, header_value) = self.get_auth_header().await?;
+
+        let request = EmbedRequest {
+            input: texts,
+            dimensions: options.and_then(|o| o.dimensions),
+        };
+
+        let response = self
+            .client
+            .post(&url)
+            .header(header_name, &header_value)
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send embedding request to Azure OpenAI")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
+        }
+
+        let api_response: EmbedApiResponse = response
+            .json()
+            .await
+            .context("Failed to parse Azure OpenAI embedding response")?;
+
+        Ok(EmbedResponse {
+            embeddings: api_response.data.into_iter().map(|d| d.embedding).collect(),
+            model: api_response.model,
+            usage: Some(Usage {
+                prompt_tokens: api_response.usage.prompt_tokens,
+                completion_tokens: 0,
+                total_tokens: api_response.usage.total_tokens,
+            }),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_embed_response_parsing() {
+        let json = r#"{"data":[{"embedding":[0.1,0.2,0.3],"index":0}],"model":"text-embedding-3-large","usage":{"prompt_tokens":5,"total_tokens":5}}"#;
+        let response: EmbedApiResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.data.len(), 1);
+        assert_eq!(response.data[0].embedding, vec![0.1, 0.2, 0.3]);
     }
 }
