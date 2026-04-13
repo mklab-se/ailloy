@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Embedding support** — first-class embedding capability across OpenAI, Azure OpenAI, Ollama, Vertex AI, and Microsoft Foundry
+- **`Client::embed()`, `Client::embed_with()`, `Client::embed_one()`** — async and blocking convenience methods for generating embeddings (`Vec<f32>`)
+- **`EmbeddingMetadata`** — queryable struct for embedding node configuration (provider, model, endpoint, deployment, dimensions, auth)
+- **`EmbeddingMetadata::to_azure_search_vectorizer()`** — generates ready-to-use Azure AI Search vectorizer JSON, including API key when configured
+- **`Capability::Embedding`** and **`Task::Embedding`** — config routing for embedding nodes with `defaults.embedding` config key
+- **`ailloy embed` CLI command** — `ailloy embed "text"` generates embeddings; `--full` prints full JSON vector; `--info` shows node metadata; `--azure-vectorizer NAME` outputs Azure AI Search vectorizer config
+
 ## [0.6.0] - 2026-03-20
 
 ### Added

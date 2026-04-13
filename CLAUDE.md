@@ -20,16 +20,17 @@ Single crate with feature-flagged CLI, similar to how `clap` separates derive fe
 ```
 src/
   lib.rs              # Public library API — always compiled
-  config.rs           # Config types (AiNode, Capability, Auth, ProviderKind, Config),
-                      #   load/save, local config merge, node CRUD, alias resolution,
-                      #   capability filtering, ALL_CAPABILITIES constant
+  config.rs           # Config types (AiNode, Capability, Auth, ProviderKind, Config,
+                      #   EmbeddingMetadata), load/save, local config merge, node CRUD,
+                      #   alias resolution, capability filtering, ALL_CAPABILITIES constant,
+                      #   Azure AI Search vectorizer export
   config_tui.rs       # Shared interactive config TUI (requires "config-tui" feature) —
                       #   consent prompts, interactive wizard, node setup, enable/disable,
                       #   status display, test chat, reset, Azure/Foundry discovery flows
   azure_discover.rs   # Azure CLI wrappers (requires "config-tui" feature) —
                       #   list subscriptions, resources, deployments via `az` CLI
   types.rs            # Message, Role, ChatResponse, ChatOptions, StreamEvent, ChatStream,
-                      #   ImageResponse, ImageOptions, Task, Usage
+                      #   ImageResponse, ImageOptions, EmbedResponse, EmbedOptions, Task, Usage
   error.rs            # ClientError enum (thiserror) — Http, Api, Json, NotConfigured,
                       #   BinaryNotFound, NodeNotFound, Unsupported, Other
   client.rs           # Provider trait, Client struct, ClientBuilder, create_provider_from_node()
@@ -37,12 +38,12 @@ src/
   blocking.rs         # Sync client wrapper (internal tokio current-thread runtime)
   discover.rs         # Discovery library API — discover_env_keys(), discover_local(),
                       #   discover_ollama(), DiscoveredNode struct
-  openai.rs           # OpenAI client — chat, stream (SSE), image gen
+  openai.rs           # OpenAI client — chat, stream (SSE), image gen, embedding
   anthropic.rs        # Anthropic client — chat, stream (SSE)
-  azure.rs            # Azure OpenAI client — chat, stream (SSE), image gen
-  foundry.rs          # Microsoft Foundry client — chat, stream (SSE)
-  vertex.rs           # Vertex AI client — Gemini chat/stream, Imagen
-  ollama.rs           # Ollama client — chat, stream (NDJSON)
+  azure.rs            # Azure OpenAI client — chat, stream (SSE), image gen, embedding
+  foundry.rs          # Microsoft Foundry client — chat, stream (SSE), embedding
+  vertex.rs           # Vertex AI client — Gemini chat/stream, Imagen, embedding
+  ollama.rs           # Ollama client — chat, stream (NDJSON), embedding
   local_agent.rs      # Local CLI agent (claude, codex, copilot) — chat, stream (line-buffered)
   main.rs             # CLI entry point (requires "cli" feature)
   cli.rs              # Clap CLI definitions (requires "cli" feature)
@@ -53,6 +54,7 @@ src/
     ai.rs             # `ailloy ai` — unified AI management dispatcher, backward-compat handlers
     chat.rs           # `ailloy chat` — chat, streaming, image gen, SVG, interactive, stdin
     image.rs          # `ailloy image` — image generation, direct and interactive modes
+    embed.rs          # `ailloy embed` — embedding generation, metadata, Azure vectorizer export
     config_cmd.rs     # Non-interactive config commands: `show/set/get/unset`
     skill.rs          # `ailloy ai skill` — skill setup guide, emit skill markdown, reference docs
     completion.rs     # `ailloy completion` — shell completions
@@ -74,7 +76,7 @@ src/
 
 - Feature-flagged single crate: library code always compiles, CLI code gated behind `cli` feature via `required-features` on `[[bin]]`
 - **AI Nodes**: atomic config units representing a specific model from a specific provider with connection details and capability tags; node IDs follow `{provider}/{model|deployment|binary}` pattern with optional `alias` for shorthand
-- **Provider trait** (`client.rs`): unified `async_trait` with default methods returning `Unsupported` — `name()`, `chat()`, `chat_stream()`, `generate_image()`
+- **Provider trait** (`client.rs`): unified `async_trait` with default methods returning `Unsupported` — `name()`, `chat()`, `chat_stream()`, `generate_image()`, `embed()`
 - **Client** wraps `Box<dyn Provider>` — constructed via `from_config()`, `with_node()`, `for_capability()`, `from_node()`, `builder()`, or direct constructors (`Client::openai()`, `Client::anthropic()`, etc.)
 - **Streaming**: SSE parsing for OpenAI/Anthropic/Azure/Vertex via `futures_util::stream::unfold`, NDJSON for Ollama, line-buffered for local agents
 - **Config**: `nodes` map of `AiNode` structs; `defaults` map routes capability names (chat, image) to node IDs; `Auth` enum supports `env`, `api_key`, `azure_cli`, `gcloud_cli`; all config maps use `BTreeMap` for deterministic serialization
