@@ -122,11 +122,19 @@ struct ImagenPrediction {
 #[derive(Serialize)]
 struct EmbedPredictRequest {
     instances: Vec<EmbedInstance>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parameters: Option<EmbedParameters>,
 }
 
 #[derive(Serialize)]
 struct EmbedInstance {
     content: String,
+}
+
+#[derive(Serialize)]
+struct EmbedParameters {
+    #[serde(rename = "outputDimensionality")]
+    output_dimensionality: u32,
 }
 
 #[derive(Deserialize)]
@@ -579,14 +587,13 @@ impl Provider for VertexAiClient {
         }
     }
 
-    async fn embed(
-        &self,
-        texts: &[&str],
-        _options: Option<&EmbedOptions>,
-    ) -> Result<EmbedResponse> {
+    async fn embed(&self, texts: &[&str], options: Option<&EmbedOptions>) -> Result<EmbedResponse> {
         let url = format!("{}:predict", self.base_url());
         debug!(url = %url, model = %self.model, count = texts.len(), "Sending embedding request to Vertex AI");
         let token = Self::get_access_token().await?;
+        let parameters = options.and_then(|o| o.dimensions).map(|d| EmbedParameters {
+            output_dimensionality: d,
+        });
         let request = EmbedPredictRequest {
             instances: texts
                 .iter()
@@ -594,6 +601,7 @@ impl Provider for VertexAiClient {
                     content: t.to_string(),
                 })
                 .collect(),
+            parameters,
         };
         let response = self
             .client

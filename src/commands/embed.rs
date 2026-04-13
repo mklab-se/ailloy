@@ -26,7 +26,9 @@ pub async fn run(args: EmbedArgs, quiet: bool) -> Result<()> {
     )?;
 
     let node_id = resolve_embed_node(args.node.as_deref(), &config)?;
-    let (_, node) = config.get_node(&node_id).unwrap();
+    let (_, node) = config
+        .get_node(&node_id)
+        .context("Embedding node not found")?;
     let provider = create_provider_from_node(&node_id, node)?;
 
     if !quiet {
@@ -69,7 +71,9 @@ pub async fn run(args: EmbedArgs, quiet: bool) -> Result<()> {
 
 fn run_info(args: &EmbedArgs, config: &Config) -> Result<()> {
     let node_id = resolve_embed_node(args.node.as_deref(), config)?;
-    let (_, node) = config.get_node(&node_id).unwrap();
+    let (_, node) = config
+        .get_node(&node_id)
+        .context("Embedding node not found")?;
     let meta = node.embedding_metadata();
 
     println!("{} {}", "Node:".bold(), node_id);
@@ -99,7 +103,9 @@ fn run_info(args: &EmbedArgs, config: &Config) -> Result<()> {
 
 fn run_azure_vectorizer(args: &EmbedArgs, config: &Config, name: &str) -> Result<()> {
     let node_id = resolve_embed_node(args.node.as_deref(), config)?;
-    let (_, node) = config.get_node(&node_id).unwrap();
+    let (_, node) = config
+        .get_node(&node_id)
+        .context("Embedding node not found")?;
     let meta = node.embedding_metadata();
     let vectorizer = meta.to_azure_search_vectorizer(name)?;
     println!("{}", serde_json::to_string_pretty(&vectorizer)?);

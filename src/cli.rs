@@ -267,11 +267,11 @@ pub struct EmbedArgs {
     pub full: bool,
 
     /// Show embedding node metadata
-    #[arg(long)]
+    #[arg(long, conflicts_with = "text")]
     pub info: bool,
 
     /// Print Azure AI Search vectorizer JSON for the embedding node
-    #[arg(long, value_name = "NAME")]
+    #[arg(long, value_name = "NAME", conflicts_with = "text")]
     pub azure_vectorizer: Option<String>,
 }
 
