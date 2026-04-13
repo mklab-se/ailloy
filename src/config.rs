@@ -96,6 +96,7 @@ impl ProviderKind {
 pub enum Capability {
     Chat,
     Image,
+    Embedding,
 }
 
 impl Capability {
@@ -104,6 +105,7 @@ impl Capability {
         match self {
             Self::Chat => "chat",
             Self::Image => "image",
+            Self::Embedding => "embedding",
         }
     }
 
@@ -112,6 +114,7 @@ impl Capability {
         match self {
             Self::Chat => "Chat",
             Self::Image => "Image Generation",
+            Self::Embedding => "Embedding",
         }
     }
 }
@@ -128,7 +131,11 @@ impl std::str::FromStr for Capability {
         match s {
             "chat" => Ok(Self::Chat),
             "image" => Ok(Self::Image),
-            _ => Err(format!("Unknown capability '{}'. Valid: chat, image", s)),
+            "embedding" => Ok(Self::Embedding),
+            _ => Err(format!(
+                "Unknown capability '{}'. Valid: chat, image, embedding",
+                s
+            )),
         }
     }
 }
@@ -284,7 +291,11 @@ impl AiNode {
 // ---------------------------------------------------------------------------
 
 /// Ordered list of capability keys with human-readable labels.
-pub const ALL_CAPABILITIES: &[(&str, &str)] = &[("chat", "Chat"), ("image", "Image Generation")];
+pub const ALL_CAPABILITIES: &[(&str, &str)] = &[
+    ("chat", "Chat"),
+    ("image", "Image Generation"),
+    ("embedding", "Embedding"),
+];
 
 /// Ordered list of task keys with human-readable labels (backward-compatible alias).
 pub const ALL_TASKS: &[(&str, &str)] = ALL_CAPABILITIES;
@@ -771,7 +782,10 @@ mod tests {
     fn test_capability_from_str() {
         assert_eq!("chat".parse::<Capability>().unwrap(), Capability::Chat);
         assert_eq!("image".parse::<Capability>().unwrap(), Capability::Image);
-        assert!("embedding".parse::<Capability>().is_err());
+        assert_eq!(
+            "embedding".parse::<Capability>().unwrap(),
+            Capability::Embedding
+        );
         assert!("invalid".parse::<Capability>().is_err());
     }
 

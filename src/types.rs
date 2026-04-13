@@ -238,12 +238,52 @@ impl ImageOptionsBuilder {
     }
 }
 
+/// Response from an embedding request.
+#[derive(Debug, Clone)]
+pub struct EmbedResponse {
+    pub embeddings: Vec<Vec<f32>>,
+    pub model: String,
+    pub usage: Option<Usage>,
+}
+
+/// Options for embedding generation.
+#[derive(Debug, Clone, Default)]
+pub struct EmbedOptions {
+    pub dimensions: Option<u32>,
+}
+
+impl EmbedOptions {
+    pub fn builder() -> EmbedOptionsBuilder {
+        EmbedOptionsBuilder::default()
+    }
+}
+
+/// Builder for [`EmbedOptions`].
+#[derive(Debug, Default)]
+pub struct EmbedOptionsBuilder {
+    dimensions: Option<u32>,
+}
+
+impl EmbedOptionsBuilder {
+    pub fn dimensions(mut self, dimensions: u32) -> Self {
+        self.dimensions = Some(dimensions);
+        self
+    }
+
+    pub fn build(self) -> EmbedOptions {
+        EmbedOptions {
+            dimensions: self.dimensions,
+        }
+    }
+}
+
 /// Task types for provider routing.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Task {
     Chat,
     ImageGeneration,
     Transcription,
+    Embedding,
 }
 
 impl Task {
@@ -253,6 +293,7 @@ impl Task {
             Self::Chat => "chat",
             Self::ImageGeneration => "image",
             Self::Transcription => "transcription",
+            Self::Embedding => "embedding",
         }
     }
 
@@ -262,6 +303,7 @@ impl Task {
             Self::Chat => Some(crate::config::Capability::Chat),
             Self::ImageGeneration => Some(crate::config::Capability::Image),
             Self::Transcription => None,
+            Self::Embedding => Some(crate::config::Capability::Embedding),
         }
     }
 }
@@ -375,5 +417,30 @@ mod tests {
     fn test_image_dimensions_too_short() {
         assert_eq!(image_dimensions(&[]), None);
         assert_eq!(image_dimensions(&[0x89, b'P']), None);
+    }
+
+    #[test]
+    fn test_embed_options_builder() {
+        let opts = EmbedOptions::builder().dimensions(1536).build();
+        assert_eq!(opts.dimensions, Some(1536));
+    }
+
+    #[test]
+    fn test_embed_options_default() {
+        let opts = EmbedOptions::default();
+        assert!(opts.dimensions.is_none());
+    }
+
+    #[test]
+    fn test_task_embedding_config_key() {
+        assert_eq!(Task::Embedding.config_key(), "embedding");
+    }
+
+    #[test]
+    fn test_task_embedding_to_capability() {
+        assert_eq!(
+            Task::Embedding.to_capability(),
+            Some(crate::config::Capability::Embedding),
+        );
     }
 }
