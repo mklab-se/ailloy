@@ -58,7 +58,7 @@ jobs:
           $version = $env:GITHUB_REF_NAME -replace '^v',''
           Compress-Archive -Path "target/${{ matrix.target }}/release/ailloy.exe" -DestinationPath "ailloy-v$version-${{ matrix.target }}.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ailloy-${{ matrix.target }}
           path: ailloy-v*.*

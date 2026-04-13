@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-04-14
+
+### Changed
+
+- Bump MSRV from 1.85 to 1.86
+- Update all dependencies to latest compatible versions
+- Bump `actions/upload-artifact` from v4 to v5 in release workflow
+
 ## [0.7.3] - 2026-04-13
 
 ### Added
