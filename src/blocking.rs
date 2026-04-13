@@ -20,7 +20,8 @@
 use anyhow::Result;
 
 use crate::types::{
-    ChatOptions, ChatResponse, ImageOptions, ImageResponse, Message, StreamEvent, Task,
+    ChatOptions, ChatResponse, EmbedOptions, EmbedResponse, ImageOptions, ImageResponse, Message,
+    StreamEvent, Task,
 };
 
 /// A synchronous client wrapping the async [`crate::Client`].
@@ -109,6 +110,22 @@ impl Client {
     ) -> Result<ImageResponse> {
         self.runtime
             .block_on(self.inner.generate_image_with(prompt, options))
+    }
+
+    /// Generate embeddings for multiple texts.
+    pub fn embed(&self, texts: &[&str]) -> Result<EmbedResponse> {
+        self.runtime.block_on(self.inner.embed(texts))
+    }
+
+    /// Generate embeddings with options.
+    pub fn embed_with(&self, texts: &[&str], options: &EmbedOptions) -> Result<EmbedResponse> {
+        self.runtime
+            .block_on(self.inner.embed_with(texts, options))
+    }
+
+    /// Embed a single text, returning the vector directly.
+    pub fn embed_one(&self, text: &str) -> Result<Vec<f32>> {
+        self.runtime.block_on(self.inner.embed_one(text))
     }
 
     /// Get the provider name.
