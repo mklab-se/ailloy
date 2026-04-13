@@ -67,7 +67,16 @@ impl ProviderKind {
     pub fn supports_task(&self, task: &str) -> bool {
         matches!(
             (self, task),
-            (_, "chat") | (Self::OpenAi | Self::AzureOpenAi | Self::VertexAi, "image",)
+            (_, "chat")
+                | (Self::OpenAi | Self::AzureOpenAi | Self::VertexAi, "image")
+                | (
+                    Self::OpenAi
+                        | Self::AzureOpenAi
+                        | Self::Ollama
+                        | Self::VertexAi
+                        | Self::MicrosoftFoundry,
+                    "embedding"
+                )
         )
     }
 
@@ -81,6 +90,9 @@ impl ProviderKind {
         let mut caps = vec![Capability::Chat];
         if self.supports_task("image") {
             caps.push(Capability::Image);
+        }
+        if self.supports_task("embedding") {
+            caps.push(Capability::Embedding);
         }
         caps
     }
@@ -283,6 +295,73 @@ impl AiNode {
     /// Returns whether this node has a given capability.
     pub fn has_capability(&self, cap: &Capability) -> bool {
         self.capabilities.contains(cap)
+    }
+
+    /// Returns embedding metadata for this node.
+    pub fn embedding_metadata(&self) -> EmbeddingMetadata {
+        let dimensions = self
+            .node_defaults
+            .as_ref()
+            .and_then(|d| d.get("dimensions"))
+            .and_then(|v| v.parse::<u32>().ok());
+
+        EmbeddingMetadata {
+            provider: self.provider.clone(),
+            model: self.model.clone(),
+            endpoint: self.endpoint.clone(),
+            deployment: self.deployment.clone(),
+            dimensions,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EmbeddingMetadata
+// ---------------------------------------------------------------------------
+
+/// Metadata about an embedding node, useful for configuring downstream systems.
+#[derive(Debug, Clone)]
+pub struct EmbeddingMetadata {
+    pub provider: ProviderKind,
+    pub model: Option<String>,
+    pub endpoint: Option<String>,
+    pub deployment: Option<String>,
+    pub dimensions: Option<u32>,
+}
+
+impl EmbeddingMetadata {
+    /// Generate Azure AI Search vectorizer configuration JSON.
+    ///
+    /// Only works for Azure OpenAI nodes — Azure AI Search vectorizers
+    /// only support Azure OpenAI as a connected embedding source.
+    pub fn to_azure_search_vectorizer(&self, name: &str) -> anyhow::Result<serde_json::Value> {
+        if self.provider != ProviderKind::AzureOpenAi {
+            anyhow::bail!(
+                "Azure AI Search vectorizers only support Azure OpenAI nodes, \
+                 but this node uses '{}'. Configure an Azure OpenAI embedding node instead.",
+                self.provider
+            );
+        }
+        let endpoint = self
+            .endpoint
+            .as_deref()
+            .context("Azure OpenAI embedding node has no endpoint configured.")?;
+        let deployment = self
+            .deployment
+            .as_deref()
+            .or(self.model.as_deref())
+            .context("Azure OpenAI embedding node has no deployment configured.")?;
+        let model_name = self.model.as_deref().unwrap_or(deployment);
+
+        Ok(serde_json::json!({
+            "name": name,
+            "kind": "azureOpenAI",
+            "azureOpenAIParameters": {
+                "resourceUri": endpoint,
+                "deploymentId": deployment,
+                "modelName": model_name,
+            }
+        }))
     }
 }
 
@@ -1020,5 +1099,92 @@ consents:
         let caps = ProviderKind::LocalAgent.supported_capabilities();
         assert!(caps.contains(&Capability::Chat));
         assert!(!caps.contains(&Capability::Image));
+    }
+
+    #[test]
+    fn test_supports_task_embedding() {
+        assert!(ProviderKind::OpenAi.supports_task("embedding"));
+        assert!(ProviderKind::AzureOpenAi.supports_task("embedding"));
+        assert!(ProviderKind::Ollama.supports_task("embedding"));
+        assert!(ProviderKind::VertexAi.supports_task("embedding"));
+        assert!(ProviderKind::MicrosoftFoundry.supports_task("embedding"));
+        assert!(!ProviderKind::Anthropic.supports_task("embedding"));
+        assert!(!ProviderKind::LocalAgent.supports_task("embedding"));
+    }
+
+    #[test]
+    fn test_supported_capabilities_includes_embedding() {
+        let caps = ProviderKind::OpenAi.supported_capabilities();
+        assert!(caps.contains(&Capability::Embedding));
+        let caps = ProviderKind::Anthropic.supported_capabilities();
+        assert!(!caps.contains(&Capability::Embedding));
+    }
+
+    #[test]
+    fn test_embedding_metadata_azure() {
+        let node = AiNode {
+            provider: ProviderKind::AzureOpenAi,
+            alias: None,
+            capabilities: vec![Capability::Embedding],
+            auth: None,
+            model: Some("text-embedding-3-large".to_string()),
+            endpoint: Some("https://myresource.openai.azure.com".to_string()),
+            deployment: Some("text-embedding-3-large".to_string()),
+            api_version: None,
+            binary: None,
+            project: None,
+            location: None,
+            node_defaults: Some(BTreeMap::from([(
+                "dimensions".to_string(),
+                "3072".to_string(),
+            )])),
+        };
+        let meta = node.embedding_metadata();
+        assert_eq!(meta.provider, ProviderKind::AzureOpenAi);
+        assert_eq!(meta.model.as_deref(), Some("text-embedding-3-large"));
+        assert_eq!(
+            meta.endpoint.as_deref(),
+            Some("https://myresource.openai.azure.com")
+        );
+        assert_eq!(meta.deployment.as_deref(), Some("text-embedding-3-large"));
+        assert_eq!(meta.dimensions, Some(3072));
+    }
+
+    #[test]
+    fn test_azure_search_vectorizer() {
+        let meta = EmbeddingMetadata {
+            provider: ProviderKind::AzureOpenAi,
+            model: Some("text-embedding-3-large".to_string()),
+            endpoint: Some("https://myresource.openai.azure.com".to_string()),
+            deployment: Some("text-embedding-3-large".to_string()),
+            dimensions: Some(3072),
+        };
+        let vectorizer = meta.to_azure_search_vectorizer("my-vectorizer").unwrap();
+        assert_eq!(vectorizer["name"], "my-vectorizer");
+        assert_eq!(vectorizer["kind"], "azureOpenAI");
+        assert_eq!(
+            vectorizer["azureOpenAIParameters"]["resourceUri"],
+            "https://myresource.openai.azure.com"
+        );
+        assert_eq!(
+            vectorizer["azureOpenAIParameters"]["deploymentId"],
+            "text-embedding-3-large"
+        );
+        assert_eq!(
+            vectorizer["azureOpenAIParameters"]["modelName"],
+            "text-embedding-3-large"
+        );
+    }
+
+    #[test]
+    fn test_azure_search_vectorizer_non_azure_fails() {
+        let meta = EmbeddingMetadata {
+            provider: ProviderKind::OpenAi,
+            model: Some("text-embedding-3-small".to_string()),
+            endpoint: None,
+            deployment: None,
+            dimensions: None,
+        };
+        assert!(meta.to_azure_search_vectorizer("test").is_err());
     }
 }
