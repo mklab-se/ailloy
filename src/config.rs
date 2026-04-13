@@ -298,12 +298,21 @@ impl AiNode {
     }
 
     /// Returns embedding metadata for this node.
+    ///
+    /// Dimensions are resolved in order: explicit `defaults.dimensions` in the
+    /// node config, then a lookup of well-known model dimensions by model or
+    /// deployment name.
     pub fn embedding_metadata(&self) -> EmbeddingMetadata {
-        let dimensions = self
+        let explicit_dims = self
             .node_defaults
             .as_ref()
             .and_then(|d| d.get("dimensions"))
             .and_then(|v| v.parse::<u32>().ok());
+
+        let dimensions = explicit_dims.or_else(|| {
+            let name = self.model.as_deref().or(self.deployment.as_deref())?;
+            well_known_embedding_dimensions(name)
+        });
 
         EmbeddingMetadata {
             provider: self.provider.clone(),
@@ -313,6 +322,31 @@ impl AiNode {
             dimensions,
             auth: self.auth.clone(),
         }
+    }
+}
+
+/// Returns the default output dimensions for well-known embedding models.
+fn well_known_embedding_dimensions(model: &str) -> Option<u32> {
+    // Normalize: lowercase, strip version suffixes and date tags
+    let m = model.to_lowercase();
+    match m.as_str() {
+        // OpenAI / Azure OpenAI
+        "text-embedding-3-large" => Some(3072),
+        "text-embedding-3-small" => Some(1536),
+        "text-embedding-ada-002" => Some(1536),
+        // Google Vertex AI
+        "text-embedding-004" | "text-embedding-005" => Some(768),
+        "textembedding-gecko"
+        | "textembedding-gecko@003"
+        | "textembedding-gecko@002"
+        | "textembedding-gecko@001" => Some(768),
+        "text-multilingual-embedding-002" => Some(768),
+        // Ollama common models
+        "nomic-embed-text" => Some(768),
+        "all-minilm" | "all-minilm:latest" => Some(384),
+        "mxbai-embed-large" | "mxbai-embed-large:latest" => Some(1024),
+        "snowflake-arctic-embed" | "snowflake-arctic-embed:latest" => Some(1024),
+        _ => None,
     }
 }
 
@@ -1283,5 +1317,77 @@ consents:
             auth: None,
         };
         assert!(meta.to_azure_search_vectorizer("test").is_err());
+    }
+
+    #[test]
+    fn test_well_known_embedding_dimensions() {
+        assert_eq!(
+            well_known_embedding_dimensions("text-embedding-3-large"),
+            Some(3072)
+        );
+        assert_eq!(
+            well_known_embedding_dimensions("text-embedding-3-small"),
+            Some(1536)
+        );
+        assert_eq!(
+            well_known_embedding_dimensions("text-embedding-ada-002"),
+            Some(1536)
+        );
+        assert_eq!(
+            well_known_embedding_dimensions("text-embedding-004"),
+            Some(768)
+        );
+        assert_eq!(
+            well_known_embedding_dimensions("nomic-embed-text"),
+            Some(768)
+        );
+        assert_eq!(well_known_embedding_dimensions("all-minilm"), Some(384));
+        assert_eq!(well_known_embedding_dimensions("unknown-model"), None);
+    }
+
+    #[test]
+    fn test_embedding_metadata_auto_dimensions() {
+        // No explicit defaults.dimensions — should auto-detect from model name
+        let node = AiNode {
+            provider: ProviderKind::MicrosoftFoundry,
+            alias: None,
+            capabilities: vec![Capability::Embedding],
+            auth: None,
+            model: Some("text-embedding-3-large".to_string()),
+            endpoint: Some("https://mklabaifndr.services.ai.azure.com".to_string()),
+            deployment: None,
+            api_version: None,
+            binary: None,
+            project: None,
+            location: None,
+            node_defaults: None,
+        };
+        let meta = node.embedding_metadata();
+        assert_eq!(meta.dimensions, Some(3072));
+    }
+
+    #[test]
+    fn test_embedding_metadata_explicit_overrides_auto() {
+        // Explicit dimensions should override auto-detection
+        let node = AiNode {
+            provider: ProviderKind::OpenAi,
+            alias: None,
+            capabilities: vec![Capability::Embedding],
+            auth: None,
+            model: Some("text-embedding-3-large".to_string()),
+            endpoint: None,
+            deployment: None,
+            api_version: None,
+            binary: None,
+            project: None,
+            location: None,
+            node_defaults: Some(BTreeMap::from([(
+                "dimensions".to_string(),
+                "256".to_string(),
+            )])),
+        };
+        let meta = node.embedding_metadata();
+        // Explicit 256 wins over auto-detected 3072
+        assert_eq!(meta.dimensions, Some(256));
     }
 }
