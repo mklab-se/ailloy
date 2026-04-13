@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] - 2026-04-13
+
+### Added
+
+- Auto-detect dimensions for well-known embedding models — `EmbeddingMetadata.dimensions` is now populated automatically for models like `text-embedding-3-large` (3072), `text-embedding-3-small` (1536), `nomic-embed-text` (768), and others without needing explicit `defaults.dimensions` in the node config
+
 ## [0.7.2] - 2026-04-13
 
 ### Changed
