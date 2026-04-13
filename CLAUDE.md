@@ -114,7 +114,7 @@ src/
 
 ## Code Style
 
-- Edition 2024, MSRV 1.85
+- Edition 2024, MSRV 1.86
 - `cargo clippy` with `-D warnings` (zero warnings policy)
 - `cargo fmt` enforced in CI
 
