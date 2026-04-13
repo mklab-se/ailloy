@@ -334,29 +334,42 @@ pub struct EmbeddingMetadata {
 impl EmbeddingMetadata {
     /// Generate Azure AI Search vectorizer configuration JSON.
     ///
-    /// Only works for Azure OpenAI nodes — Azure AI Search vectorizers
-    /// only support Azure OpenAI as a connected embedding source.
+    /// Works with Azure OpenAI and Microsoft Foundry nodes — both are backed
+    /// by Azure AI Services resources that expose an OpenAI-compatible endpoint.
+    /// For Foundry nodes, the `.services.ai.azure.com` endpoint is converted
+    /// to the `.openai.azure.com` variant that Azure AI Search expects.
     pub fn to_azure_search_vectorizer(&self, name: &str) -> anyhow::Result<serde_json::Value> {
-        if self.provider != ProviderKind::AzureOpenAi {
+        if self.provider != ProviderKind::AzureOpenAi
+            && self.provider != ProviderKind::MicrosoftFoundry
+        {
             anyhow::bail!(
-                "Azure AI Search vectorizers only support Azure OpenAI nodes, \
-                 but this node uses '{}'. Configure an Azure OpenAI embedding node instead.",
+                "Azure AI Search vectorizers require Azure OpenAI or Microsoft Foundry nodes, \
+                 but this node uses '{}'. Configure an Azure-hosted embedding node instead.",
                 self.provider
             );
         }
         let endpoint = self
             .endpoint
             .as_deref()
-            .context("Azure OpenAI embedding node has no endpoint configured.")?;
+            .context("Embedding node has no endpoint configured.")?;
+
+        // Azure AI Search expects the .openai.azure.com endpoint variant.
+        // Foundry nodes use .services.ai.azure.com (or .cognitiveservices.azure.com),
+        // which is the same underlying resource — convert to the OpenAI endpoint.
+        let resource_uri = endpoint
+            .replace(".services.ai.azure.com", ".openai.azure.com")
+            .replace(".cognitiveservices.azure.com", ".openai.azure.com");
+        let resource_uri = resource_uri.trim_end_matches('/');
+
         let deployment = self
             .deployment
             .as_deref()
             .or(self.model.as_deref())
-            .context("Azure OpenAI embedding node has no deployment configured.")?;
+            .context("Embedding node has no deployment or model name configured.")?;
         let model_name = self.model.as_deref().unwrap_or(deployment);
 
         let mut params = serde_json::json!({
-            "resourceUri": endpoint,
+            "resourceUri": resource_uri,
             "deploymentId": deployment,
             "modelName": model_name,
         });
@@ -1228,6 +1241,35 @@ consents:
         let vectorizer = meta.to_azure_search_vectorizer("my-vectorizer").unwrap();
         // Azure CLI auth → no apiKey in vectorizer config
         assert!(vectorizer["azureOpenAIParameters"].get("apiKey").is_none());
+    }
+
+    #[test]
+    fn test_azure_search_vectorizer_foundry_endpoint_conversion() {
+        let meta = EmbeddingMetadata {
+            provider: ProviderKind::MicrosoftFoundry,
+            model: Some("text-embedding-3-large".to_string()),
+            endpoint: Some("https://mklabaifndr.services.ai.azure.com".to_string()),
+            deployment: None,
+            dimensions: Some(3072),
+            auth: None,
+        };
+        let vectorizer = meta.to_azure_search_vectorizer("my-vectorizer").unwrap();
+        assert_eq!(vectorizer["name"], "my-vectorizer");
+        assert_eq!(vectorizer["kind"], "azureOpenAI");
+        // Foundry endpoint converted to .openai.azure.com
+        assert_eq!(
+            vectorizer["azureOpenAIParameters"]["resourceUri"],
+            "https://mklabaifndr.openai.azure.com"
+        );
+        // Model used as deploymentId when no deployment is set
+        assert_eq!(
+            vectorizer["azureOpenAIParameters"]["deploymentId"],
+            "text-embedding-3-large"
+        );
+        assert_eq!(
+            vectorizer["azureOpenAIParameters"]["modelName"],
+            "text-embedding-3-large"
+        );
     }
 
     #[test]
