@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-04-13
+
+### Fixed
+
+- Azure Search vectorizer export now supports Microsoft Foundry nodes — converts `.services.ai.azure.com` endpoints to the `.openai.azure.com` variant that Azure AI Search expects
+- Config TUI now shows an "Embedding" capability column with default indicators
+- Config TUI right margin fix — capability column labels are no longer clipped at the terminal edge
+
 ## [0.7.0] - 2026-04-13
 
 ### Added
