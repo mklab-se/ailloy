@@ -42,10 +42,10 @@ pub mod vertex;
 
 // Re-export commonly used types at the crate root.
 pub use client::{Client, Provider};
-pub use config::{AiNode, Auth, Capability};
+pub use config::{AiNode, Auth, Capability, EmbeddingMetadata};
 pub use conversation::{ChatHistory, Conversation, InMemoryHistory};
 pub use error::ClientError;
 pub use types::{
-    ChatOptions, ChatResponse, ChatStream, ImageFormat, ImageOptions, ImageResponse, Message, Role,
-    StreamEvent, Task, Usage,
+    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageFormat, ImageOptions,
+    ImageResponse, Message, Role, StreamEvent, Task, Usage,
 };

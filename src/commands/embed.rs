@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 
 use ailloy::client::create_provider_from_node;
-use ailloy::config::Config;
+use ailloy::config::{Auth, Config};
 
 use crate::cli::EmbedArgs;
 
@@ -85,6 +85,13 @@ fn run_info(args: &EmbedArgs, config: &Config) -> Result<()> {
     }
     if let Some(dimensions) = meta.dimensions {
         println!("{} {}", "Dimensions:".bold(), dimensions);
+    }
+    match &meta.auth {
+        Some(Auth::ApiKey(_)) => println!("{} API key", "Auth:".bold()),
+        Some(Auth::Env(var)) => println!("{} env ({})", "Auth:".bold(), var),
+        Some(Auth::AzureCli(_)) => println!("{} Azure CLI", "Auth:".bold()),
+        Some(Auth::GcloudCli(_)) => println!("{} gcloud CLI", "Auth:".bold()),
+        None => println!("{} none", "Auth:".bold()),
     }
 
     Ok(())

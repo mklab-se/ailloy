@@ -119,8 +119,7 @@ impl Client {
 
     /// Generate embeddings with options.
     pub fn embed_with(&self, texts: &[&str], options: &EmbedOptions) -> Result<EmbedResponse> {
-        self.runtime
-            .block_on(self.inner.embed_with(texts, options))
+        self.runtime.block_on(self.inner.embed_with(texts, options))
     }
 
     /// Embed a single text, returning the vector directly.

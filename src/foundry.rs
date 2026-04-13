@@ -13,7 +13,9 @@ use tracing::debug;
 
 use crate::azure::AzureAuth;
 use crate::client::Provider;
-use crate::types::{ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, Message, StreamEvent, Usage};
+use crate::types::{
+    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, Message, StreamEvent, Usage,
+};
 
 /// Client for Microsoft Foundry (AI Services).
 pub struct FoundryClient {

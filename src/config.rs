@@ -311,6 +311,7 @@ impl AiNode {
             endpoint: self.endpoint.clone(),
             deployment: self.deployment.clone(),
             dimensions,
+            auth: self.auth.clone(),
         }
     }
 }
@@ -327,6 +328,7 @@ pub struct EmbeddingMetadata {
     pub endpoint: Option<String>,
     pub deployment: Option<String>,
     pub dimensions: Option<u32>,
+    pub auth: Option<Auth>,
 }
 
 impl EmbeddingMetadata {
@@ -353,14 +355,31 @@ impl EmbeddingMetadata {
             .context("Azure OpenAI embedding node has no deployment configured.")?;
         let model_name = self.model.as_deref().unwrap_or(deployment);
 
+        let mut params = serde_json::json!({
+            "resourceUri": endpoint,
+            "deploymentId": deployment,
+            "modelName": model_name,
+        });
+
+        // Include API key if the node uses key-based auth.
+        // If using Azure CLI auth, omit the key — Azure AI Search will use
+        // its managed identity or system-assigned identity instead.
+        match &self.auth {
+            Some(Auth::ApiKey(key)) => {
+                params["apiKey"] = serde_json::json!(key);
+            }
+            Some(Auth::Env(var_name)) => {
+                if let Ok(key) = std::env::var(var_name) {
+                    params["apiKey"] = serde_json::json!(key);
+                }
+            }
+            _ => {} // Azure CLI or no auth — no apiKey in vectorizer config
+        }
+
         Ok(serde_json::json!({
             "name": name,
             "kind": "azureOpenAI",
-            "azureOpenAIParameters": {
-                "resourceUri": endpoint,
-                "deploymentId": deployment,
-                "modelName": model_name,
-            }
+            "azureOpenAIParameters": params,
         }))
     }
 }
@@ -1151,13 +1170,14 @@ consents:
     }
 
     #[test]
-    fn test_azure_search_vectorizer() {
+    fn test_azure_search_vectorizer_no_auth() {
         let meta = EmbeddingMetadata {
             provider: ProviderKind::AzureOpenAi,
             model: Some("text-embedding-3-large".to_string()),
             endpoint: Some("https://myresource.openai.azure.com".to_string()),
             deployment: Some("text-embedding-3-large".to_string()),
             dimensions: Some(3072),
+            auth: None,
         };
         let vectorizer = meta.to_azure_search_vectorizer("my-vectorizer").unwrap();
         assert_eq!(vectorizer["name"], "my-vectorizer");
@@ -1174,6 +1194,40 @@ consents:
             vectorizer["azureOpenAIParameters"]["modelName"],
             "text-embedding-3-large"
         );
+        // No apiKey when auth is None (Azure CLI / managed identity)
+        assert!(vectorizer["azureOpenAIParameters"].get("apiKey").is_none());
+    }
+
+    #[test]
+    fn test_azure_search_vectorizer_with_api_key() {
+        let meta = EmbeddingMetadata {
+            provider: ProviderKind::AzureOpenAi,
+            model: Some("text-embedding-3-large".to_string()),
+            endpoint: Some("https://myresource.openai.azure.com".to_string()),
+            deployment: Some("text-embedding-3-large".to_string()),
+            dimensions: Some(3072),
+            auth: Some(Auth::ApiKey("my-secret-key".to_string())),
+        };
+        let vectorizer = meta.to_azure_search_vectorizer("my-vectorizer").unwrap();
+        assert_eq!(
+            vectorizer["azureOpenAIParameters"]["apiKey"],
+            "my-secret-key"
+        );
+    }
+
+    #[test]
+    fn test_azure_search_vectorizer_azure_cli_no_api_key() {
+        let meta = EmbeddingMetadata {
+            provider: ProviderKind::AzureOpenAi,
+            model: Some("text-embedding-3-large".to_string()),
+            endpoint: Some("https://myresource.openai.azure.com".to_string()),
+            deployment: Some("text-embedding-3-large".to_string()),
+            dimensions: Some(3072),
+            auth: Some(Auth::AzureCli(true)),
+        };
+        let vectorizer = meta.to_azure_search_vectorizer("my-vectorizer").unwrap();
+        // Azure CLI auth → no apiKey in vectorizer config
+        assert!(vectorizer["azureOpenAIParameters"].get("apiKey").is_none());
     }
 
     #[test]
@@ -1184,6 +1238,7 @@ consents:
             endpoint: None,
             deployment: None,
             dimensions: None,
+            auth: None,
         };
         assert!(meta.to_azure_search_vectorizer("test").is_err());
     }

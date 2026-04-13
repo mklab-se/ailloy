@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::client::Provider;
-use crate::types::{ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, Message, StreamEvent};
+use crate::types::{
+    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, Message, StreamEvent,
+};
 
 const DEFAULT_ENDPOINT: &str = "http://localhost:11434";
 
@@ -274,10 +276,17 @@ impl Provider for OllamaClient {
         Ok(Box::pin(stream))
     }
 
-    async fn embed(&self, texts: &[&str], _options: Option<&EmbedOptions>) -> Result<EmbedResponse> {
+    async fn embed(
+        &self,
+        texts: &[&str],
+        _options: Option<&EmbedOptions>,
+    ) -> Result<EmbedResponse> {
         let url = format!("{}/api/embed", self.base_url());
         debug!(url = %url, model = %self.model, count = texts.len(), "Sending embedding request to Ollama");
-        let request = EmbedApiRequest { model: &self.model, input: texts };
+        let request = EmbedApiRequest {
+            model: &self.model,
+            input: texts,
+        };
         let response = self
             .client
             .post(&url)
@@ -294,7 +303,11 @@ impl Provider for OllamaClient {
             .json()
             .await
             .context("Failed to parse Ollama embedding response")?;
-        Ok(EmbedResponse { embeddings: api_response.embeddings, model: api_response.model, usage: None })
+        Ok(EmbedResponse {
+            embeddings: api_response.embeddings,
+            model: api_response.model,
+            usage: None,
+        })
     }
 }
 

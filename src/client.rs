@@ -6,7 +6,8 @@ use async_trait::async_trait;
 use crate::config::{AiNode, Auth, Config, ProviderKind};
 use crate::error::ClientError;
 use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, ImageOptions, ImageResponse, Message, Task,
+    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageOptions,
+    ImageResponse, Message, Task,
 };
 
 /// Unified provider trait. Override methods for the capabilities you support.
@@ -41,6 +42,15 @@ pub trait Provider: Send + Sync {
         _options: Option<&ImageOptions>,
     ) -> Result<ImageResponse> {
         Err(ClientError::Unsupported("image generation".to_string()).into())
+    }
+
+    /// Generate embeddings for the given texts.
+    async fn embed(
+        &self,
+        _texts: &[&str],
+        _options: Option<&EmbedOptions>,
+    ) -> Result<EmbedResponse> {
+        Err(ClientError::Unsupported("embedding".to_string()).into())
     }
 }
 
@@ -201,6 +211,30 @@ impl Client {
         options: &ImageOptions,
     ) -> Result<ImageResponse> {
         self.provider.generate_image(prompt, Some(options)).await
+    }
+
+    /// Generate embeddings for multiple texts.
+    pub async fn embed(&self, texts: &[&str]) -> Result<EmbedResponse> {
+        self.provider.embed(texts, None).await
+    }
+
+    /// Generate embeddings with options.
+    pub async fn embed_with(
+        &self,
+        texts: &[&str],
+        options: &EmbedOptions,
+    ) -> Result<EmbedResponse> {
+        self.provider.embed(texts, Some(options)).await
+    }
+
+    /// Embed a single text, returning the vector directly.
+    pub async fn embed_one(&self, text: &str) -> Result<Vec<f32>> {
+        let response = self.provider.embed(&[text], None).await?;
+        response
+            .embeddings
+            .into_iter()
+            .next()
+            .context("No embedding returned")
     }
 
     /// Get the provider name.
@@ -671,6 +705,23 @@ mod tests {
         };
         let provider = create_provider_from_node("lm-studio/local-model", &node).unwrap();
         assert_eq!(provider.name(), "openai");
+    }
+
+    #[tokio::test]
+    async fn test_unsupported_embed() {
+        let client = Client::builder()
+            .local_agent()
+            .binary("echo")
+            .build()
+            .unwrap();
+        let result = client.embed(&["hello"]).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("embedding"),
+            "Error should mention embedding: {}",
+            err
+        );
     }
 
     #[test]

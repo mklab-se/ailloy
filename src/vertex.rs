@@ -579,12 +579,21 @@ impl Provider for VertexAiClient {
         }
     }
 
-    async fn embed(&self, texts: &[&str], _options: Option<&EmbedOptions>) -> Result<EmbedResponse> {
+    async fn embed(
+        &self,
+        texts: &[&str],
+        _options: Option<&EmbedOptions>,
+    ) -> Result<EmbedResponse> {
         let url = format!("{}:predict", self.base_url());
         debug!(url = %url, model = %self.model, count = texts.len(), "Sending embedding request to Vertex AI");
         let token = Self::get_access_token().await?;
         let request = EmbedPredictRequest {
-            instances: texts.iter().map(|t| EmbedInstance { content: t.to_string() }).collect(),
+            instances: texts
+                .iter()
+                .map(|t| EmbedInstance {
+                    content: t.to_string(),
+                })
+                .collect(),
         };
         let response = self
             .client
@@ -601,14 +610,22 @@ impl Provider for VertexAiClient {
                 .ok()
                 .and_then(|e| e.error.map(|d| d.message))
                 .unwrap_or(body);
-            anyhow::bail!("Vertex AI embedding error ({}): {}", status.as_u16(), message);
+            anyhow::bail!(
+                "Vertex AI embedding error ({}): {}",
+                status.as_u16(),
+                message
+            );
         }
         let api_response: EmbedPredictResponse = response
             .json()
             .await
             .context("Failed to parse Vertex AI embedding response")?;
         Ok(EmbedResponse {
-            embeddings: api_response.predictions.into_iter().map(|p| p.embeddings.values).collect(),
+            embeddings: api_response
+                .predictions
+                .into_iter()
+                .map(|p| p.embeddings.values)
+                .collect(),
             model: self.model.clone(),
             usage: None,
         })
@@ -624,6 +641,9 @@ mod tests {
         let json = r#"{"predictions":[{"embeddings":{"values":[0.1,0.2,0.3]}},{"embeddings":{"values":[0.4,0.5,0.6]}}]}"#;
         let response: EmbedPredictResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.predictions.len(), 2);
-        assert_eq!(response.predictions[0].embeddings.values, vec![0.1, 0.2, 0.3]);
+        assert_eq!(
+            response.predictions[0].embeddings.values,
+            vec![0.1, 0.2, 0.3]
+        );
     }
 }
