@@ -59,6 +59,7 @@ async fn main() -> Result<()> {
     let result = match cli.command {
         Commands::Chat(args) => commands::chat::run(args, quiet).await,
         Commands::Image(args) => commands::image::run(args, quiet).await,
+        Commands::Embed(args) => commands::embed::run(args, quiet).await,
         Commands::Ai { command } => commands::ai::run(command).await,
         Commands::Completion(args) => commands::completion::run(args),
         Commands::Version => {

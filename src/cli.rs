@@ -31,6 +31,9 @@ pub enum Commands {
     /// Generate an image from a text description
     Image(ImageArgs),
 
+    /// Generate embeddings from text
+    Embed(EmbedArgs),
+
     /// Manage AI configuration and providers
     Ai {
         #[command(subcommand)]
@@ -247,6 +250,32 @@ pub struct ImageArgs {
 }
 
 // ---------------------------------------------------------------------------
+// Embed args
+// ---------------------------------------------------------------------------
+
+#[derive(clap::Args)]
+pub struct EmbedArgs {
+    /// Text to embed
+    pub text: Option<String>,
+
+    /// Node to use for embedding (overrides default)
+    #[arg(short, long)]
+    pub node: Option<String>,
+
+    /// Print the full vector as JSON
+    #[arg(long)]
+    pub full: bool,
+
+    /// Show embedding node metadata
+    #[arg(long)]
+    pub info: bool,
+
+    /// Print Azure AI Search vectorizer JSON for the embedding node
+    #[arg(long, value_name = "NAME")]
+    pub azure_vectorizer: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
 // Backward-compat types (deprecated)
 // ---------------------------------------------------------------------------
 
@@ -330,6 +359,7 @@ pub struct CompletionArgs {
 pub const KNOWN_SUBCOMMANDS: &[&str] = &[
     "chat",
     "image",
+    "embed",
     "ai",
     "completion",
     "version",
