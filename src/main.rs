@@ -78,7 +78,7 @@ async fn main() -> Result<()> {
             match args.command {
                 None | Some(ConfigCommands::Init) => {
                     let mut config = ailloy::config::Config::load_global()?;
-                    ailloy::config_tui::run_interactive_config(&mut config, &["chat", "image"])
+                    ailloy::config_tui::run_interactive_config(&mut config, &["chat", "image", "embedding"])
                         .await?;
                     Ok(())
                 }

@@ -792,8 +792,9 @@ fn render_table(
 
     // Column widths: fixed capability columns, flexible name columns
     let cap_col_w = 10usize;
+    let right_margin = 2usize;
     let total_cap_w = cap_col_w * capability_columns.len();
-    let remaining = tw.saturating_sub(total_cap_w + 4); // 4 for left padding + gaps
+    let remaining = tw.saturating_sub(total_cap_w + right_margin + 4); // 4 for left padding + gaps
     let name_w = remaining * 40 / 100;
     let provider_w = remaining * 25 / 100;
     let model_w = remaining.saturating_sub(name_w + provider_w);

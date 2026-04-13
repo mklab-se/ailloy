@@ -25,7 +25,7 @@ async fn run_config(command: Option<AiConfigCommands>) -> Result<()> {
     match command {
         None => {
             let mut config = Config::load_global()?;
-            config_tui::run_interactive_config(&mut config, &["chat", "image"]).await?;
+            config_tui::run_interactive_config(&mut config, &["chat", "image", "embedding"]).await?;
             Ok(())
         }
         Some(AiConfigCommands::AddNode) => {
