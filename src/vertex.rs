@@ -288,9 +288,7 @@ impl Provider for VertexAiClient {
                     .as_ref()
                     .map(|_| "application/json".to_string()),
                 response_schema: o.response_format.as_ref().and_then(|f| match f {
-                    crate::types::ResponseFormat::JsonSchema { schema, .. } => {
-                        Some(schema.clone())
-                    }
+                    crate::types::ResponseFormat::JsonSchema { schema, .. } => Some(schema.clone()),
                     crate::types::ResponseFormat::JsonObject => None,
                 }),
             });

@@ -608,7 +608,11 @@ mod response_format_tests {
             strict: true,
         };
         assert!(f.nudge_text().contains("pass"));
-        assert!(ResponseFormat::JsonObject.nudge_text().contains("JSON object"));
+        assert!(
+            ResponseFormat::JsonObject
+                .nudge_text()
+                .contains("JSON object")
+        );
     }
 
     #[test]

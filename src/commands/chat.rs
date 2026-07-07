@@ -94,7 +94,7 @@ pub async fn run(args: ChatArgs, quiet: bool) -> Result<()> {
     }
     messages.push(Message::user(&message));
 
-    let options = build_chat_options(&args);
+    let options = build_chat_options(&args)?;
 
     if !quiet {
         eprintln!("{} {}", "Using:".dimmed(), provider.name().dimmed());
@@ -253,7 +253,7 @@ async fn run_svg_generation(
 
     let messages = vec![Message::system(SVG_SYSTEM_PROMPT), Message::user(prompt)];
 
-    let options = build_chat_options(args);
+    let options = build_chat_options(args)?;
     let response = provider.chat(&messages, options.as_ref()).await?;
 
     std::fs::write(output, &response.content)
@@ -302,7 +302,7 @@ async fn run_interactive(
         ));
     }
 
-    let chat_options = build_chat_options(&args);
+    let chat_options = build_chat_options(&args)?;
 
     // Generate greeting or handle initial message
     let greeting_msg = initial_message.unwrap_or_else(|| "Say hi briefly.".to_string());
@@ -438,15 +438,34 @@ async fn run_interactive(
     Ok(())
 }
 
-fn build_chat_options(args: &ChatArgs) -> Option<ChatOptions> {
-    if args.max_tokens.is_some() || args.temperature.is_some() {
-        Some(ChatOptions {
+fn build_chat_options(args: &ChatArgs) -> Result<Option<ChatOptions>> {
+    if args.max_tokens.is_some() || args.temperature.is_some() || args.json || args.schema.is_some()
+    {
+        Ok(Some(ChatOptions {
             max_tokens: args.max_tokens,
             temperature: args.temperature,
-            response_format: None,
-        })
+            response_format: match (&args.schema, args.json) {
+                (Some(path), _) => {
+                    let text = std::fs::read_to_string(path)
+                        .with_context(|| format!("cannot read schema file {path}"))?;
+                    let schema: serde_json::Value = serde_json::from_str(&text)
+                        .with_context(|| format!("schema file {path} is not valid JSON"))?;
+                    let name = Path::new(path)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "schema".to_string());
+                    Some(ailloy::types::ResponseFormat::JsonSchema {
+                        name,
+                        schema,
+                        strict: true,
+                    })
+                }
+                (None, true) => Some(ailloy::types::ResponseFormat::JsonObject),
+                (None, false) => None,
+            },
+        }))
     } else {
-        None
+        Ok(None)
     }
 }
 

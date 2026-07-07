@@ -34,6 +34,12 @@ pub enum Commands {
     /// Generate embeddings from text
     Embed(EmbedArgs),
 
+    /// Evaluate input against criteria with an AI judge (exit 0 pass, 1 fail)
+    ///
+    /// Built for scripts and integration tests:
+    ///   my-tool run | ailloy eval --criteria "output mentions the order id"
+    Eval(EvalArgs),
+
     /// Manage AI configuration and providers
     Ai {
         #[command(subcommand)]
@@ -163,6 +169,40 @@ pub enum AiConfigCommands {
 // ---------------------------------------------------------------------------
 
 #[derive(clap::Args)]
+pub struct EvalArgs {
+    /// The input to evaluate (or pipe via stdin / use --file)
+    pub input: Option<String>,
+
+    /// Criteria the input must satisfy
+    #[arg(short, long)]
+    pub criteria: Option<String>,
+
+    /// Read criteria from a file
+    #[arg(long, conflicts_with = "criteria")]
+    pub criteria_file: Option<String>,
+
+    /// Read the input to evaluate from a file
+    #[arg(short, long)]
+    pub file: Option<String>,
+
+    /// Extra context for the judge (what produced the input, expectations)
+    #[arg(long)]
+    pub context: Option<String>,
+
+    /// Judge node (defaults to the default chat node)
+    #[arg(short, long)]
+    pub node: Option<String>,
+
+    /// Pass when score >= threshold (0.0-1.0) instead of the judge's verdict
+    #[arg(short, long)]
+    pub threshold: Option<f32>,
+
+    /// Print the verdict as JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(clap::Args)]
 pub struct ChatArgs {
     /// The message to send (optional if piped via stdin or using -i)
     pub message: Option<String>,
@@ -190,6 +230,14 @@ pub struct ChatArgs {
     /// Temperature for generation (0.0 - 2.0)
     #[arg(long)]
     pub temperature: Option<f32>,
+
+    /// Force the response to be a single JSON object (script-friendly)
+    #[arg(long)]
+    pub json: bool,
+
+    /// Force the response to match a JSON Schema file (implies --json)
+    #[arg(long, value_name = "FILE")]
+    pub schema: Option<String>,
 
     /// Save response to file (image extensions trigger image generation)
     #[arg(short, long)]
@@ -360,6 +408,7 @@ pub const KNOWN_SUBCOMMANDS: &[&str] = &[
     "chat",
     "image",
     "embed",
+    "eval",
     "ai",
     "completion",
     "version",
