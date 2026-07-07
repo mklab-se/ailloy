@@ -123,6 +123,13 @@ pub enum AiConfigCommands {
         id: String,
     },
 
+    /// Write a starter .ailloy.yaml in the current directory (folder-local config)
+    InitLocal {
+        /// Inherit the machine-wide config instead of replacing it (extends: global)
+        #[arg(long)]
+        extends_global: bool,
+    },
+
     /// Store a node's API key in the OS keychain (and switch its auth to keychain)
     SetKey {
         /// Node ID or alias

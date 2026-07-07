@@ -501,6 +501,15 @@ pub fn print_ai_status(app_name: &str, capabilities: &[&str]) -> Result<()> {
 
     println!("{}", "AI Status".bold());
     println!();
+    if config.source != crate::config::ConfigSource::Global {
+        println!("  {} {}", "Config:".dimmed(), config.source);
+        println!(
+            "  {}",
+            "note: `ailloy ai config` edits the GLOBAL config; edit the local file directly"
+                .dimmed()
+        );
+        println!();
+    }
 
     for &cap_key in capabilities {
         let label = ALL_CAPABILITIES
