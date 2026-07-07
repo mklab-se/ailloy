@@ -36,6 +36,7 @@ pub mod foundry;
 pub mod local_agent;
 pub mod ollama;
 pub mod openai;
+pub mod retirement;
 pub mod terminal;
 pub mod types;
 pub mod vertex;

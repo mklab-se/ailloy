@@ -194,7 +194,9 @@ impl AzureOpenAiClient {
     /// Model value for v1 request bodies (None on dated endpoints, where the
     /// deployment is part of the URL).
     fn body_model(&self) -> Option<&str> {
-        self.api_version.is_none().then_some(self.deployment.as_str())
+        self.api_version
+            .is_none()
+            .then_some(self.deployment.as_str())
     }
 
     fn base_url(&self) -> String {
@@ -306,28 +308,39 @@ impl Provider for AzureOpenAiClient {
 
         let (header_name, header_value) = self.get_auth_header().await?;
 
-        let request = ChatRequest {
-            model: self.body_model(),
-            messages,
-            max_completion_tokens: options.and_then(|o| o.max_tokens),
-            temperature: options.and_then(|o| o.temperature),
-            stream: false,
+        let mut temperature = options.and_then(|o| o.temperature);
+        let response = loop {
+            let request = ChatRequest {
+                model: self.body_model(),
+                messages,
+                max_completion_tokens: options.and_then(|o| o.max_tokens),
+                temperature,
+                stream: false,
+            };
+
+            let response = self
+                .client
+                .post(&url)
+                .header(header_name, &header_value)
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send request to Azure OpenAI")?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                if temperature.is_some()
+                    && crate::types::is_sampling_rejection(status.as_u16(), &body)
+                {
+                    debug!("model rejected sampling parameters; retrying without temperature");
+                    temperature = None;
+                    continue;
+                }
+                anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
+            }
+            break response;
         };
-
-        let response = self
-            .client
-            .post(&url)
-            .header(header_name, &header_value)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send request to Azure OpenAI")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
-        }
 
         let api_response: ChatApiResponse = response
             .json()
@@ -594,11 +607,28 @@ mod v1_surface_tests {
 
     #[test]
     fn default_uses_unified_v1_urls() {
-        let c = AzureOpenAiClient::new("https://r.openai.azure.com", "gpt-5-mini", AzureAuth::AzureCli);
-        assert_eq!(c.chat_url(), "https://r.openai.azure.com/openai/v1/chat/completions");
-        assert_eq!(c.embed_url(), "https://r.openai.azure.com/openai/v1/embeddings");
-        assert_eq!(c.image_url(), "https://r.openai.azure.com/openai/v1/images/generations");
-        assert_eq!(c.body_model(), Some("gpt-5-mini"), "v1 bodies carry the deployment as model");
+        let c = AzureOpenAiClient::new(
+            "https://r.openai.azure.com",
+            "gpt-5-mini",
+            AzureAuth::AzureCli,
+        );
+        assert_eq!(
+            c.chat_url(),
+            "https://r.openai.azure.com/openai/v1/chat/completions"
+        );
+        assert_eq!(
+            c.embed_url(),
+            "https://r.openai.azure.com/openai/v1/embeddings"
+        );
+        assert_eq!(
+            c.image_url(),
+            "https://r.openai.azure.com/openai/v1/images/generations"
+        );
+        assert_eq!(
+            c.body_model(),
+            Some("gpt-5-mini"),
+            "v1 bodies carry the deployment as model"
+        );
     }
 
     #[test]

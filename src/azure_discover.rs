@@ -272,10 +272,10 @@ mod tests {
     fn test_parse_deployments() {
         let json = r#"[
             {
-                "name": "gpt-4o",
+                "name": "gpt-5.4-mini",
                 "properties": {
                     "model": {
-                        "name": "gpt-4o",
+                        "name": "gpt-5.4-mini",
                         "version": "2024-11-20"
                     }
                 }
@@ -293,7 +293,7 @@ mod tests {
 
         let deployments: Vec<AzDeployment> = serde_json::from_str(json).unwrap();
         assert_eq!(deployments.len(), 2);
-        assert_eq!(deployments[0].name, "gpt-4o");
+        assert_eq!(deployments[0].name, "gpt-5.4-mini");
         assert_eq!(
             deployments[0]
                 .properties
@@ -304,7 +304,7 @@ mod tests {
                 .unwrap()
                 .name
                 .as_deref(),
-            Some("gpt-4o")
+            Some("gpt-5.4-mini")
         );
     }
 
@@ -328,15 +328,15 @@ mod tests {
     #[test]
     fn test_deployment_display() {
         let dep = AzDeployment {
-            name: "gpt-4o".to_string(),
+            name: "gpt-5.4-mini".to_string(),
             properties: Some(AzDeploymentProperties {
                 model: Some(AzDeploymentModel {
-                    name: Some("gpt-4o".to_string()),
+                    name: Some("gpt-5.4-mini".to_string()),
                     version: Some("2024-11-20".to_string()),
                 }),
             }),
         };
-        assert_eq!(format!("{dep}"), "gpt-4o [gpt-4o]");
+        assert_eq!(format!("{dep}"), "gpt-5.4-mini [gpt-5.4-mini]");
     }
 
     #[test]

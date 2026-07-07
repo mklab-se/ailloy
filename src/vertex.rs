@@ -33,13 +33,13 @@ struct GenerateContentRequest {
     generation_config: Option<GenerationConfig>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct GeminiContent {
     role: String,
     parts: Vec<GeminiPart>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct GeminiPart {
     #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<String>,
@@ -47,7 +47,7 @@ struct GeminiPart {
     inline_data: Option<InlineData>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct InlineData {
     #[serde(rename = "mimeType")]
     mime_type: String,
@@ -274,35 +274,46 @@ impl Provider for VertexAiClient {
         let token = Self::get_access_token().await?;
         let (system, contents) = Self::convert_messages(messages);
 
-        let generation_config = options.map(|o| GenerationConfig {
-            max_output_tokens: o.max_tokens,
-            temperature: o.temperature,
-        });
+        let mut temperature = options.and_then(|o| o.temperature);
+        let response = loop {
+            let generation_config = options.map(|o| GenerationConfig {
+                max_output_tokens: o.max_tokens,
+                temperature,
+            });
 
-        let request = GenerateContentRequest {
-            contents,
-            system_instruction: system,
-            generation_config,
+            let request = GenerateContentRequest {
+                contents: contents.clone(),
+                system_instruction: system.clone(),
+                generation_config,
+            };
+
+            let response = self
+                .client
+                .post(&url)
+                .bearer_auth(&token)
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send request to Vertex AI")?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                if temperature.is_some()
+                    && crate::types::is_sampling_rejection(status.as_u16(), &body)
+                {
+                    debug!("model rejected sampling parameters; retrying without temperature");
+                    temperature = None;
+                    continue;
+                }
+                let message = serde_json::from_str::<ApiError>(&body)
+                    .ok()
+                    .and_then(|e| e.error.map(|d| d.message))
+                    .unwrap_or(body);
+                anyhow::bail!("Vertex AI API error ({}): {}", status.as_u16(), message);
+            }
+            break response;
         };
-
-        let response = self
-            .client
-            .post(&url)
-            .bearer_auth(&token)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send request to Vertex AI")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            let message = serde_json::from_str::<ApiError>(&body)
-                .ok()
-                .and_then(|e| e.error.map(|d| d.message))
-                .unwrap_or(body);
-            anyhow::bail!("Vertex AI API error ({}): {}", status.as_u16(), message);
-        }
 
         let api_response: GenerateContentResponse = response
             .json()

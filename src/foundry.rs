@@ -124,11 +124,7 @@ impl FoundryClient {
     /// Create a new Microsoft Foundry client on the unified `/openai/v1/`
     /// surface (recommended). Use [`FoundryClient::with_api_version`] for the
     /// legacy dated `/models/...` endpoints.
-    pub fn new(
-        endpoint: impl Into<String>,
-        model: impl Into<String>,
-        auth: AzureAuth,
-    ) -> Self {
+    pub fn new(endpoint: impl Into<String>, model: impl Into<String>, auth: AzureAuth) -> Self {
         Self {
             client: reqwest::Client::new(),
             endpoint: endpoint.into(),
@@ -263,28 +259,39 @@ impl Provider for FoundryClient {
 
         let (header_name, header_value) = self.get_auth_header().await?;
 
-        let request = ChatRequest {
-            model: &self.model,
-            messages,
-            max_completion_tokens: options.and_then(|o| o.max_tokens),
-            temperature: options.and_then(|o| o.temperature),
-            stream: false,
+        let mut temperature = options.and_then(|o| o.temperature);
+        let response = loop {
+            let request = ChatRequest {
+                model: &self.model,
+                messages,
+                max_completion_tokens: options.and_then(|o| o.max_tokens),
+                temperature,
+                stream: false,
+            };
+
+            let response = self
+                .client
+                .post(&url)
+                .header(header_name, &header_value)
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send request to Microsoft Foundry")?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                if temperature.is_some()
+                    && crate::types::is_sampling_rejection(status.as_u16(), &body)
+                {
+                    debug!("model rejected sampling parameters; retrying without temperature");
+                    temperature = None;
+                    continue;
+                }
+                anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
+            }
+            break response;
         };
-
-        let response = self
-            .client
-            .post(&url)
-            .header(header_name, &header_value)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send request to Microsoft Foundry")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
-        }
 
         let api_response: ChatApiResponse = response
             .json()
@@ -481,7 +488,7 @@ mod v1_surface_tests {
     fn default_uses_unified_v1_and_normalizes_host() {
         let c = FoundryClient::new(
             "https://acct.cognitiveservices.azure.com",
-            "claude-sonnet-4-6",
+            "claude-sonnet-5",
             AzureAuth::AzureCli,
         );
         assert_eq!(

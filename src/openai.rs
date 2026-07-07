@@ -413,31 +413,42 @@ impl Provider for OpenAiClient {
         let url = format!("{}/v1/chat/completions", self.base_url());
         debug!(url = %url, model = %self.model, "Sending chat request");
 
-        let request = ChatRequest {
-            model: &self.model,
-            messages,
-            max_completion_tokens: options.and_then(|o| o.max_tokens),
-            temperature: options.and_then(|o| o.temperature),
-            stream: false,
+        let mut temperature = options.and_then(|o| o.temperature);
+        let response = loop {
+            let request = ChatRequest {
+                model: &self.model,
+                messages,
+                max_completion_tokens: options.and_then(|o| o.max_tokens),
+                temperature,
+                stream: false,
+            };
+
+            let response = self
+                .client
+                .post(&url)
+                .bearer_auth(&self.api_key)
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send request to OpenAI API")?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                if temperature.is_some()
+                    && crate::types::is_sampling_rejection(status.as_u16(), &body)
+                {
+                    debug!("model rejected sampling parameters; retrying without temperature");
+                    temperature = None;
+                    continue;
+                }
+                let message = serde_json::from_str::<ApiError>(&body)
+                    .map(|e| e.error.message)
+                    .unwrap_or(body);
+                anyhow::bail!("OpenAI API error ({}): {}", status.as_u16(), message);
+            }
+            break response;
         };
-
-        let response = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.api_key)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send request to OpenAI API")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            let message = serde_json::from_str::<ApiError>(&body)
-                .map(|e| e.error.message)
-                .unwrap_or(body);
-            anyhow::bail!("OpenAI API error ({}): {}", status.as_u16(), message);
-        }
 
         let api_response: ChatApiResponse = response
             .json()

@@ -701,7 +701,7 @@ mod tests {
                     alias: None,
                     capabilities: vec![Capability::Chat, Capability::Image],
                     auth: Some(Auth::Env("OPENAI_API_KEY".to_string())),
-                    model: Some("gpt-4o".to_string()),
+                    model: Some("gpt-5.4-mini".to_string()),
                     endpoint: None,
                     deployment: None,
                     api_version: None,
@@ -741,7 +741,7 @@ mod tests {
     fn test_node_crud() {
         let mut config = Config::default();
 
-        let node = sample_node(ProviderKind::OpenAi, "gpt-4o", vec![Capability::Chat]);
+        let node = sample_node(ProviderKind::OpenAi, "gpt-5.4-mini", vec![Capability::Chat]);
         config.add_node("openai/gpt-4o".to_string(), node);
 
         assert!(config.get_node("openai/gpt-4o").is_some());
@@ -756,7 +756,7 @@ mod tests {
     fn test_node_alias_resolution() {
         let mut config = Config::default();
 
-        let mut node = sample_node(ProviderKind::OpenAi, "gpt-4o", vec![Capability::Chat]);
+        let mut node = sample_node(ProviderKind::OpenAi, "gpt-5.4-mini", vec![Capability::Chat]);
         node.alias = Some("gpt".to_string());
         config.add_node("openai/gpt-4o".to_string(), node);
 
@@ -781,7 +781,7 @@ mod tests {
             "openai/gpt-4o".to_string(),
             sample_node(
                 ProviderKind::OpenAi,
-                "gpt-4o",
+                "gpt-5.4-mini",
                 vec![Capability::Chat, Capability::Image],
             ),
         );
@@ -789,7 +789,7 @@ mod tests {
             "anthropic/claude".to_string(),
             sample_node(
                 ProviderKind::Anthropic,
-                "claude-sonnet-4-6",
+                "claude-sonnet-5",
                 vec![Capability::Chat],
             ),
         );
@@ -807,7 +807,7 @@ mod tests {
         let mut config = Config::default();
         config.add_node(
             "openai/gpt-4o".to_string(),
-            sample_node(ProviderKind::OpenAi, "gpt-4o", vec![Capability::Chat]),
+            sample_node(ProviderKind::OpenAi, "gpt-5.4-mini", vec![Capability::Chat]),
         );
 
         config.set_default("chat", "openai/gpt-4o");
@@ -825,7 +825,7 @@ mod tests {
             "openai/gpt-4o".to_string(),
             sample_node(
                 ProviderKind::OpenAi,
-                "gpt-4o",
+                "gpt-5.4-mini",
                 vec![Capability::Chat, Capability::Image],
             ),
         );
@@ -967,8 +967,8 @@ mod tests {
 
     #[test]
     fn test_node_detail() {
-        let mut node = sample_node(ProviderKind::OpenAi, "gpt-4o", vec![]);
-        assert_eq!(node.detail(), "gpt-4o");
+        let mut node = sample_node(ProviderKind::OpenAi, "gpt-5.4-mini", vec![]);
+        assert_eq!(node.detail(), "gpt-5.4-mini");
 
         node.deployment = Some("my-deploy".to_string());
         assert_eq!(node.detail(), "my-deploy"); // deployment takes priority
@@ -1046,7 +1046,7 @@ mod tests {
         let global = Config {
             nodes: BTreeMap::from([(
                 "openai/gpt-4o".to_string(),
-                sample_node(ProviderKind::OpenAi, "gpt-4o", vec![Capability::Chat]),
+                sample_node(ProviderKind::OpenAi, "gpt-5.4-mini", vec![Capability::Chat]),
             )]),
             defaults: BTreeMap::from([("chat".to_string(), "openai/gpt-4o".to_string())]),
             consents: BTreeMap::new(),

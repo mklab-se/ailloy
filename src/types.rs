@@ -444,3 +444,46 @@ mod tests {
         );
     }
 }
+
+/// Does this error response mean the model rejected sampling parameters
+/// (temperature/top_p) rather than the request being otherwise invalid?
+///
+/// Newer reasoning models (OpenAI gpt-5.x / o-series, the newest Claude and
+/// Gemini models) accept only their default sampling settings and return
+/// HTTP 400 for anything else. Providers retry once without the parameter.
+pub(crate) fn is_sampling_rejection(status: u16, body: &str) -> bool {
+    if status != 400 {
+        return false;
+    }
+    let b = body.to_ascii_lowercase();
+    let names_param = b.contains("temperature") || b.contains("top_p");
+    let says_unsupported = b.contains("unsupported")
+        || b.contains("not supported")
+        || b.contains("does not support")
+        || b.contains("only the default");
+    names_param && says_unsupported
+}
+
+#[cfg(test)]
+mod sampling_rejection_tests {
+    use super::is_sampling_rejection;
+
+    #[test]
+    fn detects_openai_style_rejection() {
+        let body = r#"{"error":{"message":"Unsupported value: 'temperature' does not support 0.3 with this model. Only the default (1) value is supported."}}"#;
+        assert!(is_sampling_rejection(400, body));
+    }
+
+    #[test]
+    fn detects_anthropic_style_rejection() {
+        let body = r#"{"error":{"message":"`temperature` is not supported on this model."}}"#;
+        assert!(is_sampling_rejection(400, body));
+    }
+
+    #[test]
+    fn ignores_other_400s_and_statuses() {
+        assert!(!is_sampling_rejection(400, "missing field `messages`"));
+        assert!(!is_sampling_rejection(429, "temperature unsupported"));
+        assert!(!is_sampling_rejection(401, "unauthorized"));
+    }
+}

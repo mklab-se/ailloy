@@ -11,6 +11,10 @@ use crate::types::{ChatOptions, ChatResponse, ChatStream, Message, Role, StreamE
 
 const API_ENDPOINT: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
+/// Default output cap when the caller sets none. Anthropic requires
+/// max_tokens; 8192 avoids silently truncating long answers (the old 4096
+/// default bit users) while staying well inside every current model's limit.
+const DEFAULT_MAX_TOKENS: u32 = 8192;
 
 /// Client for the Anthropic Messages API.
 pub struct AnthropicClient {
@@ -32,7 +36,7 @@ struct MessagesRequest<'a> {
     stream: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct AnthropicMessage<'a> {
     role: &'a str,
     content: &'a str,
@@ -190,36 +194,49 @@ impl Provider for AnthropicClient {
         debug!(url = %url, model = %self.model, "Sending chat request to Anthropic");
 
         let (system, converted) = Self::convert_messages(messages);
-        let max_tokens = options.and_then(|o| o.max_tokens).unwrap_or(4096);
+        let max_tokens = options
+            .and_then(|o| o.max_tokens)
+            .unwrap_or(DEFAULT_MAX_TOKENS);
 
-        let request = MessagesRequest {
-            model: &self.model,
-            messages: converted,
-            system,
-            max_tokens,
-            temperature: options.and_then(|o| o.temperature),
-            stream: false,
+        let mut temperature = options.and_then(|o| o.temperature);
+        let response = loop {
+            let request = MessagesRequest {
+                model: &self.model,
+                messages: converted.clone(),
+                system,
+                max_tokens,
+                temperature,
+                stream: false,
+            };
+
+            let response = self
+                .client
+                .post(&url)
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", API_VERSION)
+                .header("content-type", "application/json")
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send request to Anthropic API")?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                if temperature.is_some()
+                    && crate::types::is_sampling_rejection(status.as_u16(), &body)
+                {
+                    debug!("model rejected sampling parameters; retrying without temperature");
+                    temperature = None;
+                    continue;
+                }
+                let message = serde_json::from_str::<ApiError>(&body)
+                    .map(|e| e.error.message)
+                    .unwrap_or(body);
+                anyhow::bail!("Anthropic API error ({}): {}", status.as_u16(), message);
+            }
+            break response;
         };
-
-        let response = self
-            .client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", API_VERSION)
-            .header("content-type", "application/json")
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send request to Anthropic API")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            let message = serde_json::from_str::<ApiError>(&body)
-                .map(|e| e.error.message)
-                .unwrap_or(body);
-            anyhow::bail!("Anthropic API error ({}): {}", status.as_u16(), message);
-        }
 
         let api_response: MessagesResponse = response
             .json()
@@ -253,7 +270,9 @@ impl Provider for AnthropicClient {
         debug!(url = %url, model = %self.model, "Sending streaming chat request to Anthropic");
 
         let (system, converted) = Self::convert_messages(messages);
-        let max_tokens = options.and_then(|o| o.max_tokens).unwrap_or(4096);
+        let max_tokens = options
+            .and_then(|o| o.max_tokens)
+            .unwrap_or(DEFAULT_MAX_TOKENS);
 
         let request = MessagesRequest {
             model: &self.model,

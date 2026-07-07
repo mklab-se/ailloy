@@ -352,7 +352,7 @@ impl ClientBuilder {
                     .api_key
                     .or_else(|| std::env::var("OPENAI_API_KEY").ok())
                     .context("API key required for OpenAI")?;
-                let model = self.model.unwrap_or_else(|| "gpt-4o".to_string());
+                let model = self.model.unwrap_or_else(|| "gpt-5.4-mini".to_string());
                 Box::new(crate::openai::OpenAiClient::new(
                     api_key,
                     model,
@@ -364,9 +364,7 @@ impl ClientBuilder {
                     .api_key
                     .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
                     .context("API key required for Anthropic")?;
-                let model = self
-                    .model
-                    .unwrap_or_else(|| "claude-sonnet-4-6".to_string());
+                let model = self.model.unwrap_or_else(|| "claude-sonnet-5".to_string());
                 Box::new(crate::anthropic::AnthropicClient::new(api_key, model))
             }
             ProviderKind::AzureOpenAi => {
@@ -486,7 +484,10 @@ pub fn create_provider_from_node(node_id: &str, node: &AiNode) -> Result<Box<dyn
                 Some(auth) => resolve_auth_api_key(auth, node_id)?,
                 None => std::env::var("OPENAI_API_KEY").unwrap_or_default(),
             };
-            let model = node.model.clone().unwrap_or_else(|| "gpt-4o".to_string());
+            let model = node
+                .model
+                .clone()
+                .unwrap_or_else(|| "gpt-5.4-mini".to_string());
             Ok(Box::new(crate::openai::OpenAiClient::new(
                 api_key,
                 model,
@@ -506,7 +507,7 @@ pub fn create_provider_from_node(node_id: &str, node: &AiNode) -> Result<Box<dyn
             let model = node
                 .model
                 .clone()
-                .unwrap_or_else(|| "claude-sonnet-4-6".to_string());
+                .unwrap_or_else(|| "claude-sonnet-5".to_string());
             Ok(Box::new(crate::anthropic::AnthropicClient::new(
                 api_key, model,
             )))

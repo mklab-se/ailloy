@@ -98,10 +98,10 @@ fn tui_select(title: &str, options: &[String], default_idx: usize) -> Result<Opt
                 (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
                     selected = selected.saturating_sub(1);
                 }
-                (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
-                    if !options.is_empty() && selected < options.len() - 1 {
-                        selected += 1;
-                    }
+                (KeyCode::Down, _) | (KeyCode::Char('j'), _)
+                    if !options.is_empty() && selected < options.len() - 1 =>
+                {
+                    selected += 1;
                 }
                 (KeyCode::Enter, _) => {
                     if options.is_empty() {
@@ -248,15 +248,13 @@ fn tui_multi_select(
                 (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
                     selected = selected.saturating_sub(1);
                 }
-                (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
-                    if !options.is_empty() && selected < options.len() - 1 {
-                        selected += 1;
-                    }
+                (KeyCode::Down, _) | (KeyCode::Char('j'), _)
+                    if !options.is_empty() && selected < options.len() - 1 =>
+                {
+                    selected += 1;
                 }
-                (KeyCode::Char(' '), _) => {
-                    if !options.is_empty() {
-                        checked[selected] = !checked[selected];
-                    }
+                (KeyCode::Char(' '), _) if !options.is_empty() => {
+                    checked[selected] = !checked[selected];
                 }
                 (KeyCode::Enter, _) => {
                     let indices: Vec<usize> = checked
@@ -522,6 +520,11 @@ pub fn print_ai_status(app_name: &str, capabilities: &[&str]) -> Result<()> {
                         node.provider.to_string().dimmed(),
                         node.detail(),
                     );
+                    if let Some(model) = node.model.as_deref().or(node.deployment.as_deref()) {
+                        if let Some(warning) = crate::retirement::retirement_warning(model) {
+                            println!("    {} {}", "⚠".yellow().bold(), warning.yellow());
+                        }
+                    }
                 } else {
                     println!(
                         "  {} {}: {} {}",
@@ -1261,10 +1264,8 @@ fn tui_edit_node(config: &mut Config, node_id: &str) -> Result<bool> {
                 (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
                     selected = selected.saturating_sub(1);
                 }
-                (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
-                    if selected < selectable_count - 1 {
-                        selected += 1;
-                    }
+                (KeyCode::Down, _) | (KeyCode::Char('j'), _) if selected < selectable_count - 1 => {
+                    selected += 1;
                 }
                 (KeyCode::Char(' '), _) => match &mut items[item_idx] {
                     FormItem::CapabilityToggle { enabled, .. } => {
@@ -1410,10 +1411,10 @@ pub async fn run_interactive_config(
                 (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
                     selected = selected.saturating_sub(1);
                 }
-                (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
-                    if node_count > 0 && selected < node_count - 1 {
-                        selected += 1;
-                    }
+                (KeyCode::Down, _) | (KeyCode::Char('j'), _)
+                    if node_count > 0 && selected < node_count - 1 =>
+                {
+                    selected += 1;
                 }
                 (KeyCode::Char('a'), _) => {
                     if let Some(_name) = add_node_full(config).await? {
@@ -1780,9 +1781,9 @@ async fn prompt_node_for_kind(
             let model = if !effective_key.is_empty() {
                 let client =
                     crate::openai::OpenAiClient::new(&effective_key, "_", endpoint_opt.clone());
-                select_model(client.list_models(), "gpt-4o").await?
+                select_model(client.list_models(), "gpt-5.4-mini").await?
             } else {
-                prompt_text("Model:", "gpt-4o", None)?
+                prompt_text("Model:", "gpt-5.4-mini", None)?
             };
 
             let capabilities = prompt_capabilities(&ProviderKind::OpenAi)?;
@@ -1827,9 +1828,9 @@ async fn prompt_node_for_kind(
 
             let model = if !effective_key.is_empty() {
                 let client = crate::anthropic::AnthropicClient::new(&effective_key, "_");
-                select_model(client.list_models(), "claude-sonnet-4-6").await?
+                select_model(client.list_models(), "claude-sonnet-5").await?
             } else {
-                prompt_text("Model:", "claude-sonnet-4-6", None)?
+                prompt_text("Model:", "claude-sonnet-5", None)?
             };
 
             let capabilities = prompt_capabilities(&ProviderKind::Anthropic)?;
