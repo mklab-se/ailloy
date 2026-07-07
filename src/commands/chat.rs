@@ -443,6 +443,7 @@ fn build_chat_options(args: &ChatArgs) -> Option<ChatOptions> {
         Some(ChatOptions {
             max_tokens: args.max_tokens,
             temperature: args.temperature,
+            response_format: None,
         })
     } else {
         None

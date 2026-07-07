@@ -196,6 +196,12 @@ impl Provider for AnthropicClient {
         debug!(url = %url, model = %self.model, "Sending chat request to Anthropic");
 
         let (system, converted) = Self::convert_messages(messages);
+        // Anthropic structured output: prompted JSON is the reliable
+        // lowest-common-denominator (works on every Claude model).
+        let system_with_format = options
+            .and_then(|o| o.response_format.as_ref())
+            .map(|f| format!("{}{}", system.unwrap_or_default(), f.nudge_text()));
+        let system = system_with_format.as_deref().or(system);
         let max_tokens = options
             .and_then(|o| o.max_tokens)
             .unwrap_or(DEFAULT_MAX_TOKENS);

@@ -36,6 +36,8 @@ struct ChatRequest<'a> {
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream_options: Option<StreamOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -429,6 +431,9 @@ impl Provider for OpenAiClient {
                 temperature,
                 stream: false,
                 stream_options: None,
+                response_format: options
+                    .and_then(|o| o.response_format.as_ref())
+                    .map(|f| f.to_openai_value()),
             };
 
             let response = self
@@ -497,6 +502,9 @@ impl Provider for OpenAiClient {
             stream_options: Some(StreamOptions {
                 include_usage: true,
             }),
+            response_format: options
+                .and_then(|o| o.response_format.as_ref())
+                .map(|f| f.to_openai_value()),
         };
 
         let response = self

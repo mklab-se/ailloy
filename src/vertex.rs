@@ -60,6 +60,10 @@ struct GenerationConfig {
     max_output_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "responseMimeType")]
+    response_mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "responseSchema")]
+    response_schema: Option<serde_json::Value>,
 }
 
 // Response types
@@ -279,6 +283,16 @@ impl Provider for VertexAiClient {
             let generation_config = options.map(|o| GenerationConfig {
                 max_output_tokens: o.max_tokens,
                 temperature,
+                response_mime_type: o
+                    .response_format
+                    .as_ref()
+                    .map(|_| "application/json".to_string()),
+                response_schema: o.response_format.as_ref().and_then(|f| match f {
+                    crate::types::ResponseFormat::JsonSchema { schema, .. } => {
+                        Some(schema.clone())
+                    }
+                    crate::types::ResponseFormat::JsonObject => None,
+                }),
             });
 
             let request = GenerateContentRequest {
@@ -360,6 +374,14 @@ impl Provider for VertexAiClient {
         let generation_config = options.map(|o| GenerationConfig {
             max_output_tokens: o.max_tokens,
             temperature: o.temperature,
+            response_mime_type: o
+                .response_format
+                .as_ref()
+                .map(|_| "application/json".to_string()),
+            response_schema: o.response_format.as_ref().and_then(|f| match f {
+                crate::types::ResponseFormat::JsonSchema { schema, .. } => Some(schema.clone()),
+                crate::types::ResponseFormat::JsonObject => None,
+            }),
         });
 
         let request = GenerateContentRequest {

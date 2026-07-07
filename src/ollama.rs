@@ -27,6 +27,8 @@ struct ChatRequest<'a> {
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     options: Option<OllamaOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -146,6 +148,9 @@ impl Provider for OllamaClient {
             messages,
             stream: false,
             options: Self::build_options(options),
+            format: options
+                .and_then(|o| o.response_format.as_ref())
+                .map(|f| f.to_ollama_value()),
         };
 
         let response = self
@@ -187,6 +192,9 @@ impl Provider for OllamaClient {
             messages,
             stream: true,
             options: Self::build_options(options),
+            format: options
+                .and_then(|o| o.response_format.as_ref())
+                .map(|f| f.to_ollama_value()),
         };
 
         let response = self
