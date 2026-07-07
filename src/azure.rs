@@ -29,13 +29,18 @@ pub struct AzureOpenAiClient {
     client: reqwest::Client,
     endpoint: String,
     deployment: String,
-    api_version: String,
+    /// Dated `api-version` for the legacy per-deployment endpoints.
+    /// `None` (the default) uses the unified `/openai/v1/` surface that
+    /// Microsoft recommends since August 2025 — no api-version at all.
+    api_version: Option<String>,
     auth: AzureAuth,
 }
 
 // Request types
 #[derive(Serialize)]
 struct ChatRequest<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<&'a str>,
     messages: &'a [Message],
     #[serde(skip_serializing_if = "Option::is_none")]
     max_completion_tokens: Option<u32>,
@@ -101,6 +106,8 @@ struct StreamDelta {
 // Image generation types
 #[derive(Serialize)]
 struct ImageGenRequest<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<&'a str>,
     prompt: &'a str,
     n: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -124,6 +131,8 @@ struct ImageData {
 // Embedding types
 #[derive(Serialize)]
 struct EmbedRequest<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<&'a str>,
     input: &'a [&'a str],
     #[serde(skip_serializing_if = "Option::is_none")]
     dimensions: Option<u32>,
@@ -148,8 +157,26 @@ struct EmbedApiUsage {
 }
 
 impl AzureOpenAiClient {
-    /// Create a new Azure OpenAI client.
+    /// Create a new Azure OpenAI client on the unified `/openai/v1/` surface
+    /// (recommended). Use [`AzureOpenAiClient::with_api_version`] for the
+    /// legacy dated endpoints.
     pub fn new(
+        endpoint: impl Into<String>,
+        deployment: impl Into<String>,
+        auth: AzureAuth,
+    ) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            endpoint: endpoint.into(),
+            deployment: deployment.into(),
+            api_version: None,
+            auth,
+        }
+    }
+
+    /// Create a client pinned to a legacy dated `api-version`
+    /// (`/openai/deployments/{d}/...?api-version=...`).
+    pub fn with_api_version(
         endpoint: impl Into<String>,
         deployment: impl Into<String>,
         api_version: impl Into<String>,
@@ -159,40 +186,42 @@ impl AzureOpenAiClient {
             client: reqwest::Client::new(),
             endpoint: endpoint.into(),
             deployment: deployment.into(),
-            api_version: api_version.into(),
+            api_version: Some(api_version.into()),
             auth,
         }
+    }
+
+    /// Model value for v1 request bodies (None on dated endpoints, where the
+    /// deployment is part of the URL).
+    fn body_model(&self) -> Option<&str> {
+        self.api_version.is_none().then_some(self.deployment.as_str())
     }
 
     fn base_url(&self) -> String {
         self.endpoint.trim_end_matches('/').to_string()
     }
 
+    fn url_for(&self, op: &str) -> String {
+        match &self.api_version {
+            None => format!("{}/openai/v1/{op}", self.base_url()),
+            Some(version) => format!(
+                "{}/openai/deployments/{}/{op}?api-version={version}",
+                self.base_url(),
+                self.deployment
+            ),
+        }
+    }
+
     fn chat_url(&self) -> String {
-        format!(
-            "{}/openai/deployments/{}/chat/completions?api-version={}",
-            self.base_url(),
-            self.deployment,
-            self.api_version
-        )
+        self.url_for("chat/completions")
     }
 
     fn image_url(&self) -> String {
-        format!(
-            "{}/openai/deployments/{}/images/generations?api-version={}",
-            self.base_url(),
-            self.deployment,
-            self.api_version
-        )
+        self.url_for("images/generations")
     }
 
     fn embed_url(&self) -> String {
-        format!(
-            "{}/openai/deployments/{}/embeddings?api-version={}",
-            self.base_url(),
-            self.deployment,
-            self.api_version
-        )
+        self.url_for("embeddings")
     }
 
     fn format_api_error(&self, status: u16, body: &str) -> String {
@@ -278,6 +307,7 @@ impl Provider for AzureOpenAiClient {
         let (header_name, header_value) = self.get_auth_header().await?;
 
         let request = ChatRequest {
+            model: self.body_model(),
             messages,
             max_completion_tokens: options.and_then(|o| o.max_tokens),
             temperature: options.and_then(|o| o.temperature),
@@ -332,6 +362,7 @@ impl Provider for AzureOpenAiClient {
         let (header_name, header_value) = self.get_auth_header().await?;
 
         let request = ChatRequest {
+            model: self.body_model(),
             messages,
             max_completion_tokens: options.and_then(|o| o.max_tokens),
             temperature: options.and_then(|o| o.temperature),
@@ -445,6 +476,7 @@ impl Provider for AzureOpenAiClient {
             .map(|(w, h)| format!("{}x{}", w, h));
 
         let request = ImageGenRequest {
+            model: self.body_model(),
             prompt,
             n: 1,
             size,
@@ -506,6 +538,7 @@ impl Provider for AzureOpenAiClient {
         let (header_name, header_value) = self.get_auth_header().await?;
 
         let request = EmbedRequest {
+            model: self.body_model(),
             input: texts,
             dimensions: options.and_then(|o| o.dimensions),
         };
@@ -552,5 +585,34 @@ mod tests {
         let response: EmbedApiResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.data.len(), 1);
         assert_eq!(response.data[0].embedding, vec![0.1, 0.2, 0.3]);
+    }
+}
+
+#[cfg(test)]
+mod v1_surface_tests {
+    use super::*;
+
+    #[test]
+    fn default_uses_unified_v1_urls() {
+        let c = AzureOpenAiClient::new("https://r.openai.azure.com", "gpt-5-mini", AzureAuth::AzureCli);
+        assert_eq!(c.chat_url(), "https://r.openai.azure.com/openai/v1/chat/completions");
+        assert_eq!(c.embed_url(), "https://r.openai.azure.com/openai/v1/embeddings");
+        assert_eq!(c.image_url(), "https://r.openai.azure.com/openai/v1/images/generations");
+        assert_eq!(c.body_model(), Some("gpt-5-mini"), "v1 bodies carry the deployment as model");
+    }
+
+    #[test]
+    fn dated_api_version_uses_legacy_urls() {
+        let c = AzureOpenAiClient::with_api_version(
+            "https://r.openai.azure.com/",
+            "dep",
+            "2024-10-21",
+            AzureAuth::AzureCli,
+        );
+        assert_eq!(
+            c.chat_url(),
+            "https://r.openai.azure.com/openai/deployments/dep/chat/completions?api-version=2024-10-21"
+        );
+        assert_eq!(c.body_model(), None, "legacy bodies must not carry model");
     }
 }

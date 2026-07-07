@@ -22,7 +22,9 @@ pub struct FoundryClient {
     client: reqwest::Client,
     endpoint: String,
     model: String,
-    api_version: String,
+    /// Dated `api-version` for the legacy `/models/...` inference endpoints.
+    /// `None` (the default) uses the unified `/openai/v1/` surface.
+    api_version: Option<String>,
     auth: AzureAuth,
 }
 
@@ -119,8 +121,26 @@ struct StreamDelta {
 }
 
 impl FoundryClient {
-    /// Create a new Microsoft Foundry client.
+    /// Create a new Microsoft Foundry client on the unified `/openai/v1/`
+    /// surface (recommended). Use [`FoundryClient::with_api_version`] for the
+    /// legacy dated `/models/...` endpoints.
     pub fn new(
+        endpoint: impl Into<String>,
+        model: impl Into<String>,
+        auth: AzureAuth,
+    ) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            endpoint: endpoint.into(),
+            model: model.into(),
+            api_version: None,
+            auth,
+        }
+    }
+
+    /// Create a client pinned to a legacy dated `api-version`
+    /// (`/models/chat/completions?api-version=...`).
+    pub fn with_api_version(
         endpoint: impl Into<String>,
         model: impl Into<String>,
         api_version: impl Into<String>,
@@ -130,7 +150,7 @@ impl FoundryClient {
             client: reqwest::Client::new(),
             endpoint: endpoint.into(),
             model: model.into(),
-            api_version: api_version.into(),
+            api_version: Some(api_version.into()),
             auth,
         }
     }
@@ -142,19 +162,23 @@ impl FoundryClient {
     }
 
     fn chat_url(&self) -> String {
-        format!(
-            "{}/models/chat/completions?api-version={}",
-            self.base_url(),
-            self.api_version
-        )
+        match &self.api_version {
+            None => format!("{}/openai/v1/chat/completions", self.base_url()),
+            Some(version) => format!(
+                "{}/models/chat/completions?api-version={version}",
+                self.base_url()
+            ),
+        }
     }
 
     fn embed_url(&self) -> String {
-        format!(
-            "{}/models/embeddings?api-version={}",
-            self.base_url(),
-            self.api_version
-        )
+        match &self.api_version {
+            None => format!("{}/openai/v1/embeddings", self.base_url()),
+            Some(version) => format!(
+                "{}/models/embeddings?api-version={version}",
+                self.base_url()
+            ),
+        }
     }
 
     async fn get_auth_header(&self) -> Result<(&'static str, String)> {
@@ -445,5 +469,42 @@ mod tests {
         let response: EmbedApiResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.data.len(), 1);
         assert_eq!(response.data[0].embedding, vec![0.1, 0.2, 0.3]);
+    }
+}
+
+#[cfg(test)]
+mod v1_surface_tests {
+    use super::*;
+    use crate::azure::AzureAuth;
+
+    #[test]
+    fn default_uses_unified_v1_and_normalizes_host() {
+        let c = FoundryClient::new(
+            "https://acct.cognitiveservices.azure.com",
+            "claude-sonnet-4-6",
+            AzureAuth::AzureCli,
+        );
+        assert_eq!(
+            c.chat_url(),
+            "https://acct.services.ai.azure.com/openai/v1/chat/completions"
+        );
+        assert_eq!(
+            c.embed_url(),
+            "https://acct.services.ai.azure.com/openai/v1/embeddings"
+        );
+    }
+
+    #[test]
+    fn dated_api_version_uses_legacy_models_path() {
+        let c = FoundryClient::with_api_version(
+            "https://acct.services.ai.azure.com",
+            "m",
+            "2024-05-01-preview",
+            AzureAuth::AzureCli,
+        );
+        assert_eq!(
+            c.chat_url(),
+            "https://acct.services.ai.azure.com/models/chat/completions?api-version=2024-05-01-preview"
+        );
     }
 }
