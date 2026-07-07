@@ -37,6 +37,13 @@ struct ChatRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<StreamOptions>,
+}
+
+#[derive(Serialize)]
+struct StreamOptions {
+    include_usage: bool,
 }
 
 #[derive(Deserialize)]
@@ -108,6 +115,7 @@ struct EmbedApiUsage {
 struct StreamChunk {
     choices: Vec<StreamChoice>,
     model: Option<String>,
+    usage: Option<ApiUsage>,
 }
 
 #[derive(Deserialize)]
@@ -267,6 +275,7 @@ impl Provider for FoundryClient {
                 max_completion_tokens: options.and_then(|o| o.max_tokens),
                 temperature,
                 stream: false,
+                stream_options: None,
             };
 
             let response = self
@@ -331,6 +340,10 @@ impl Provider for FoundryClient {
             max_completion_tokens: options.and_then(|o| o.max_tokens),
             temperature: options.and_then(|o| o.temperature),
             stream: true,
+            // usage in the final chunk; supported on the v1 surface
+            stream_options: self.api_version.is_none().then_some(StreamOptions {
+                include_usage: true,
+            }),
         };
 
         let response = self
@@ -352,8 +365,14 @@ impl Provider for FoundryClient {
         let byte_stream = response.bytes_stream();
 
         let stream = futures_util::stream::unfold(
-            (byte_stream, String::new(), String::new(), model),
-            |(mut byte_stream, mut buffer, mut assembled, model)| async move {
+            (
+                byte_stream,
+                String::new(),
+                String::new(),
+                model,
+                None::<Usage>,
+            ),
+            |(mut byte_stream, mut buffer, mut assembled, model, mut usage)| async move {
                 loop {
                     while let Some(newline_pos) = buffer.find('\n') {
                         let line = buffer[..newline_pos].trim().to_string();
@@ -368,22 +387,29 @@ impl Provider for FoundryClient {
                                 let response = ChatResponse {
                                     content: assembled.clone(),
                                     model: model.clone(),
-                                    usage: None,
+                                    usage: usage.take(),
                                 };
                                 return Some((
                                     Ok(StreamEvent::Done(response)),
-                                    (byte_stream, buffer, assembled, model),
+                                    (byte_stream, buffer, assembled, model, usage),
                                 ));
                             }
 
                             if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
+                                if let Some(u) = chunk.usage {
+                                    usage = Some(Usage {
+                                        prompt_tokens: u.prompt_tokens,
+                                        completion_tokens: u.completion_tokens,
+                                        total_tokens: u.total_tokens,
+                                    });
+                                }
                                 if let Some(choice) = chunk.choices.first() {
                                     if let Some(text) = &choice.delta.content {
                                         if !text.is_empty() {
                                             assembled.push_str(text);
                                             return Some((
                                                 Ok(StreamEvent::Delta(text.clone())),
-                                                (byte_stream, buffer, assembled, model),
+                                                (byte_stream, buffer, assembled, model, usage),
                                             ));
                                         }
                                     }
@@ -397,19 +423,22 @@ impl Provider for FoundryClient {
                             buffer.push_str(&String::from_utf8_lossy(&bytes));
                         }
                         Some(Err(e)) => {
-                            return Some((Err(e.into()), (byte_stream, buffer, assembled, model)));
+                            return Some((
+                                Err(e.into()),
+                                (byte_stream, buffer, assembled, model, usage),
+                            ));
                         }
                         None => {
                             if !assembled.is_empty() {
                                 let response = ChatResponse {
                                     content: assembled.clone(),
                                     model: model.clone(),
-                                    usage: None,
+                                    usage: usage.take(),
                                 };
                                 assembled.clear();
                                 return Some((
                                     Ok(StreamEvent::Done(response)),
-                                    (byte_stream, buffer, assembled, model),
+                                    (byte_stream, buffer, assembled, model, usage),
                                 ));
                             }
                             return None;

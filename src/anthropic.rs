@@ -57,7 +57,9 @@ struct ContentBlock {
 
 #[derive(Deserialize)]
 struct AnthropicUsage {
+    #[serde(default)]
     input_tokens: u32,
+    #[serde(default)]
     output_tokens: u32,
 }
 
@@ -307,8 +309,14 @@ impl Provider for AnthropicClient {
         let byte_stream = response.bytes_stream();
 
         let stream = futures_util::stream::unfold(
-            (byte_stream, String::new(), String::new(), model),
-            |(mut byte_stream, mut buffer, mut assembled, model)| async move {
+            (
+                byte_stream,
+                String::new(),
+                String::new(),
+                model,
+                (0u32, 0u32),
+            ),
+            |(mut byte_stream, mut buffer, mut assembled, model, mut tokens)| async move {
                 loop {
                     while let Some(newline_pos) = buffer.find('\n') {
                         let line = buffer[..newline_pos].trim().to_string();
@@ -322,6 +330,20 @@ impl Provider for AnthropicClient {
                         if let Some(data) = line.strip_prefix("data: ") {
                             if let Ok(event) = serde_json::from_str::<StreamEvent_>(data) {
                                 match event.event_type.as_str() {
+                                    "message_start" => {
+                                        // input tokens arrive on the initial message
+                                        if let Some(u) =
+                                            event.message.as_ref().and_then(|m| m.usage.as_ref())
+                                        {
+                                            tokens.0 = u.input_tokens;
+                                        }
+                                    }
+                                    "message_delta" => {
+                                        // cumulative output tokens arrive on deltas
+                                        if let Some(u) = event.usage.as_ref() {
+                                            tokens.1 = u.output_tokens;
+                                        }
+                                    }
                                     "content_block_delta" => {
                                         if let Some(delta) = &event.delta {
                                             if let Some(text) = &delta.text {
@@ -329,21 +351,32 @@ impl Provider for AnthropicClient {
                                                     assembled.push_str(text);
                                                     return Some((
                                                         Ok(StreamEvent::Delta(text.clone())),
-                                                        (byte_stream, buffer, assembled, model),
+                                                        (
+                                                            byte_stream,
+                                                            buffer,
+                                                            assembled,
+                                                            model,
+                                                            tokens,
+                                                        ),
                                                     ));
                                                 }
                                             }
                                         }
                                     }
                                     "message_stop" => {
+                                        let usage = (tokens.0 + tokens.1 > 0).then_some(Usage {
+                                            prompt_tokens: tokens.0,
+                                            completion_tokens: tokens.1,
+                                            total_tokens: tokens.0 + tokens.1,
+                                        });
                                         let response = ChatResponse {
                                             content: assembled.clone(),
                                             model: model.clone(),
-                                            usage: None,
+                                            usage,
                                         };
                                         return Some((
                                             Ok(StreamEvent::Done(response)),
-                                            (byte_stream, buffer, assembled, model),
+                                            (byte_stream, buffer, assembled, model, tokens),
                                         ));
                                     }
                                     _ => {}
@@ -357,19 +390,27 @@ impl Provider for AnthropicClient {
                             buffer.push_str(&String::from_utf8_lossy(&bytes));
                         }
                         Some(Err(e)) => {
-                            return Some((Err(e.into()), (byte_stream, buffer, assembled, model)));
+                            return Some((
+                                Err(e.into()),
+                                (byte_stream, buffer, assembled, model, tokens),
+                            ));
                         }
                         None => {
                             if !assembled.is_empty() {
+                                let usage = (tokens.0 + tokens.1 > 0).then_some(Usage {
+                                    prompt_tokens: tokens.0,
+                                    completion_tokens: tokens.1,
+                                    total_tokens: tokens.0 + tokens.1,
+                                });
                                 let response = ChatResponse {
                                     content: assembled.clone(),
                                     model: model.clone(),
-                                    usage: None,
+                                    usage,
                                 };
                                 assembled.clear();
                                 return Some((
                                     Ok(StreamEvent::Done(response)),
-                                    (byte_stream, buffer, assembled, model),
+                                    (byte_stream, buffer, assembled, model, tokens),
                                 ));
                             }
                             return None;
