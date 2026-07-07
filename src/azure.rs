@@ -29,19 +29,33 @@ pub struct AzureOpenAiClient {
     client: reqwest::Client,
     endpoint: String,
     deployment: String,
-    api_version: String,
+    /// Dated `api-version` for the legacy per-deployment endpoints.
+    /// `None` (the default) uses the unified `/openai/v1/` surface that
+    /// Microsoft recommends since August 2025 — no api-version at all.
+    api_version: Option<String>,
     auth: AzureAuth,
 }
 
 // Request types
 #[derive(Serialize)]
 struct ChatRequest<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<&'a str>,
     messages: &'a [Message],
     #[serde(skip_serializing_if = "Option::is_none")]
     max_completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<StreamOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<serde_json::Value>,
+}
+
+#[derive(Serialize)]
+struct StreamOptions {
+    include_usage: bool,
 }
 
 #[derive(Deserialize)]
@@ -86,6 +100,7 @@ struct ApiErrorDetail {
 struct StreamChunk {
     choices: Vec<StreamChoice>,
     model: Option<String>,
+    usage: Option<ApiUsage>,
 }
 
 #[derive(Deserialize)]
@@ -101,6 +116,8 @@ struct StreamDelta {
 // Image generation types
 #[derive(Serialize)]
 struct ImageGenRequest<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<&'a str>,
     prompt: &'a str,
     n: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -124,6 +141,8 @@ struct ImageData {
 // Embedding types
 #[derive(Serialize)]
 struct EmbedRequest<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<&'a str>,
     input: &'a [&'a str],
     #[serde(skip_serializing_if = "Option::is_none")]
     dimensions: Option<u32>,
@@ -148,8 +167,26 @@ struct EmbedApiUsage {
 }
 
 impl AzureOpenAiClient {
-    /// Create a new Azure OpenAI client.
+    /// Create a new Azure OpenAI client on the unified `/openai/v1/` surface
+    /// (recommended). Use [`AzureOpenAiClient::with_api_version`] for the
+    /// legacy dated endpoints.
     pub fn new(
+        endpoint: impl Into<String>,
+        deployment: impl Into<String>,
+        auth: AzureAuth,
+    ) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            endpoint: endpoint.into(),
+            deployment: deployment.into(),
+            api_version: None,
+            auth,
+        }
+    }
+
+    /// Create a client pinned to a legacy dated `api-version`
+    /// (`/openai/deployments/{d}/...?api-version=...`).
+    pub fn with_api_version(
         endpoint: impl Into<String>,
         deployment: impl Into<String>,
         api_version: impl Into<String>,
@@ -159,40 +196,44 @@ impl AzureOpenAiClient {
             client: reqwest::Client::new(),
             endpoint: endpoint.into(),
             deployment: deployment.into(),
-            api_version: api_version.into(),
+            api_version: Some(api_version.into()),
             auth,
         }
+    }
+
+    /// Model value for v1 request bodies (None on dated endpoints, where the
+    /// deployment is part of the URL).
+    fn body_model(&self) -> Option<&str> {
+        self.api_version
+            .is_none()
+            .then_some(self.deployment.as_str())
     }
 
     fn base_url(&self) -> String {
         self.endpoint.trim_end_matches('/').to_string()
     }
 
+    fn url_for(&self, op: &str) -> String {
+        match &self.api_version {
+            None => format!("{}/openai/v1/{op}", self.base_url()),
+            Some(version) => format!(
+                "{}/openai/deployments/{}/{op}?api-version={version}",
+                self.base_url(),
+                self.deployment
+            ),
+        }
+    }
+
     fn chat_url(&self) -> String {
-        format!(
-            "{}/openai/deployments/{}/chat/completions?api-version={}",
-            self.base_url(),
-            self.deployment,
-            self.api_version
-        )
+        self.url_for("chat/completions")
     }
 
     fn image_url(&self) -> String {
-        format!(
-            "{}/openai/deployments/{}/images/generations?api-version={}",
-            self.base_url(),
-            self.deployment,
-            self.api_version
-        )
+        self.url_for("images/generations")
     }
 
     fn embed_url(&self) -> String {
-        format!(
-            "{}/openai/deployments/{}/embeddings?api-version={}",
-            self.base_url(),
-            self.deployment,
-            self.api_version
-        )
+        self.url_for("embeddings")
     }
 
     fn format_api_error(&self, status: u16, body: &str) -> String {
@@ -277,27 +318,43 @@ impl Provider for AzureOpenAiClient {
 
         let (header_name, header_value) = self.get_auth_header().await?;
 
-        let request = ChatRequest {
-            messages,
-            max_completion_tokens: options.and_then(|o| o.max_tokens),
-            temperature: options.and_then(|o| o.temperature),
-            stream: false,
+        let mut temperature = options.and_then(|o| o.temperature);
+        let response = loop {
+            let request = ChatRequest {
+                model: self.body_model(),
+                messages,
+                max_completion_tokens: options.and_then(|o| o.max_tokens),
+                temperature,
+                stream: false,
+                stream_options: None,
+                response_format: options
+                    .and_then(|o| o.response_format.as_ref())
+                    .map(|f| f.to_openai_value()),
+            };
+
+            let response = self
+                .client
+                .post(&url)
+                .header(header_name, &header_value)
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send request to Azure OpenAI")?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                if temperature.is_some()
+                    && crate::types::is_sampling_rejection(status.as_u16(), &body)
+                {
+                    debug!("model rejected sampling parameters; retrying without temperature");
+                    temperature = None;
+                    continue;
+                }
+                anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
+            }
+            break response;
         };
-
-        let response = self
-            .client
-            .post(&url)
-            .header(header_name, &header_value)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send request to Azure OpenAI")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
-        }
 
         let api_response: ChatApiResponse = response
             .json()
@@ -332,10 +389,18 @@ impl Provider for AzureOpenAiClient {
         let (header_name, header_value) = self.get_auth_header().await?;
 
         let request = ChatRequest {
+            model: self.body_model(),
             messages,
             max_completion_tokens: options.and_then(|o| o.max_tokens),
             temperature: options.and_then(|o| o.temperature),
             stream: true,
+            // usage in the final chunk; supported on the v1 surface
+            stream_options: self.api_version.is_none().then_some(StreamOptions {
+                include_usage: true,
+            }),
+            response_format: options
+                .and_then(|o| o.response_format.as_ref())
+                .map(|f| f.to_openai_value()),
         };
 
         let response = self
@@ -357,8 +422,14 @@ impl Provider for AzureOpenAiClient {
         let byte_stream = response.bytes_stream();
 
         let stream = futures_util::stream::unfold(
-            (byte_stream, String::new(), String::new(), deployment),
-            |(mut byte_stream, mut buffer, mut assembled, deployment)| async move {
+            (
+                byte_stream,
+                String::new(),
+                String::new(),
+                deployment,
+                None::<Usage>,
+            ),
+            |(mut byte_stream, mut buffer, mut assembled, deployment, mut usage)| async move {
                 loop {
                     while let Some(newline_pos) = buffer.find('\n') {
                         let line = buffer[..newline_pos].trim().to_string();
@@ -373,22 +444,29 @@ impl Provider for AzureOpenAiClient {
                                 let response = ChatResponse {
                                     content: assembled.clone(),
                                     model: deployment.clone(),
-                                    usage: None,
+                                    usage: usage.take(),
                                 };
                                 return Some((
                                     Ok(StreamEvent::Done(response)),
-                                    (byte_stream, buffer, assembled, deployment),
+                                    (byte_stream, buffer, assembled, deployment, usage),
                                 ));
                             }
 
                             if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
+                                if let Some(u) = chunk.usage {
+                                    usage = Some(Usage {
+                                        prompt_tokens: u.prompt_tokens,
+                                        completion_tokens: u.completion_tokens,
+                                        total_tokens: u.total_tokens,
+                                    });
+                                }
                                 if let Some(choice) = chunk.choices.first() {
                                     if let Some(text) = &choice.delta.content {
                                         if !text.is_empty() {
                                             assembled.push_str(text);
                                             return Some((
                                                 Ok(StreamEvent::Delta(text.clone())),
-                                                (byte_stream, buffer, assembled, deployment),
+                                                (byte_stream, buffer, assembled, deployment, usage),
                                             ));
                                         }
                                     }
@@ -404,7 +482,7 @@ impl Provider for AzureOpenAiClient {
                         Some(Err(e)) => {
                             return Some((
                                 Err(e.into()),
-                                (byte_stream, buffer, assembled, deployment),
+                                (byte_stream, buffer, assembled, deployment, usage),
                             ));
                         }
                         None => {
@@ -412,12 +490,12 @@ impl Provider for AzureOpenAiClient {
                                 let response = ChatResponse {
                                     content: assembled.clone(),
                                     model: deployment.clone(),
-                                    usage: None,
+                                    usage: usage.take(),
                                 };
                                 assembled.clear();
                                 return Some((
                                     Ok(StreamEvent::Done(response)),
-                                    (byte_stream, buffer, assembled, deployment),
+                                    (byte_stream, buffer, assembled, deployment, usage),
                                 ));
                             }
                             return None;
@@ -445,6 +523,7 @@ impl Provider for AzureOpenAiClient {
             .map(|(w, h)| format!("{}x{}", w, h));
 
         let request = ImageGenRequest {
+            model: self.body_model(),
             prompt,
             n: 1,
             size,
@@ -506,6 +585,7 @@ impl Provider for AzureOpenAiClient {
         let (header_name, header_value) = self.get_auth_header().await?;
 
         let request = EmbedRequest {
+            model: self.body_model(),
             input: texts,
             dimensions: options.and_then(|o| o.dimensions),
         };
@@ -552,5 +632,51 @@ mod tests {
         let response: EmbedApiResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.data.len(), 1);
         assert_eq!(response.data[0].embedding, vec![0.1, 0.2, 0.3]);
+    }
+}
+
+#[cfg(test)]
+mod v1_surface_tests {
+    use super::*;
+
+    #[test]
+    fn default_uses_unified_v1_urls() {
+        let c = AzureOpenAiClient::new(
+            "https://r.openai.azure.com",
+            "gpt-5-mini",
+            AzureAuth::AzureCli,
+        );
+        assert_eq!(
+            c.chat_url(),
+            "https://r.openai.azure.com/openai/v1/chat/completions"
+        );
+        assert_eq!(
+            c.embed_url(),
+            "https://r.openai.azure.com/openai/v1/embeddings"
+        );
+        assert_eq!(
+            c.image_url(),
+            "https://r.openai.azure.com/openai/v1/images/generations"
+        );
+        assert_eq!(
+            c.body_model(),
+            Some("gpt-5-mini"),
+            "v1 bodies carry the deployment as model"
+        );
+    }
+
+    #[test]
+    fn dated_api_version_uses_legacy_urls() {
+        let c = AzureOpenAiClient::with_api_version(
+            "https://r.openai.azure.com/",
+            "dep",
+            "2024-10-21",
+            AzureAuth::AzureCli,
+        );
+        assert_eq!(
+            c.chat_url(),
+            "https://r.openai.azure.com/openai/deployments/dep/chat/completions?api-version=2024-10-21"
+        );
+        assert_eq!(c.body_model(), None, "legacy bodies must not carry model");
     }
 }

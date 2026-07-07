@@ -10,7 +10,13 @@ pub async fn run(command: Option<AiCommands>) -> Result<()> {
     match command {
         None => config_tui::print_ai_status("ailloy", &["chat", "image"]),
         Some(AiCommands::Config { command }) => run_config(command).await,
-        Some(AiCommands::Test { message }) => config_tui::run_test_chat("ailloy", message).await,
+        Some(AiCommands::Test { message, all }) => {
+            if all {
+                run_test_all().await
+            } else {
+                config_tui::run_test_chat("ailloy", message).await
+            }
+        }
         Some(AiCommands::Enable) => config_tui::enable_ai("ailloy"),
         Some(AiCommands::Disable) => config_tui::disable_ai("ailloy"),
         Some(AiCommands::Status) => config_tui::print_ai_status("ailloy", &["chat", "image"]),
@@ -41,6 +47,7 @@ async fn run_config(command: Option<AiConfigCommands>) -> Result<()> {
             config_tui::edit_node_interactive(&mut config, &id)
         }
         Some(AiConfigCommands::DeleteNode { id }) => run_delete_node(&id),
+        Some(AiConfigCommands::SetKey { id }) => run_set_key(&id),
         Some(AiConfigCommands::SetDefault { node_name, task }) => {
             run_set_default(&task, &node_name)
         }
@@ -145,4 +152,91 @@ pub async fn run_legacy_nodes(cmd: NodeCommands) -> Result<()> {
         }
         NodeCommands::Show { id } => run_show_node(&id),
     }
+}
+
+/// Store a node's API key in the OS keychain and switch its auth to keychain.
+fn run_set_key(id_or_alias: &str) -> Result<()> {
+    let mut config = Config::load_global()?;
+    let (node_id, _) = config.get_node(id_or_alias).with_context(|| {
+        format!("unknown node '{id_or_alias}' — see `ailloy ai config list-nodes`")
+    })?;
+    let node_id = node_id.to_string();
+
+    let secret = inquire::Password::new(&format!("API key for {node_id}:"))
+        .with_display_mode(inquire::PasswordDisplayMode::Masked)
+        .without_confirmation()
+        .prompt()
+        .context("cancelled")?;
+    if secret.trim().is_empty() {
+        anyhow::bail!("empty key — nothing stored");
+    }
+
+    ailloy::config::set_keychain_secret(&node_id, secret.trim())?;
+    if let Some(node) = config.nodes.get_mut(&node_id) {
+        node.auth = Some(ailloy::config::Auth::Keychain(true));
+    }
+    config.save()?;
+    println!(
+        "{} key stored in the OS keychain (service 'ailloy', account '{}'); node auth set to keychain",
+        "✓".green().bold(),
+        node_id.bold()
+    );
+    Ok(())
+}
+
+/// Ping every configured node: 1-token chat for chat-capable nodes, a tiny
+/// embed for embedding-capable ones. Exit code 1 when any node fails.
+async fn run_test_all() -> Result<()> {
+    use std::time::Instant;
+    let config = Config::load()?;
+    if config.nodes.is_empty() {
+        println!("No nodes configured. Run `ailloy ai config` to add one.");
+        return Ok(());
+    }
+    let mut failures = 0usize;
+    for (id, node) in &config.nodes {
+        let started = Instant::now();
+        let result: Result<String> = if node.capabilities.contains(&Capability::Chat) {
+            match ailloy::Client::with_node(id) {
+                Ok(client) => {
+                    let options = ailloy::ChatOptions::builder().max_tokens(8).build();
+                    client
+                        .chat_with(
+                            &[ailloy::Message::user("Reply with the single word: ok")],
+                            &options,
+                        )
+                        .await
+                        .map(|_| "chat".to_string())
+                }
+                Err(e) => Err(e),
+            }
+        } else if node.capabilities.contains(&Capability::Embedding) {
+            match ailloy::Client::with_node(id) {
+                Ok(client) => client
+                    .embed_one("ping")
+                    .await
+                    .map(|_| "embedding".to_string()),
+                Err(e) => Err(e),
+            }
+        } else {
+            println!("  {} {} (no testable capability)", "-".dimmed(), id);
+            continue;
+        };
+        match result {
+            Ok(kind) => println!(
+                "  {} {} ({kind}, {} ms)",
+                "✓".green().bold(),
+                id.bold(),
+                started.elapsed().as_millis()
+            ),
+            Err(e) => {
+                failures += 1;
+                println!("  {} {} — {e:#}", "✗".red().bold(), id.bold());
+            }
+        }
+    }
+    if failures > 0 {
+        anyhow::bail!("{failures} node(s) failed");
+    }
+    Ok(())
 }

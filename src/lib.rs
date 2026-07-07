@@ -36,6 +36,7 @@ pub mod foundry;
 pub mod local_agent;
 pub mod ollama;
 pub mod openai;
+pub mod retirement;
 pub mod terminal;
 pub mod types;
 pub mod vertex;
@@ -47,5 +48,5 @@ pub use conversation::{ChatHistory, Conversation, InMemoryHistory};
 pub use error::ClientError;
 pub use types::{
     ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageFormat, ImageOptions,
-    ImageResponse, Message, Role, StreamEvent, Task, Usage,
+    ImageResponse, Message, ResponseFormat, Role, StreamEvent, Task, Usage,
 };

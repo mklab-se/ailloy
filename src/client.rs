@@ -135,34 +135,42 @@ impl Client {
     }
 
     /// Create a client for Azure OpenAI programmatically (no config needed).
+    ///
+    /// Uses the unified `/openai/v1/` surface; pass `Some(api_version)` to pin
+    /// the legacy dated endpoints instead.
     pub fn azure(
         endpoint: impl Into<String>,
         deployment: impl Into<String>,
-        api_version: impl Into<String>,
+        api_version: Option<String>,
     ) -> Result<Self> {
-        let client = crate::azure::AzureOpenAiClient::new(
-            endpoint,
-            deployment,
-            api_version,
-            crate::azure::AzureAuth::AzureCli,
-        );
+        let auth = crate::azure::AzureAuth::AzureCli;
+        let client = match api_version {
+            Some(version) => crate::azure::AzureOpenAiClient::with_api_version(
+                endpoint, deployment, version, auth,
+            ),
+            None => crate::azure::AzureOpenAiClient::new(endpoint, deployment, auth),
+        };
         Ok(Self {
             provider: Box::new(client),
         })
     }
 
     /// Create a client for Microsoft Foundry programmatically (no config needed).
+    ///
+    /// Uses the unified `/openai/v1/` surface; pass `Some(api_version)` to pin
+    /// the legacy dated `/models/...` endpoints instead.
     pub fn foundry(
         endpoint: impl Into<String>,
         model: impl Into<String>,
-        api_version: impl Into<String>,
+        api_version: Option<String>,
     ) -> Result<Self> {
-        let client = crate::foundry::FoundryClient::new(
-            endpoint,
-            model,
-            api_version,
-            crate::azure::AzureAuth::AzureCli,
-        );
+        let auth = crate::azure::AzureAuth::AzureCli;
+        let client = match api_version {
+            Some(version) => {
+                crate::foundry::FoundryClient::with_api_version(endpoint, model, version, auth)
+            }
+            None => crate::foundry::FoundryClient::new(endpoint, model, auth),
+        };
         Ok(Self {
             provider: Box::new(client),
         })
@@ -344,7 +352,7 @@ impl ClientBuilder {
                     .api_key
                     .or_else(|| std::env::var("OPENAI_API_KEY").ok())
                     .context("API key required for OpenAI")?;
-                let model = self.model.unwrap_or_else(|| "gpt-4o".to_string());
+                let model = self.model.unwrap_or_else(|| "gpt-5.4-mini".to_string());
                 Box::new(crate::openai::OpenAiClient::new(
                     api_key,
                     model,
@@ -356,9 +364,7 @@ impl ClientBuilder {
                     .api_key
                     .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
                     .context("API key required for Anthropic")?;
-                let model = self
-                    .model
-                    .unwrap_or_else(|| "claude-sonnet-4-6".to_string());
+                let model = self.model.unwrap_or_else(|| "claude-sonnet-5".to_string());
                 Box::new(crate::anthropic::AnthropicClient::new(api_key, model))
             }
             ProviderKind::AzureOpenAi => {
@@ -368,40 +374,37 @@ impl ClientBuilder {
                 let deployment = self
                     .deployment
                     .context("Deployment required for Azure OpenAI")?;
-                let api_version = self
-                    .api_version
-                    .unwrap_or_else(|| "2025-04-01-preview".to_string());
                 let auth = if let Some(key) = self.api_key {
                     crate::azure::AzureAuth::ApiKey(key)
                 } else {
                     crate::azure::AzureAuth::AzureCli
                 };
-                Box::new(crate::azure::AzureOpenAiClient::new(
-                    endpoint,
-                    deployment,
-                    api_version,
-                    auth,
-                ))
+                Box::new(match self.api_version {
+                    Some(version) => crate::azure::AzureOpenAiClient::with_api_version(
+                        endpoint, deployment, version, auth,
+                    ),
+                    None => crate::azure::AzureOpenAiClient::new(endpoint, deployment, auth),
+                })
             }
             ProviderKind::MicrosoftFoundry => {
                 let endpoint = self
                     .endpoint
                     .context("Endpoint required for Microsoft Foundry")?;
                 let model = self.model.context("Model required for Microsoft Foundry")?;
-                let api_version = self
-                    .api_version
-                    .unwrap_or_else(|| "2024-05-01-preview".to_string());
                 let auth = if let Some(key) = self.api_key {
                     crate::azure::AzureAuth::ApiKey(key)
                 } else {
                     crate::azure::AzureAuth::AzureCli
                 };
-                Box::new(crate::foundry::FoundryClient::new(
-                    endpoint,
-                    model,
-                    api_version,
-                    auth,
-                ))
+                Box::new(match self.api_version {
+                    Some(version) => crate::foundry::FoundryClient::with_api_version(
+                        endpoint.clone(),
+                        model.clone(),
+                        version,
+                        auth,
+                    ),
+                    None => crate::foundry::FoundryClient::new(endpoint, model, auth),
+                })
             }
             ProviderKind::VertexAi => {
                 let project = self.project.context("Project required for Vertex AI")?;
@@ -437,6 +440,7 @@ fn resolve_auth_api_key(auth: &Auth, node_id: &str) -> Result<String> {
             )
         }),
         Auth::ApiKey(key) => Ok(key.clone()),
+        Auth::Keychain(_) => crate::config::keychain_secret(node_id),
         Auth::AzureCli(_) | Auth::GcloudCli(_) => {
             anyhow::bail!(
                 "Node '{}' uses CLI-based auth, not an API key",
@@ -450,6 +454,9 @@ fn resolve_auth_api_key(auth: &Auth, node_id: &str) -> Result<String> {
 fn resolve_azure_auth(node: &AiNode, node_id: &str) -> Result<crate::azure::AzureAuth> {
     match &node.auth {
         Some(Auth::ApiKey(key)) => Ok(crate::azure::AzureAuth::ApiKey(key.clone())),
+        Some(Auth::Keychain(_)) => Ok(crate::azure::AzureAuth::ApiKey(
+            crate::config::keychain_secret(node_id)?,
+        )),
         Some(Auth::Env(var_name)) => {
             let key = std::env::var(var_name).with_context(|| {
                 format!(
@@ -481,7 +488,10 @@ pub fn create_provider_from_node(node_id: &str, node: &AiNode) -> Result<Box<dyn
                 Some(auth) => resolve_auth_api_key(auth, node_id)?,
                 None => std::env::var("OPENAI_API_KEY").unwrap_or_default(),
             };
-            let model = node.model.clone().unwrap_or_else(|| "gpt-4o".to_string());
+            let model = node
+                .model
+                .clone()
+                .unwrap_or_else(|| "gpt-5.4-mini".to_string());
             Ok(Box::new(crate::openai::OpenAiClient::new(
                 api_key,
                 model,
@@ -501,7 +511,7 @@ pub fn create_provider_from_node(node_id: &str, node: &AiNode) -> Result<Box<dyn
             let model = node
                 .model
                 .clone()
-                .unwrap_or_else(|| "claude-sonnet-4-6".to_string());
+                .unwrap_or_else(|| "claude-sonnet-5".to_string());
             Ok(Box::new(crate::anthropic::AnthropicClient::new(
                 api_key, model,
             )))
@@ -515,17 +525,13 @@ pub fn create_provider_from_node(node_id: &str, node: &AiNode) -> Result<Box<dyn
                 .deployment
                 .clone()
                 .with_context(|| format!("No deployment for Azure node '{}'", node_id))?;
-            let api_version = node
-                .api_version
-                .clone()
-                .unwrap_or_else(|| "2025-04-01-preview".to_string());
             let auth = resolve_azure_auth(node, node_id)?;
-            Ok(Box::new(crate::azure::AzureOpenAiClient::new(
-                endpoint,
-                deployment,
-                api_version,
-                auth,
-            )))
+            Ok(Box::new(match node.api_version.clone() {
+                Some(version) => crate::azure::AzureOpenAiClient::with_api_version(
+                    endpoint, deployment, version, auth,
+                ),
+                None => crate::azure::AzureOpenAiClient::new(endpoint, deployment, auth),
+            }))
         }
         ProviderKind::MicrosoftFoundry => {
             let endpoint = node
@@ -536,17 +542,16 @@ pub fn create_provider_from_node(node_id: &str, node: &AiNode) -> Result<Box<dyn
                 .model
                 .clone()
                 .with_context(|| format!("No model for Foundry node '{}'", node_id))?;
-            let api_version = node
-                .api_version
-                .clone()
-                .unwrap_or_else(|| "2024-05-01-preview".to_string());
             let auth = resolve_azure_auth(node, node_id)?;
-            Ok(Box::new(crate::foundry::FoundryClient::new(
-                endpoint,
-                model,
-                api_version,
-                auth,
-            )))
+            Ok(Box::new(match node.api_version.clone() {
+                Some(version) => crate::foundry::FoundryClient::with_api_version(
+                    endpoint.clone(),
+                    model.clone(),
+                    version,
+                    auth,
+                ),
+                None => crate::foundry::FoundryClient::new(endpoint, model, auth),
+            }))
         }
         ProviderKind::VertexAi => {
             let project = node

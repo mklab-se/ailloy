@@ -10,7 +10,7 @@ use crate::config::{AiNode, Auth, Capability, ProviderKind};
 /// A discovered AI node with metadata.
 #[derive(Debug, Clone)]
 pub struct DiscoveredNode {
-    /// Suggested node ID (e.g. `openai/gpt-4o`).
+    /// Suggested node ID (e.g. `openai/gpt-5.4-mini`).
     pub suggested_id: String,
     /// The node configuration.
     pub node: AiNode,
@@ -24,13 +24,13 @@ pub fn discover_env_keys() -> Vec<DiscoveredNode> {
 
     if std::env::var("OPENAI_API_KEY").is_ok() {
         results.push(DiscoveredNode {
-            suggested_id: "openai/gpt-4o".to_string(),
+            suggested_id: "openai/gpt-5.4-mini".to_string(),
             node: AiNode {
                 provider: ProviderKind::OpenAi,
                 alias: None,
                 capabilities: vec![Capability::Chat, Capability::Image],
                 auth: Some(Auth::Env("OPENAI_API_KEY".to_string())),
-                model: Some("gpt-4o".to_string()),
+                model: Some("gpt-5.4-mini".to_string()),
                 endpoint: None,
                 deployment: None,
                 api_version: None,
@@ -45,13 +45,13 @@ pub fn discover_env_keys() -> Vec<DiscoveredNode> {
 
     if std::env::var("ANTHROPIC_API_KEY").is_ok() {
         results.push(DiscoveredNode {
-            suggested_id: "anthropic/claude-sonnet-4-6".to_string(),
+            suggested_id: "anthropic/claude-sonnet-5".to_string(),
             node: AiNode {
                 provider: ProviderKind::Anthropic,
                 alias: None,
                 capabilities: vec![Capability::Chat],
                 auth: Some(Auth::Env("ANTHROPIC_API_KEY".to_string())),
-                model: Some("claude-sonnet-4-6".to_string()),
+                model: Some("claude-sonnet-5".to_string()),
                 endpoint: None,
                 deployment: None,
                 api_version: None,
@@ -172,13 +172,13 @@ mod tests {
     #[test]
     fn test_discovered_node_structure() {
         let node = DiscoveredNode {
-            suggested_id: "openai/gpt-4o".to_string(),
+            suggested_id: "openai/gpt-5.4-mini".to_string(),
             node: AiNode {
                 provider: ProviderKind::OpenAi,
                 alias: None,
                 capabilities: vec![Capability::Chat],
                 auth: Some(Auth::Env("OPENAI_API_KEY".to_string())),
-                model: Some("gpt-4o".to_string()),
+                model: Some("gpt-5.4-mini".to_string()),
                 endpoint: None,
                 deployment: None,
                 api_version: None,
@@ -189,7 +189,7 @@ mod tests {
             },
             description: "test".to_string(),
         };
-        assert_eq!(node.suggested_id, "openai/gpt-4o");
+        assert_eq!(node.suggested_id, "openai/gpt-5.4-mini");
         assert_eq!(node.node.provider, ProviderKind::OpenAi);
     }
 }

@@ -71,7 +71,7 @@ Add Ailloy to your project without CLI dependencies:
 
 ```toml
 [dependencies]
-ailloy = { version = "0.4", default-features = false }
+ailloy = { version = "1.0", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 anyhow = "1"
 ```
@@ -113,7 +113,7 @@ use ailloy::{Client, Message};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let client = Client::openai("sk-...", "gpt-4o")?;
+    let client = Client::openai("sk-...", "gpt-5.4-mini")?;
     let response = client.chat(&[Message::user("Hello!")]).await?;
     println!("{}", response.content);
     Ok(())
@@ -130,13 +130,45 @@ async fn main() -> anyhow::Result<()> {
     let client = Client::builder()
         .anthropic()
         .api_key("sk-ant-...")
-        .model("claude-sonnet-4-6")
+        .model("claude-sonnet-5")
         .build()?;
     let response = client.chat(&[Message::user("Hello!")]).await?;
     println!("{}", response.content);
     Ok(())
 }
 ```
+
+### Structured JSON output
+
+Force the model to answer with JSON — a single object, or strict conformance to a JSON Schema:
+
+```rust
+use ailloy::{ChatOptions, Client, Message};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let options = ChatOptions::builder()
+        .json_schema(
+            "cities",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "cities": {"type": "array", "items": {"type": "string"}}
+                },
+                "required": ["cities"]
+            }),
+        )
+        .build();
+    let response = client
+        .chat_with(&[Message::user("List three Swedish cities")], &options)
+        .await?;
+    println!("{}", response.content); // valid JSON
+    Ok(())
+}
+```
+
+Use `.json()` instead of `.json_schema(...)` when any single JSON object will do. Structured output is native on OpenAI, Azure OpenAI, Microsoft Foundry, Ollama, and Vertex AI (`response_format` / `response_schema`), and prompted on Anthropic.
 
 ### Image generation
 
@@ -179,7 +211,30 @@ Use it directly:
 ```bash
 ailloy "Explain the Rust borrow checker in one sentence"
 ailloy "A sunset over the ocean" -o sunset.png
+ailloy chat "List three Swedish cities as JSON" --json
 ```
+
+## Evaluate (LLM-as-judge)
+
+`ailloy eval` turns an AI model into a judge with script-friendly exit codes — built for integration tests of AI-powered tools. Traditional assertions cannot check non-deterministic output; an LLM judge can:
+
+```bash
+# Judge any output against plain-language criteria (exit 0 pass, 1 fail)
+my-tool ask "Summarize the incident report" | ailloy eval \
+  --criteria "mentions the outage start time, the root cause, and a follow-up action"
+
+# In a test script or CI job
+if ! echo "$output" | ailloy eval -c "written in professional English"; then
+  echo "quality gate failed"; exit 1
+fi
+
+# Machine-readable verdict, extra context, score threshold
+ailloy eval "$output" --criteria-file criteria.txt \
+  --context "input is a summary of incident INC-4711" \
+  --threshold 0.8 --json
+```
+
+Options: `--criteria/-c` or `--criteria-file`, input as an argument, `--file`, or stdin, `--context` for background, `--node` to pick the judge, `--threshold` to gate on a 0.0–1.0 score, `--json` for structured output. Exit codes: `0` pass, `1` fail, `2` usage error, `3` provider error. See `examples/eval.sh` for the full pattern.
 
 ## Providers
 
@@ -196,24 +251,26 @@ ailloy "A sunset over the ocean" -o sunset.png
 
 **LM Studio** uses the OpenAI-compatible API (`http://localhost:1234` by default). **Local Agent** delegates to CLI tools installed on your system: `claude`, `codex`, or `copilot`.
 
+**Azure OpenAI and Microsoft Foundry** default to the unified `/openai/v1/` endpoint surface — no dated `api-version` needed, and the `model` field is your deployment name. Nodes that set an explicit `api_version` in config keep using the legacy dated endpoints.
+
 ## Configuration
 
 Ailloy stores its configuration at `~/.config/ailloy/config.yaml`:
 
 ```yaml
 nodes:
-  openai/gpt-4o:
+  openai/gpt-5.4-mini:
     provider: openai
-    model: gpt-4o
+    model: gpt-5.4-mini
     auth:
       env: OPENAI_API_KEY
     capabilities: [chat, image]
 
-  anthropic/claude-sonnet-4-6:
+  anthropic/claude-sonnet-5:
     provider: anthropic
-    model: claude-sonnet-4-6
+    model: claude-sonnet-5
     auth:
-      env: ANTHROPIC_API_KEY
+      keychain: true
     capabilities: [chat]
 
   ollama/llama3.2:
@@ -229,9 +286,19 @@ nodes:
     capabilities: [chat]
 
 defaults:
-  chat: openai/gpt-4o
-  image: openai/gpt-4o
+  chat: openai/gpt-5.4-mini
+  image: openai/gpt-5.4-mini
 ```
+
+### API keys in the OS keychain
+
+Instead of environment variables or inline keys, store API keys in the operating system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service):
+
+```bash
+ailloy ai config set-key openai/gpt-5.4-mini   # prompts for the key, stores it securely
+```
+
+This switches the node's auth to `keychain: true` — the key never touches the config file. Keys are stored under service `ailloy` with the node ID as account. Keychain support is behind the `keychain` feature (enabled by default).
 
 ### Local project config
 
@@ -244,13 +311,18 @@ Create `.ailloy.yaml` in your project root to override or add nodes for that pro
 | `ailloy <message>` | Send a message (shorthand for `ailloy chat`) |
 | `ailloy chat <message>` | Send a message to the configured AI node |
 | `ailloy chat -i` | Interactive conversation mode |
-| `ailloy ai` | Show AI status |
+| `ailloy image <prompt>` | Generate an image |
+| `ailloy embed <text>` | Generate embeddings |
+| `ailloy eval <input> -c <criteria>` | LLM-as-judge evaluation (exit 0 pass, 1 fail) |
+| `ailloy ai` | Show AI status (includes model retirement warnings) |
 | `ailloy ai config` | Interactive node configuration wizard |
 | `ailloy ai config list-nodes` | List configured AI nodes |
 | `ailloy ai config add-node` | Add a new AI node interactively |
+| `ailloy ai config set-key <id>` | Store a node's API key in the OS keychain |
 | `ailloy ai config show` | Display current configuration |
 | `ailloy ai config set-default <id> --task <cap>` | Set the default node for a capability |
 | `ailloy ai test` | Test AI connectivity |
+| `ailloy ai test --all` | Ping every configured node with latency (exit 1 on failures) |
 | `ailloy ai enable` / `disable` | Toggle AI features |
 | `ailloy completion <shell>` | Generate shell completions |
 | `ailloy version` | Show version and banner |
@@ -263,6 +335,8 @@ ailloy "message" --system "Be brief"     # Set a system prompt
 ailloy "message" --stream                # Stream response tokens (always on in -i mode)
 ailloy "message" --max-tokens 100        # Limit response length
 ailloy "message" --temperature 0.7       # Control randomness
+ailloy "message" --json                  # Force a single JSON object response
+ailloy "message" --schema out.json       # Force response to match a JSON Schema file
 ailloy "message" -o response.txt         # Save response to file
 ailloy "message" -o image.png            # Generate an image
 ailloy "message" -o diagram.svg          # Generate SVG via chat
@@ -279,6 +353,7 @@ Ailloy uses feature flags to keep the library lean:
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `cli` | Yes | CLI binary and all dependencies (clap, inquire, colored, etc.) |
+| `keychain` | Yes | OS keychain storage for API keys (keyring) |
 | `config-tui` | No* | Interactive config wizards, status display, enable/disable (inquire, colored) |
 
 \* `config-tui` is automatically included when `cli` is enabled.
@@ -286,13 +361,19 @@ Ailloy uses feature flags to keep the library lean:
 Library users should disable default features. To get interactive config TUI without the full CLI:
 
 ```toml
-ailloy = { version = "0.5", default-features = false, features = ["config-tui"] }
+ailloy = { version = "1.0", default-features = false, features = ["config-tui"] }
 ```
 
 For a pure library with no TUI deps:
 
 ```toml
-ailloy = { version = "0.5", default-features = false }
+ailloy = { version = "1.0", default-features = false }
+```
+
+Add `keychain` to either of the above to read `auth: keychain` nodes without the CLI:
+
+```toml
+ailloy = { version = "1.0", default-features = false, features = ["keychain"] }
 ```
 
 ## Development

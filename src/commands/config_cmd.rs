@@ -261,6 +261,7 @@ pub fn run_show() -> Result<()> {
         match &node.auth {
             Some(Auth::Env(var)) => println!("      {} env: {}", "Auth:".dimmed(), var),
             Some(Auth::ApiKey(_)) => println!("      {} api_key: ********", "Auth:".dimmed()),
+            Some(Auth::Keychain(_)) => println!("      {} OS keychain", "Auth:".dimmed()),
             Some(Auth::AzureCli(_)) => println!("      {} azure_cli", "Auth:".dimmed()),
             Some(Auth::GcloudCli(_)) => println!("      {} gcloud_cli", "Auth:".dimmed()),
             None => {}

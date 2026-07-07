@@ -22,7 +22,9 @@ pub struct FoundryClient {
     client: reqwest::Client,
     endpoint: String,
     model: String,
-    api_version: String,
+    /// Dated `api-version` for the legacy `/models/...` inference endpoints.
+    /// `None` (the default) uses the unified `/openai/v1/` surface.
+    api_version: Option<String>,
     auth: AzureAuth,
 }
 
@@ -35,6 +37,15 @@ struct ChatRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<StreamOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<serde_json::Value>,
+}
+
+#[derive(Serialize)]
+struct StreamOptions {
+    include_usage: bool,
 }
 
 #[derive(Deserialize)]
@@ -106,6 +117,7 @@ struct EmbedApiUsage {
 struct StreamChunk {
     choices: Vec<StreamChoice>,
     model: Option<String>,
+    usage: Option<ApiUsage>,
 }
 
 #[derive(Deserialize)]
@@ -119,8 +131,22 @@ struct StreamDelta {
 }
 
 impl FoundryClient {
-    /// Create a new Microsoft Foundry client.
-    pub fn new(
+    /// Create a new Microsoft Foundry client on the unified `/openai/v1/`
+    /// surface (recommended). Use [`FoundryClient::with_api_version`] for the
+    /// legacy dated `/models/...` endpoints.
+    pub fn new(endpoint: impl Into<String>, model: impl Into<String>, auth: AzureAuth) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            endpoint: endpoint.into(),
+            model: model.into(),
+            api_version: None,
+            auth,
+        }
+    }
+
+    /// Create a client pinned to a legacy dated `api-version`
+    /// (`/models/chat/completions?api-version=...`).
+    pub fn with_api_version(
         endpoint: impl Into<String>,
         model: impl Into<String>,
         api_version: impl Into<String>,
@@ -130,7 +156,7 @@ impl FoundryClient {
             client: reqwest::Client::new(),
             endpoint: endpoint.into(),
             model: model.into(),
-            api_version: api_version.into(),
+            api_version: Some(api_version.into()),
             auth,
         }
     }
@@ -142,19 +168,23 @@ impl FoundryClient {
     }
 
     fn chat_url(&self) -> String {
-        format!(
-            "{}/models/chat/completions?api-version={}",
-            self.base_url(),
-            self.api_version
-        )
+        match &self.api_version {
+            None => format!("{}/openai/v1/chat/completions", self.base_url()),
+            Some(version) => format!(
+                "{}/models/chat/completions?api-version={version}",
+                self.base_url()
+            ),
+        }
     }
 
     fn embed_url(&self) -> String {
-        format!(
-            "{}/models/embeddings?api-version={}",
-            self.base_url(),
-            self.api_version
-        )
+        match &self.api_version {
+            None => format!("{}/openai/v1/embeddings", self.base_url()),
+            Some(version) => format!(
+                "{}/models/embeddings?api-version={version}",
+                self.base_url()
+            ),
+        }
     }
 
     async fn get_auth_header(&self) -> Result<(&'static str, String)> {
@@ -239,28 +269,43 @@ impl Provider for FoundryClient {
 
         let (header_name, header_value) = self.get_auth_header().await?;
 
-        let request = ChatRequest {
-            model: &self.model,
-            messages,
-            max_completion_tokens: options.and_then(|o| o.max_tokens),
-            temperature: options.and_then(|o| o.temperature),
-            stream: false,
+        let mut temperature = options.and_then(|o| o.temperature);
+        let response = loop {
+            let request = ChatRequest {
+                model: &self.model,
+                messages,
+                max_completion_tokens: options.and_then(|o| o.max_tokens),
+                temperature,
+                stream: false,
+                stream_options: None,
+                response_format: options
+                    .and_then(|o| o.response_format.as_ref())
+                    .map(|f| f.to_openai_value()),
+            };
+
+            let response = self
+                .client
+                .post(&url)
+                .header(header_name, &header_value)
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send request to Microsoft Foundry")?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                if temperature.is_some()
+                    && crate::types::is_sampling_rejection(status.as_u16(), &body)
+                {
+                    debug!("model rejected sampling parameters; retrying without temperature");
+                    temperature = None;
+                    continue;
+                }
+                anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
+            }
+            break response;
         };
-
-        let response = self
-            .client
-            .post(&url)
-            .header(header_name, &header_value)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send request to Microsoft Foundry")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
-        }
 
         let api_response: ChatApiResponse = response
             .json()
@@ -300,6 +345,13 @@ impl Provider for FoundryClient {
             max_completion_tokens: options.and_then(|o| o.max_tokens),
             temperature: options.and_then(|o| o.temperature),
             stream: true,
+            // usage in the final chunk; supported on the v1 surface
+            stream_options: self.api_version.is_none().then_some(StreamOptions {
+                include_usage: true,
+            }),
+            response_format: options
+                .and_then(|o| o.response_format.as_ref())
+                .map(|f| f.to_openai_value()),
         };
 
         let response = self
@@ -321,8 +373,14 @@ impl Provider for FoundryClient {
         let byte_stream = response.bytes_stream();
 
         let stream = futures_util::stream::unfold(
-            (byte_stream, String::new(), String::new(), model),
-            |(mut byte_stream, mut buffer, mut assembled, model)| async move {
+            (
+                byte_stream,
+                String::new(),
+                String::new(),
+                model,
+                None::<Usage>,
+            ),
+            |(mut byte_stream, mut buffer, mut assembled, model, mut usage)| async move {
                 loop {
                     while let Some(newline_pos) = buffer.find('\n') {
                         let line = buffer[..newline_pos].trim().to_string();
@@ -337,22 +395,29 @@ impl Provider for FoundryClient {
                                 let response = ChatResponse {
                                     content: assembled.clone(),
                                     model: model.clone(),
-                                    usage: None,
+                                    usage: usage.take(),
                                 };
                                 return Some((
                                     Ok(StreamEvent::Done(response)),
-                                    (byte_stream, buffer, assembled, model),
+                                    (byte_stream, buffer, assembled, model, usage),
                                 ));
                             }
 
                             if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
+                                if let Some(u) = chunk.usage {
+                                    usage = Some(Usage {
+                                        prompt_tokens: u.prompt_tokens,
+                                        completion_tokens: u.completion_tokens,
+                                        total_tokens: u.total_tokens,
+                                    });
+                                }
                                 if let Some(choice) = chunk.choices.first() {
                                     if let Some(text) = &choice.delta.content {
                                         if !text.is_empty() {
                                             assembled.push_str(text);
                                             return Some((
                                                 Ok(StreamEvent::Delta(text.clone())),
-                                                (byte_stream, buffer, assembled, model),
+                                                (byte_stream, buffer, assembled, model, usage),
                                             ));
                                         }
                                     }
@@ -366,19 +431,22 @@ impl Provider for FoundryClient {
                             buffer.push_str(&String::from_utf8_lossy(&bytes));
                         }
                         Some(Err(e)) => {
-                            return Some((Err(e.into()), (byte_stream, buffer, assembled, model)));
+                            return Some((
+                                Err(e.into()),
+                                (byte_stream, buffer, assembled, model, usage),
+                            ));
                         }
                         None => {
                             if !assembled.is_empty() {
                                 let response = ChatResponse {
                                     content: assembled.clone(),
                                     model: model.clone(),
-                                    usage: None,
+                                    usage: usage.take(),
                                 };
                                 assembled.clear();
                                 return Some((
                                     Ok(StreamEvent::Done(response)),
-                                    (byte_stream, buffer, assembled, model),
+                                    (byte_stream, buffer, assembled, model, usage),
                                 ));
                             }
                             return None;
@@ -445,5 +513,42 @@ mod tests {
         let response: EmbedApiResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.data.len(), 1);
         assert_eq!(response.data[0].embedding, vec![0.1, 0.2, 0.3]);
+    }
+}
+
+#[cfg(test)]
+mod v1_surface_tests {
+    use super::*;
+    use crate::azure::AzureAuth;
+
+    #[test]
+    fn default_uses_unified_v1_and_normalizes_host() {
+        let c = FoundryClient::new(
+            "https://acct.cognitiveservices.azure.com",
+            "claude-sonnet-5",
+            AzureAuth::AzureCli,
+        );
+        assert_eq!(
+            c.chat_url(),
+            "https://acct.services.ai.azure.com/openai/v1/chat/completions"
+        );
+        assert_eq!(
+            c.embed_url(),
+            "https://acct.services.ai.azure.com/openai/v1/embeddings"
+        );
+    }
+
+    #[test]
+    fn dated_api_version_uses_legacy_models_path() {
+        let c = FoundryClient::with_api_version(
+            "https://acct.services.ai.azure.com",
+            "m",
+            "2024-05-01-preview",
+            AzureAuth::AzureCli,
+        );
+        assert_eq!(
+            c.chat_url(),
+            "https://acct.services.ai.azure.com/models/chat/completions?api-version=2024-05-01-preview"
+        );
     }
 }

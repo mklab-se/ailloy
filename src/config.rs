@@ -161,8 +161,12 @@ impl std::str::FromStr for Capability {
 pub enum Auth {
     /// Read API key from an environment variable.
     Env(String),
-    /// Inline API key (discouraged — prefer env).
+    /// Inline API key (discouraged — prefer env or keychain).
     ApiKey(String),
+    /// Read the API key from the OS keychain (service `ailloy`,
+    /// account = the node id). Store with `ailloy ai config set-key <node>`
+    /// or [`Config::set_keychain_secret`]. Requires the `keychain` feature.
+    Keychain(bool),
     /// Authenticate via Azure CLI (`az login`).
     AzureCli(bool),
     /// Authenticate via Google Cloud CLI (`gcloud auth`).
@@ -176,6 +180,8 @@ struct AuthHelper {
     env: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    keychain: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     azure_cli: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -191,24 +197,35 @@ impl Serialize for Auth {
             Auth::Env(v) => AuthHelper {
                 env: Some(v.clone()),
                 api_key: None,
+                keychain: None,
                 azure_cli: None,
                 gcloud_cli: None,
             },
             Auth::ApiKey(v) => AuthHelper {
                 env: None,
                 api_key: Some(v.clone()),
+                keychain: None,
+                azure_cli: None,
+                gcloud_cli: None,
+            },
+            Auth::Keychain(v) => AuthHelper {
+                env: None,
+                api_key: None,
+                keychain: Some(*v),
                 azure_cli: None,
                 gcloud_cli: None,
             },
             Auth::AzureCli(v) => AuthHelper {
                 env: None,
                 api_key: None,
+                keychain: None,
                 azure_cli: Some(*v),
                 gcloud_cli: None,
             },
             Auth::GcloudCli(v) => AuthHelper {
                 env: None,
                 api_key: None,
+                keychain: None,
                 azure_cli: None,
                 gcloud_cli: Some(*v),
             },
@@ -226,13 +243,15 @@ impl<'de> Deserialize<'de> for Auth {
             Ok(Auth::Env(v))
         } else if let Some(v) = helper.api_key {
             Ok(Auth::ApiKey(v))
+        } else if let Some(v) = helper.keychain {
+            Ok(Auth::Keychain(v))
         } else if let Some(v) = helper.azure_cli {
             Ok(Auth::AzureCli(v))
         } else if let Some(v) = helper.gcloud_cli {
             Ok(Auth::GcloudCli(v))
         } else {
             Err(serde::de::Error::custom(
-                "auth must have one of: env, api_key, azure_cli, gcloud_cli",
+                "auth must have one of: env, api_key, keychain, azure_cli, gcloud_cli",
             ))
         }
     }
@@ -283,6 +302,26 @@ pub struct AiNode {
 }
 
 impl AiNode {
+    /// A bare node for the given provider — the starting point for
+    /// programmatic configuration (fill in model/auth/capabilities and pass
+    /// to [`Config::ensure_node`] / [`Config::upsert_node`]).
+    pub fn new(provider: ProviderKind) -> Self {
+        AiNode {
+            provider,
+            alias: None,
+            capabilities: Vec::new(),
+            auth: None,
+            model: None,
+            endpoint: None,
+            deployment: None,
+            api_version: None,
+            binary: None,
+            project: None,
+            location: None,
+            node_defaults: None,
+        }
+    }
+
     /// Human-readable detail string — deployment, model, or binary name.
     pub fn detail(&self) -> &str {
         self.deployment
@@ -460,7 +499,7 @@ pub mod consent_keys {
 /// Top-level ailloy configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
-    /// AI nodes: maps node IDs (e.g. `openai/gpt-4o`) to their configuration.
+    /// AI nodes: maps node IDs (e.g. `openai/gpt-5.4-mini`) to their configuration.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub nodes: BTreeMap<String, AiNode>,
 
@@ -614,6 +653,55 @@ impl Config {
     }
 
     /// Remove a node by ID and clean up any defaults that reference it.
+    /// Insert `node` only when no node with `id` exists yet.
+    /// Returns true when the node was inserted.
+    ///
+    /// The embedding pattern for dependent tools:
+    /// ```no_run
+    /// # use ailloy::config::{AiNode, Auth, Capability, Config, ProviderKind};
+    /// let mut config = Config::load_global().unwrap_or_default();
+    /// let mut node = AiNode::new(ProviderKind::OpenAi);
+    /// node.model = Some("gpt-5.4-mini".into());
+    /// node.auth = Some(Auth::Env("OPENAI_API_KEY".into()));
+    /// node.capabilities = vec![Capability::Chat];
+    /// if config.ensure_node("openai/gpt-5.4-mini".into(), node) {
+    ///     config.set_default_for("chat", "openai/gpt-5.4-mini").ok();
+    ///     config.save().unwrap();
+    /// }
+    /// ```
+    pub fn ensure_node(&mut self, id: String, node: AiNode) -> bool {
+        if self.nodes.contains_key(&id) {
+            return false;
+        }
+        self.nodes.insert(id, node);
+        true
+    }
+
+    /// Insert or replace the node with `id`.
+    pub fn upsert_node(&mut self, id: String, node: AiNode) {
+        self.nodes.insert(id, node);
+    }
+
+    /// Set the default node for a capability, validating both exist.
+    pub fn set_default_for(&mut self, capability: &str, node_id: &str) -> anyhow::Result<()> {
+        if !ALL_CAPABILITIES.iter().any(|(k, _)| *k == capability) {
+            anyhow::bail!(
+                "unknown capability '{capability}' (valid: {})",
+                ALL_CAPABILITIES
+                    .iter()
+                    .map(|(k, _)| *k)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        let (canonical, _) = self
+            .get_node(node_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown node '{node_id}'"))?;
+        let canonical = canonical.to_string();
+        self.defaults.insert(capability.to_string(), canonical);
+        Ok(())
+    }
+
     pub fn remove_node(&mut self, id: &str) -> bool {
         if self.nodes.remove(id).is_some() {
             self.defaults.retain(|_, v| v != id);
@@ -670,6 +758,46 @@ impl Config {
 // Tests
 // ---------------------------------------------------------------------------
 
+/// Read a node's secret from the OS keychain (service `ailloy`).
+#[cfg(feature = "keychain")]
+pub fn keychain_secret(node_id: &str) -> anyhow::Result<String> {
+    use anyhow::Context;
+    let entry = keyring::Entry::new("ailloy", node_id)
+        .with_context(|| format!("cannot access the OS keychain for node '{node_id}'"))?;
+    entry.get_password().with_context(|| {
+        format!(
+            "no keychain secret for node '{node_id}'. Store one with: ailloy ai config set-key {node_id}"
+        )
+    })
+}
+
+/// Store a node's secret in the OS keychain (service `ailloy`).
+#[cfg(feature = "keychain")]
+pub fn set_keychain_secret(node_id: &str, secret: &str) -> anyhow::Result<()> {
+    use anyhow::Context;
+    let entry = keyring::Entry::new("ailloy", node_id)
+        .with_context(|| format!("cannot access the OS keychain for node '{node_id}'"))?;
+    entry
+        .set_password(secret)
+        .with_context(|| format!("failed to store the keychain secret for node '{node_id}'"))
+}
+
+/// Delete a node's secret from the OS keychain (ignores missing entries).
+#[cfg(feature = "keychain")]
+pub fn delete_keychain_secret(node_id: &str) -> anyhow::Result<()> {
+    if let Ok(entry) = keyring::Entry::new("ailloy", node_id) {
+        let _ = entry.delete_credential();
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "keychain"))]
+pub fn keychain_secret(node_id: &str) -> anyhow::Result<String> {
+    anyhow::bail!(
+        "node '{node_id}' uses keychain auth, but ailloy was built without the `keychain` feature"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -695,13 +823,13 @@ mod tests {
     fn test_config_roundtrip() {
         let config = Config {
             nodes: BTreeMap::from([(
-                "openai/gpt-4o".to_string(),
+                "openai/gpt-5.4-mini".to_string(),
                 AiNode {
                     provider: ProviderKind::OpenAi,
                     alias: None,
                     capabilities: vec![Capability::Chat, Capability::Image],
                     auth: Some(Auth::Env("OPENAI_API_KEY".to_string())),
-                    model: Some("gpt-4o".to_string()),
+                    model: Some("gpt-5.4-mini".to_string()),
                     endpoint: None,
                     deployment: None,
                     api_version: None,
@@ -711,16 +839,19 @@ mod tests {
                     node_defaults: None,
                 },
             )]),
-            defaults: BTreeMap::from([("chat".to_string(), "openai/gpt-4o".to_string())]),
+            defaults: BTreeMap::from([("chat".to_string(), "openai/gpt-5.4-mini".to_string())]),
             consents: BTreeMap::new(),
         };
 
         let yaml = serde_yaml::to_string(&config).unwrap();
         let parsed: Config = serde_yaml::from_str(&yaml).unwrap();
 
-        assert_eq!(parsed.defaults.get("chat").unwrap(), "openai/gpt-4o");
-        assert!(parsed.nodes.contains_key("openai/gpt-4o"));
-        assert_eq!(parsed.nodes["openai/gpt-4o"].provider, ProviderKind::OpenAi);
+        assert_eq!(parsed.defaults.get("chat").unwrap(), "openai/gpt-5.4-mini");
+        assert!(parsed.nodes.contains_key("openai/gpt-5.4-mini"));
+        assert_eq!(
+            parsed.nodes["openai/gpt-5.4-mini"].provider,
+            ProviderKind::OpenAi
+        );
     }
 
     #[test]
@@ -741,14 +872,14 @@ mod tests {
     fn test_node_crud() {
         let mut config = Config::default();
 
-        let node = sample_node(ProviderKind::OpenAi, "gpt-4o", vec![Capability::Chat]);
-        config.add_node("openai/gpt-4o".to_string(), node);
+        let node = sample_node(ProviderKind::OpenAi, "gpt-5.4-mini", vec![Capability::Chat]);
+        config.add_node("openai/gpt-5.4-mini".to_string(), node);
 
-        assert!(config.get_node("openai/gpt-4o").is_some());
+        assert!(config.get_node("openai/gpt-5.4-mini").is_some());
         assert!(config.get_node("nonexistent").is_none());
 
-        assert!(config.remove_node("openai/gpt-4o"));
-        assert!(config.get_node("openai/gpt-4o").is_none());
+        assert!(config.remove_node("openai/gpt-5.4-mini"));
+        assert!(config.get_node("openai/gpt-5.4-mini").is_none());
         assert!(!config.remove_node("nonexistent"));
     }
 
@@ -756,19 +887,22 @@ mod tests {
     fn test_node_alias_resolution() {
         let mut config = Config::default();
 
-        let mut node = sample_node(ProviderKind::OpenAi, "gpt-4o", vec![Capability::Chat]);
+        let mut node = sample_node(ProviderKind::OpenAi, "gpt-5.4-mini", vec![Capability::Chat]);
         node.alias = Some("gpt".to_string());
-        config.add_node("openai/gpt-4o".to_string(), node);
+        config.add_node("openai/gpt-5.4-mini".to_string(), node);
 
         // Lookup by alias
         let (id, _) = config.get_node("gpt").unwrap();
-        assert_eq!(id, "openai/gpt-4o");
+        assert_eq!(id, "openai/gpt-5.4-mini");
 
         // Resolve by alias
-        assert_eq!(config.resolve_node("gpt"), Some("openai/gpt-4o"));
+        assert_eq!(config.resolve_node("gpt"), Some("openai/gpt-5.4-mini"));
 
         // Resolve by canonical ID
-        assert_eq!(config.resolve_node("openai/gpt-4o"), Some("openai/gpt-4o"));
+        assert_eq!(
+            config.resolve_node("openai/gpt-5.4-mini"),
+            Some("openai/gpt-5.4-mini")
+        );
 
         // Unknown
         assert_eq!(config.resolve_node("nonexistent"), None);
@@ -778,10 +912,10 @@ mod tests {
     fn test_nodes_for_capability() {
         let mut config = Config::default();
         config.add_node(
-            "openai/gpt-4o".to_string(),
+            "openai/gpt-5.4-mini".to_string(),
             sample_node(
                 ProviderKind::OpenAi,
-                "gpt-4o",
+                "gpt-5.4-mini",
                 vec![Capability::Chat, Capability::Image],
             ),
         );
@@ -789,7 +923,7 @@ mod tests {
             "anthropic/claude".to_string(),
             sample_node(
                 ProviderKind::Anthropic,
-                "claude-sonnet-4-6",
+                "claude-sonnet-5",
                 vec![Capability::Chat],
             ),
         );
@@ -799,20 +933,20 @@ mod tests {
 
         let image_nodes = config.nodes_for_capability(&Capability::Image);
         assert_eq!(image_nodes.len(), 1);
-        assert_eq!(image_nodes[0].0, "openai/gpt-4o");
+        assert_eq!(image_nodes[0].0, "openai/gpt-5.4-mini");
     }
 
     #[test]
     fn test_default_node_management() {
         let mut config = Config::default();
         config.add_node(
-            "openai/gpt-4o".to_string(),
-            sample_node(ProviderKind::OpenAi, "gpt-4o", vec![Capability::Chat]),
+            "openai/gpt-5.4-mini".to_string(),
+            sample_node(ProviderKind::OpenAi, "gpt-5.4-mini", vec![Capability::Chat]),
         );
 
-        config.set_default("chat", "openai/gpt-4o");
+        config.set_default("chat", "openai/gpt-5.4-mini");
         let (id, _) = config.default_node_for("chat").unwrap();
-        assert_eq!(id, "openai/gpt-4o");
+        assert_eq!(id, "openai/gpt-5.4-mini");
 
         config.unset_default("chat");
         assert!(config.default_node_for("chat").is_err());
@@ -822,17 +956,17 @@ mod tests {
     fn test_remove_node_cleans_defaults() {
         let mut config = Config::default();
         config.add_node(
-            "openai/gpt-4o".to_string(),
+            "openai/gpt-5.4-mini".to_string(),
             sample_node(
                 ProviderKind::OpenAi,
-                "gpt-4o",
+                "gpt-5.4-mini",
                 vec![Capability::Chat, Capability::Image],
             ),
         );
-        config.set_default("chat", "openai/gpt-4o");
-        config.set_default("image", "openai/gpt-4o");
+        config.set_default("chat", "openai/gpt-5.4-mini");
+        config.set_default("image", "openai/gpt-5.4-mini");
 
-        assert!(config.remove_node("openai/gpt-4o"));
+        assert!(config.remove_node("openai/gpt-5.4-mini"));
         assert!(config.nodes.is_empty());
         assert!(!config.defaults.contains_key("chat"));
         assert!(!config.defaults.contains_key("image"));
@@ -967,8 +1101,8 @@ mod tests {
 
     #[test]
     fn test_node_detail() {
-        let mut node = sample_node(ProviderKind::OpenAi, "gpt-4o", vec![]);
-        assert_eq!(node.detail(), "gpt-4o");
+        let mut node = sample_node(ProviderKind::OpenAi, "gpt-5.4-mini", vec![]);
+        assert_eq!(node.detail(), "gpt-5.4-mini");
 
         node.deployment = Some("my-deploy".to_string());
         assert_eq!(node.detail(), "my-deploy"); // deployment takes priority
@@ -1045,10 +1179,10 @@ mod tests {
     fn test_merge_overrides_nodes_and_defaults() {
         let global = Config {
             nodes: BTreeMap::from([(
-                "openai/gpt-4o".to_string(),
-                sample_node(ProviderKind::OpenAi, "gpt-4o", vec![Capability::Chat]),
+                "openai/gpt-5.4-mini".to_string(),
+                sample_node(ProviderKind::OpenAi, "gpt-5.4-mini", vec![Capability::Chat]),
             )]),
-            defaults: BTreeMap::from([("chat".to_string(), "openai/gpt-4o".to_string())]),
+            defaults: BTreeMap::from([("chat".to_string(), "openai/gpt-5.4-mini".to_string())]),
             consents: BTreeMap::new(),
         };
         let local = Config {
@@ -1064,7 +1198,7 @@ mod tests {
         // Local default overrides global
         assert_eq!(merged.defaults.get("chat").unwrap(), "ollama/llama");
         // Both nodes present
-        assert!(merged.nodes.contains_key("openai/gpt-4o"));
+        assert!(merged.nodes.contains_key("openai/gpt-5.4-mini"));
         assert!(merged.nodes.contains_key("ollama/llama"));
     }
 
@@ -1100,7 +1234,7 @@ mod tests {
     fn test_full_config_yaml() {
         let yaml = r#"
 nodes:
-  openai/gpt-4o:
+  openai/gpt-5.4-mini:
     provider: openai
     model: gpt-4o
     auth:
@@ -1115,8 +1249,8 @@ nodes:
     capabilities:
     - chat
 defaults:
-  chat: openai/gpt-4o
-  image: openai/gpt-4o
+  chat: openai/gpt-5.4-mini
+  image: openai/gpt-5.4-mini
 consents:
   azure-cli: true
 "#;
@@ -1124,18 +1258,18 @@ consents:
 
         assert_eq!(config.nodes.len(), 2);
         assert_eq!(
-            config.nodes["openai/gpt-4o"].auth,
+            config.nodes["openai/gpt-5.4-mini"].auth,
             Some(Auth::Env("OPENAI_API_KEY".to_string()))
         );
         assert_eq!(
-            config.nodes["openai/gpt-4o"].capabilities,
+            config.nodes["openai/gpt-5.4-mini"].capabilities,
             vec![Capability::Chat, Capability::Image]
         );
         assert_eq!(
             config.nodes["ollama/llama3.2"].endpoint,
             Some("http://localhost:11434".to_string())
         );
-        assert_eq!(config.defaults.get("chat").unwrap(), "openai/gpt-4o");
+        assert_eq!(config.defaults.get("chat").unwrap(), "openai/gpt-5.4-mini");
         assert_eq!(config.consents.get("azure-cli"), Some(&true));
     }
 
@@ -1389,5 +1523,63 @@ consents:
         let meta = node.embedding_metadata();
         // Explicit 256 wins over auto-detected 3072
         assert_eq!(meta.dimensions, Some(256));
+    }
+}
+
+#[cfg(test)]
+mod programmatic_api_tests {
+    use super::*;
+
+    fn node() -> AiNode {
+        let mut n = AiNode::new(ProviderKind::OpenAi);
+        n.model = Some("gpt-5.4-mini".into());
+        n.capabilities = vec![Capability::Chat];
+        n
+    }
+
+    #[test]
+    fn ensure_node_inserts_once() {
+        let mut c = Config::default();
+        assert!(c.ensure_node("openai/x".into(), node()));
+        assert!(
+            !c.ensure_node("openai/x".into(), node()),
+            "second insert is a no-op"
+        );
+        assert_eq!(c.nodes.len(), 1);
+    }
+
+    #[test]
+    fn set_default_for_validates() {
+        let mut c = Config::default();
+        c.ensure_node("openai/x".into(), node());
+        assert!(c.set_default_for("chat", "openai/x").is_ok());
+        assert_eq!(c.defaults.get("chat").map(String::as_str), Some("openai/x"));
+        assert!(c.set_default_for("chat", "missing").is_err());
+        assert!(c.set_default_for("bogus-capability", "openai/x").is_err());
+    }
+
+    #[test]
+    fn upsert_replaces() {
+        let mut c = Config::default();
+        c.ensure_node("openai/x".into(), node());
+        let mut replacement = node();
+        replacement.model = Some("gpt-5.5".into());
+        c.upsert_node("openai/x".into(), replacement);
+        assert_eq!(c.nodes["openai/x"].model.as_deref(), Some("gpt-5.5"));
+    }
+
+    #[test]
+    fn keychain_auth_round_trips_in_yaml() {
+        let mut c = Config::default();
+        let mut n = node();
+        n.auth = Some(Auth::Keychain(true));
+        c.ensure_node("openai/x".into(), n);
+        let yaml = serde_yaml::to_string(&c).unwrap();
+        assert!(yaml.contains("keychain: true"), "{yaml}");
+        let back: Config = serde_yaml::from_str(&yaml).unwrap();
+        assert!(matches!(
+            back.nodes["openai/x"].auth,
+            Some(Auth::Keychain(true))
+        ));
     }
 }

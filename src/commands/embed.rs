@@ -92,6 +92,7 @@ fn run_info(args: &EmbedArgs, config: &Config) -> Result<()> {
     }
     match &meta.auth {
         Some(Auth::ApiKey(_)) => println!("{} API key", "Auth:".bold()),
+        Some(Auth::Keychain(_)) => println!("{} OS keychain", "Auth:".bold()),
         Some(Auth::Env(var)) => println!("{} env ({})", "Auth:".bold(), var),
         Some(Auth::AzureCli(_)) => println!("{} Azure CLI", "Auth:".bold()),
         Some(Auth::GcloudCli(_)) => println!("{} gcloud CLI", "Auth:".bold()),

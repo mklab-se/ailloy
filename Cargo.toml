@@ -1,6 +1,6 @@
 [package]
 name = "ailloy"
-version = "0.8.0"
+version = "1.0.0"
 edition = "2024"
 authors = ["Kristofer Liljeblad <kristofer@mklab.se>"]
 license = "MIT"
@@ -17,7 +17,8 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [features]
-default = ["cli"]
+keychain = ["dep:keyring"]
+default = ["cli", "keychain"]
 cli = [
     "config-tui",
     "dep:clap",
@@ -43,6 +44,7 @@ anyhow = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
 dirs = "5.0"
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"], optional = true }
 
 # CLI-only (behind feature flag)
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"], optional = true }

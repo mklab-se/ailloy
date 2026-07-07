@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-07-07
+
+Ailloy 1.0. The library API (nodes, `Client`, capabilities, config) has been stable in practice across several dependent tools, and this release rounds out the story for shipping AI-enabled Rust tools: secure key storage, structured output, script-friendly evaluation, and a programmatic config API. From here on, breaking changes bump the major version per SemVer.
+
+### Added
+
+- **`ailloy eval` command** — LLM-as-judge evaluation with script-friendly exit codes, built for integration tests of non-deterministic AI output. Criteria via `--criteria/-c` or `--criteria-file`; input via argument, `--file`, or stdin; `--context` for judge background; `--node` to pick the judge; `--threshold` to gate on a 0.0–1.0 score instead of the judge's verdict; `--json` for a machine-readable verdict. Exit codes: 0 pass, 1 fail, 2 usage error, 3 provider error
+- **Structured JSON output** — `ChatOptions.response_format` with `ResponseFormat::JsonObject` and `ResponseFormat::JsonSchema`, plus builder methods `.json()` and `.json_schema(name, schema)`. Native `response_format`/`response_schema` on OpenAI, Azure OpenAI, Microsoft Foundry, Ollama, and Vertex AI; prompted JSON on Anthropic
+- **`ailloy chat --json` and `--schema FILE`** — force the CLI response to be a single JSON object, or to strictly match a JSON Schema file
+- **`Auth::Keychain` — API keys in the OS keychain** — macOS Keychain, Windows Credential Manager, and Linux Secret Service via the `keyring` crate (service `ailloy`, account = node ID). New `keychain` default feature. `ailloy ai config set-key <node>` stores a key and switches the node's auth to `keychain: true`
+- **Programmatic config API** for dependent tools — `AiNode::new(provider)`, `Config::ensure_node` (insert without overwriting user config), `Config::upsert_node`, `Config::set_default_for`, and `ailloy::config::{keychain_secret, set_keychain_secret, delete_keychain_secret}`
+- **`ailloy ai test --all`** — pings every configured node (chat and embedding) with latency reporting; exits 1 if any node fails
+- **Model retirement warnings** — `ailloy ai status` warns when a configured model has a scheduled (or past) retirement date and suggests a replacement (`src/retirement.rs`)
+- **Streaming token usage** — streaming responses now report token usage in the final chunk
+- **`examples/` directory** — `chat.rs` (library quickstart with structured output), `configure.rs` (programmatic config for dependent tools), `eval.sh` (LLM-as-judge integration-test pattern)
+
+### Changed
+
+- **Breaking: Azure OpenAI and Microsoft Foundry default to the unified `/openai/v1/` surface** — no dated `api-version` query parameter, and the `model` request field carries the deployment name. Nodes with an explicit `api_version` in config keep the legacy dated endpoints (`/openai/deployments/...` and `/models/...` respectively)
+- **Breaking: `Client::azure` and `Client::foundry` now take `Option<String>` for `api_version`** — pass `None` for the unified v1 surface, `Some(version)` to pin the legacy dated endpoints
+- **Breaking: `AzureOpenAiClient::new` and `FoundryClient::new` dropped the `api_version` parameter** — they now target the v1 surface; use `AzureOpenAiClient::with_api_version` / `FoundryClient::with_api_version` for legacy dated endpoints
+- **Sampling guard** — all HTTP providers retry once without `temperature` when a model rejects sampling parameters (gpt-5.x/o-series, newest Claude, Gemini 3), instead of surfacing a provider error
+- **Default models refreshed** — suggested OpenAI model `gpt-4o` → `gpt-5.4-mini`, Anthropic `claude-sonnet-4-6` → `claude-sonnet-5`
+- **Anthropic default `max_tokens` raised from 4096 to 8192** — avoids silently truncating long answers
+
+### Not included
+
+- **Tool calling** — deliberately left out of 1.0; the design proposal lives at `docs/proposals/tool-calling.md` and is tracked in [#1](https://github.com/mklab-se/ailloy/issues/1)
+
 ## [0.8.0] - 2026-04-14
 
 ### Changed
