@@ -595,6 +595,7 @@ pub fn print_node_info(id: &str, node: &AiNode, config: &Config) {
     match &node.auth {
         Some(Auth::Env(var)) => println!("  {} env: {}", "Auth:".dimmed(), var),
         Some(Auth::ApiKey(_)) => println!("  {} api_key: ********", "Auth:".dimmed()),
+        Some(Auth::Keychain(_)) => println!("  {} OS keychain", "Auth:".dimmed()),
         Some(Auth::AzureCli(_)) => println!("  {} azure_cli", "Auth:".dimmed()),
         Some(Auth::GcloudCli(_)) => println!("  {} gcloud_cli", "Auth:".dimmed()),
         None => {}
@@ -1329,6 +1330,7 @@ fn tui_edit_node(config: &mut Config, node_id: &str) -> Result<bool> {
                                 let display = match &node_mut.auth {
                                     Some(Auth::Env(v)) => format!("env: {}", v),
                                     Some(Auth::ApiKey(_)) => "api_key: ********".to_string(),
+                                    Some(Auth::Keychain(_)) => "OS keychain".to_string(),
                                     Some(Auth::AzureCli(_)) => "azure_cli".to_string(),
                                     Some(Auth::GcloudCli(_)) => "gcloud_cli".to_string(),
                                     None => "(not set)".to_string(),
@@ -1589,6 +1591,7 @@ fn auth_summary(node: &AiNode) -> String {
     let auth_part = match &node.auth {
         Some(Auth::Env(var)) => format!("env: {}", var),
         Some(Auth::ApiKey(_)) => "api_key: ********".to_string(),
+        Some(Auth::Keychain(_)) => "OS keychain".to_string(),
         Some(Auth::AzureCli(_)) => "azure_cli".to_string(),
         Some(Auth::GcloudCli(_)) => "gcloud_cli".to_string(),
         None => "none".to_string(),
@@ -2185,6 +2188,7 @@ fn editable_fields(node: &AiNode) -> Vec<(&'static str, Option<String>)> {
     let auth_display = match &node.auth {
         Some(Auth::Env(v)) => Some(format!("env: {}", v)),
         Some(Auth::ApiKey(_)) => Some("api_key: ********".to_string()),
+        Some(Auth::Keychain(_)) => Some("OS keychain".to_string()),
         Some(Auth::AzureCli(_)) => Some("azure_cli".to_string()),
         Some(Auth::GcloudCli(_)) => Some("gcloud_cli".to_string()),
         None => None,

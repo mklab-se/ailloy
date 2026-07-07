@@ -79,6 +79,10 @@ pub enum AiCommands {
     Test {
         /// Message to send (default: "Say hello in one sentence.")
         message: Option<String>,
+
+        /// Test every configured node (chat and embedding pings)
+        #[arg(long)]
+        all: bool,
     },
 
     /// Enable AI features
@@ -115,6 +119,12 @@ pub enum AiConfigCommands {
 
     /// Delete a node
     DeleteNode {
+        /// Node ID or alias
+        id: String,
+    },
+
+    /// Store a node's API key in the OS keychain (and switch its auth to keychain)
+    SetKey {
         /// Node ID or alias
         id: String,
     },

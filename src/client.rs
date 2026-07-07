@@ -440,6 +440,7 @@ fn resolve_auth_api_key(auth: &Auth, node_id: &str) -> Result<String> {
             )
         }),
         Auth::ApiKey(key) => Ok(key.clone()),
+        Auth::Keychain(_) => crate::config::keychain_secret(node_id),
         Auth::AzureCli(_) | Auth::GcloudCli(_) => {
             anyhow::bail!(
                 "Node '{}' uses CLI-based auth, not an API key",
@@ -453,6 +454,9 @@ fn resolve_auth_api_key(auth: &Auth, node_id: &str) -> Result<String> {
 fn resolve_azure_auth(node: &AiNode, node_id: &str) -> Result<crate::azure::AzureAuth> {
     match &node.auth {
         Some(Auth::ApiKey(key)) => Ok(crate::azure::AzureAuth::ApiKey(key.clone())),
+        Some(Auth::Keychain(_)) => Ok(crate::azure::AzureAuth::ApiKey(
+            crate::config::keychain_secret(node_id)?,
+        )),
         Some(Auth::Env(var_name)) => {
             let key = std::env::var(var_name).with_context(|| {
                 format!(
