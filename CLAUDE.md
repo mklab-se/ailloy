@@ -23,14 +23,19 @@ src/
   config.rs           # Config types (AiNode, Capability, Auth, ProviderKind, Config,
                       #   EmbeddingMetadata), load/save, local config merge, node CRUD,
                       #   alias resolution, capability filtering, ALL_CAPABILITIES constant,
-                      #   Azure AI Search vectorizer export
+                      #   Azure AI Search vectorizer export, programmatic config API
+                      #   (AiNode::new, ensure_node, upsert_node, set_default_for),
+                      #   keychain helpers (keychain_secret, set_keychain_secret,
+                      #   delete_keychain_secret — gated on "keychain" feature)
   config_tui.rs       # Shared interactive config TUI (requires "config-tui" feature) —
                       #   consent prompts, interactive wizard, node setup, enable/disable,
                       #   status display, test chat, reset, Azure/Foundry discovery flows
   azure_discover.rs   # Azure CLI wrappers (requires "config-tui" feature) —
                       #   list subscriptions, resources, deployments via `az` CLI
-  types.rs            # Message, Role, ChatResponse, ChatOptions, StreamEvent, ChatStream,
-                      #   ImageResponse, ImageOptions, EmbedResponse, EmbedOptions, Task, Usage
+  types.rs            # Message, Role, ChatResponse, ChatOptions (incl. response_format),
+                      #   ResponseFormat (JsonObject/JsonSchema + per-provider request values),
+                      #   StreamEvent, ChatStream, ImageResponse, ImageOptions, EmbedResponse,
+                      #   EmbedOptions, Task, Usage, sampling-rejection detection
   error.rs            # ClientError enum (thiserror) — Http, Api, Json, NotConfigured,
                       #   BinaryNotFound, NodeNotFound, Unsupported, Other
   client.rs           # Provider trait, Client struct, ClientBuilder, create_provider_from_node()
@@ -39,37 +44,49 @@ src/
   discover.rs         # Discovery library API — discover_env_keys(), discover_local(),
                       #   discover_ollama(), DiscoveredNode struct
   openai.rs           # OpenAI client — chat, stream (SSE), image gen, embedding
-  anthropic.rs        # Anthropic client — chat, stream (SSE)
-  azure.rs            # Azure OpenAI client — chat, stream (SSE), image gen, embedding
-  foundry.rs          # Microsoft Foundry client — chat, stream (SSE), embedding
+  anthropic.rs        # Anthropic client — chat, stream (SSE), prompted JSON output
+  azure.rs            # Azure OpenAI client — chat, stream (SSE), image gen, embedding;
+                      #   defaults to unified /openai/v1/ surface, dated api-version = legacy
+  foundry.rs          # Microsoft Foundry client — chat, stream (SSE), embedding;
+                      #   defaults to unified /openai/v1/ surface, dated api-version = legacy
   vertex.rs           # Vertex AI client — Gemini chat/stream, Imagen, embedding
   ollama.rs           # Ollama client — chat, stream (NDJSON), embedding
   local_agent.rs      # Local CLI agent (claude, codex, copilot) — chat, stream (line-buffered)
+  retirement.rs       # Static model retirement table + retirement_warning() for
+                      #   `ailloy ai status` warnings
   main.rs             # CLI entry point (requires "cli" feature)
   cli.rs              # Clap CLI definitions (requires "cli" feature)
   banner.rs           # ASCII art logo (requires "cli" feature)
   update.rs           # Background update checker via crates.io (requires "cli" feature)
   commands/
     mod.rs            # Command module exports
-    ai.rs             # `ailloy ai` — unified AI management dispatcher, backward-compat handlers
+    ai.rs             # `ailloy ai` — unified AI management dispatcher, backward-compat
+                      #   handlers, `set-key` (keychain), `test --all` (ping all nodes)
     chat.rs           # `ailloy chat` — chat, streaming, image gen, SVG, interactive, stdin
     image.rs          # `ailloy image` — image generation, direct and interactive modes
     embed.rs          # `ailloy embed` — embedding generation, metadata, Azure vectorizer export
+    eval.rs           # `ailloy eval` — LLM-as-judge evaluation, exit codes 0/1/2/3
     config_cmd.rs     # Non-interactive config commands: `show/set/get/unset`
     skill.rs          # `ailloy ai skill` — skill setup guide, emit skill markdown, reference docs
     completion.rs     # `ailloy completion` — shell completions
     util.rs           # Shared CLI utilities: Spinner, ThinkFilter, file_hyperlink
   doc/
     ai-reference.md   # Full CLI reference documentation, embedded via include_str!
+examples/
+  chat.rs             # Library quickstart — chat + structured JSON output
+  configure.rs        # Programmatic config for dependent tools (ensure_node, keychain)
+  eval.sh             # LLM-as-judge integration-test pattern with `ailloy eval`
 ```
 
 ## Feature Flags
 
-- `default = ["cli"]` — includes CLI binary and all CLI dependencies
+- `default = ["cli", "keychain"]` — CLI binary, all CLI dependencies, and OS keychain support
 - `cli` — enables `config-tui`, clap, tracing-subscriber, semver, and tokio runtime features
+- `keychain` — OS keychain storage for API keys via the `keyring` crate (service `ailloy`, account = node ID); without it, `Auth::Keychain` nodes fail with an actionable error
 - `config-tui` — enables interactive config wizards, table-based TUI, status display, enable/disable (inquire, colored, crossterm); consumer projects use this without pulling in clap
-- Library users (pure): `ailloy = { version = "0.5", default-features = false }`
-- Library users (with TUI): `ailloy = { version = "0.5", default-features = false, features = ["config-tui"] }`
+- Library users (pure): `ailloy = { version = "1.0", default-features = false }`
+- Library users (with TUI): `ailloy = { version = "1.0", default-features = false, features = ["config-tui"] }`
+- Library users needing keychain auth: add `"keychain"` to `features`
 - CLI users: `cargo install ailloy` (uses default features)
 
 ## Key Patterns
@@ -79,7 +96,12 @@ src/
 - **Provider trait** (`client.rs`): unified `async_trait` with default methods returning `Unsupported` — `name()`, `chat()`, `chat_stream()`, `generate_image()`, `embed()`
 - **Client** wraps `Box<dyn Provider>` — constructed via `from_config()`, `with_node()`, `for_capability()`, `from_node()`, `builder()`, or direct constructors (`Client::openai()`, `Client::anthropic()`, etc.)
 - **Streaming**: SSE parsing for OpenAI/Anthropic/Azure/Vertex via `futures_util::stream::unfold`, NDJSON for Ollama, line-buffered for local agents
-- **Config**: `nodes` map of `AiNode` structs; `defaults` map routes capability names (chat, image, embedding) to node IDs; `Auth` enum supports `env`, `api_key`, `azure_cli`, `gcloud_cli`; all config maps use `BTreeMap` for deterministic serialization
+- **Config**: `nodes` map of `AiNode` structs; `defaults` map routes capability names (chat, image, embedding) to node IDs; `Auth` enum supports `env`, `api_key`, `keychain`, `azure_cli`, `gcloud_cli`; all config maps use `BTreeMap` for deterministic serialization
+- **Programmatic config API**: dependent tools build nodes with `AiNode::new(provider)` and install them via `Config::ensure_node` (never overwrites existing user config), `Config::upsert_node`, and `Config::set_default_for`; secrets go through `ailloy::config::{keychain_secret, set_keychain_secret, delete_keychain_secret}` — see `examples/configure.rs`
+- **Azure/Foundry endpoint rule**: no `api_version` on the node (the default) → unified `/openai/v1/` surface, model field = deployment name; explicit `api_version` in config → legacy dated endpoints (`/openai/deployments/...` for Azure, `/models/...` for Foundry). `AzureOpenAiClient::new`/`FoundryClient::new` build v1 clients; `with_api_version` builds legacy ones; `Client::azure`/`Client::foundry` take `Option<String>` api_version
+- **Structured output**: `ChatOptions.response_format` (`ResponseFormat::JsonObject` / `JsonSchema`, builder `.json()` / `.json_schema(name, schema)`); native on OpenAI-family/Ollama (`response_format`/`format`) and Vertex (`response_mime_type`/`response_schema`), prompted JSON on Anthropic
+- **Sampling guard**: all HTTP providers retry once without `temperature` when the model rejects sampling params (`is_sampling_rejection` in types.rs) — covers gpt-5.x/o-series, newest Claude, Gemini 3
+- **Model retirements**: static prefix table in `retirement.rs`; `ailloy ai status` warns on configured models with scheduled/past retirement dates and suggests replacements
 - **Interactive config TUI**: `ailloy ai config` shows a crossterm-based table of nodes with capability columns; form-based editor for adding/editing nodes; `ProviderKind::supports_task()` drives capability filtering; TUI logic lives in `config_tui.rs` (library level, gated on `config-tui` feature) so consumer projects can reuse it
 - **Discovery**: `discover.rs` library provides `discover_env_keys()`, `discover_local()`, `discover_ollama()` returning data only; Azure/Foundry discovery is in `azure_discover.rs` (library level, gated on `config-tui`), integrated into the `ai config` wizard's add-node flow
 - **Local config**: `.ailloy.yaml` in current or parent directories, merged with global config (nodes/defaults merge, consents are global-only)

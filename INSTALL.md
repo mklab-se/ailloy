@@ -4,7 +4,7 @@ Primary use case: add Ailloy as a Rust library in your own tool.
 
 ```toml
 [dependencies]
-ailloy = { version = "0.4", default-features = false }
+ailloy = { version = "1.0", default-features = false }
 ```
 
 The CLI is optional and useful for scripting or direct terminal usage.

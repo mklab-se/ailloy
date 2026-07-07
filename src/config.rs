@@ -499,7 +499,7 @@ pub mod consent_keys {
 /// Top-level ailloy configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
-    /// AI nodes: maps node IDs (e.g. `openai/gpt-4o`) to their configuration.
+    /// AI nodes: maps node IDs (e.g. `openai/gpt-5.4-mini`) to their configuration.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub nodes: BTreeMap<String, AiNode>,
 
@@ -823,7 +823,7 @@ mod tests {
     fn test_config_roundtrip() {
         let config = Config {
             nodes: BTreeMap::from([(
-                "openai/gpt-4o".to_string(),
+                "openai/gpt-5.4-mini".to_string(),
                 AiNode {
                     provider: ProviderKind::OpenAi,
                     alias: None,
@@ -839,16 +839,19 @@ mod tests {
                     node_defaults: None,
                 },
             )]),
-            defaults: BTreeMap::from([("chat".to_string(), "openai/gpt-4o".to_string())]),
+            defaults: BTreeMap::from([("chat".to_string(), "openai/gpt-5.4-mini".to_string())]),
             consents: BTreeMap::new(),
         };
 
         let yaml = serde_yaml::to_string(&config).unwrap();
         let parsed: Config = serde_yaml::from_str(&yaml).unwrap();
 
-        assert_eq!(parsed.defaults.get("chat").unwrap(), "openai/gpt-4o");
-        assert!(parsed.nodes.contains_key("openai/gpt-4o"));
-        assert_eq!(parsed.nodes["openai/gpt-4o"].provider, ProviderKind::OpenAi);
+        assert_eq!(parsed.defaults.get("chat").unwrap(), "openai/gpt-5.4-mini");
+        assert!(parsed.nodes.contains_key("openai/gpt-5.4-mini"));
+        assert_eq!(
+            parsed.nodes["openai/gpt-5.4-mini"].provider,
+            ProviderKind::OpenAi
+        );
     }
 
     #[test]
@@ -870,13 +873,13 @@ mod tests {
         let mut config = Config::default();
 
         let node = sample_node(ProviderKind::OpenAi, "gpt-5.4-mini", vec![Capability::Chat]);
-        config.add_node("openai/gpt-4o".to_string(), node);
+        config.add_node("openai/gpt-5.4-mini".to_string(), node);
 
-        assert!(config.get_node("openai/gpt-4o").is_some());
+        assert!(config.get_node("openai/gpt-5.4-mini").is_some());
         assert!(config.get_node("nonexistent").is_none());
 
-        assert!(config.remove_node("openai/gpt-4o"));
-        assert!(config.get_node("openai/gpt-4o").is_none());
+        assert!(config.remove_node("openai/gpt-5.4-mini"));
+        assert!(config.get_node("openai/gpt-5.4-mini").is_none());
         assert!(!config.remove_node("nonexistent"));
     }
 
@@ -886,17 +889,20 @@ mod tests {
 
         let mut node = sample_node(ProviderKind::OpenAi, "gpt-5.4-mini", vec![Capability::Chat]);
         node.alias = Some("gpt".to_string());
-        config.add_node("openai/gpt-4o".to_string(), node);
+        config.add_node("openai/gpt-5.4-mini".to_string(), node);
 
         // Lookup by alias
         let (id, _) = config.get_node("gpt").unwrap();
-        assert_eq!(id, "openai/gpt-4o");
+        assert_eq!(id, "openai/gpt-5.4-mini");
 
         // Resolve by alias
-        assert_eq!(config.resolve_node("gpt"), Some("openai/gpt-4o"));
+        assert_eq!(config.resolve_node("gpt"), Some("openai/gpt-5.4-mini"));
 
         // Resolve by canonical ID
-        assert_eq!(config.resolve_node("openai/gpt-4o"), Some("openai/gpt-4o"));
+        assert_eq!(
+            config.resolve_node("openai/gpt-5.4-mini"),
+            Some("openai/gpt-5.4-mini")
+        );
 
         // Unknown
         assert_eq!(config.resolve_node("nonexistent"), None);
@@ -906,7 +912,7 @@ mod tests {
     fn test_nodes_for_capability() {
         let mut config = Config::default();
         config.add_node(
-            "openai/gpt-4o".to_string(),
+            "openai/gpt-5.4-mini".to_string(),
             sample_node(
                 ProviderKind::OpenAi,
                 "gpt-5.4-mini",
@@ -927,20 +933,20 @@ mod tests {
 
         let image_nodes = config.nodes_for_capability(&Capability::Image);
         assert_eq!(image_nodes.len(), 1);
-        assert_eq!(image_nodes[0].0, "openai/gpt-4o");
+        assert_eq!(image_nodes[0].0, "openai/gpt-5.4-mini");
     }
 
     #[test]
     fn test_default_node_management() {
         let mut config = Config::default();
         config.add_node(
-            "openai/gpt-4o".to_string(),
+            "openai/gpt-5.4-mini".to_string(),
             sample_node(ProviderKind::OpenAi, "gpt-5.4-mini", vec![Capability::Chat]),
         );
 
-        config.set_default("chat", "openai/gpt-4o");
+        config.set_default("chat", "openai/gpt-5.4-mini");
         let (id, _) = config.default_node_for("chat").unwrap();
-        assert_eq!(id, "openai/gpt-4o");
+        assert_eq!(id, "openai/gpt-5.4-mini");
 
         config.unset_default("chat");
         assert!(config.default_node_for("chat").is_err());
@@ -950,17 +956,17 @@ mod tests {
     fn test_remove_node_cleans_defaults() {
         let mut config = Config::default();
         config.add_node(
-            "openai/gpt-4o".to_string(),
+            "openai/gpt-5.4-mini".to_string(),
             sample_node(
                 ProviderKind::OpenAi,
                 "gpt-5.4-mini",
                 vec![Capability::Chat, Capability::Image],
             ),
         );
-        config.set_default("chat", "openai/gpt-4o");
-        config.set_default("image", "openai/gpt-4o");
+        config.set_default("chat", "openai/gpt-5.4-mini");
+        config.set_default("image", "openai/gpt-5.4-mini");
 
-        assert!(config.remove_node("openai/gpt-4o"));
+        assert!(config.remove_node("openai/gpt-5.4-mini"));
         assert!(config.nodes.is_empty());
         assert!(!config.defaults.contains_key("chat"));
         assert!(!config.defaults.contains_key("image"));
@@ -1173,10 +1179,10 @@ mod tests {
     fn test_merge_overrides_nodes_and_defaults() {
         let global = Config {
             nodes: BTreeMap::from([(
-                "openai/gpt-4o".to_string(),
+                "openai/gpt-5.4-mini".to_string(),
                 sample_node(ProviderKind::OpenAi, "gpt-5.4-mini", vec![Capability::Chat]),
             )]),
-            defaults: BTreeMap::from([("chat".to_string(), "openai/gpt-4o".to_string())]),
+            defaults: BTreeMap::from([("chat".to_string(), "openai/gpt-5.4-mini".to_string())]),
             consents: BTreeMap::new(),
         };
         let local = Config {
@@ -1192,7 +1198,7 @@ mod tests {
         // Local default overrides global
         assert_eq!(merged.defaults.get("chat").unwrap(), "ollama/llama");
         // Both nodes present
-        assert!(merged.nodes.contains_key("openai/gpt-4o"));
+        assert!(merged.nodes.contains_key("openai/gpt-5.4-mini"));
         assert!(merged.nodes.contains_key("ollama/llama"));
     }
 
@@ -1228,7 +1234,7 @@ mod tests {
     fn test_full_config_yaml() {
         let yaml = r#"
 nodes:
-  openai/gpt-4o:
+  openai/gpt-5.4-mini:
     provider: openai
     model: gpt-4o
     auth:
@@ -1243,8 +1249,8 @@ nodes:
     capabilities:
     - chat
 defaults:
-  chat: openai/gpt-4o
-  image: openai/gpt-4o
+  chat: openai/gpt-5.4-mini
+  image: openai/gpt-5.4-mini
 consents:
   azure-cli: true
 "#;
@@ -1252,18 +1258,18 @@ consents:
 
         assert_eq!(config.nodes.len(), 2);
         assert_eq!(
-            config.nodes["openai/gpt-4o"].auth,
+            config.nodes["openai/gpt-5.4-mini"].auth,
             Some(Auth::Env("OPENAI_API_KEY".to_string()))
         );
         assert_eq!(
-            config.nodes["openai/gpt-4o"].capabilities,
+            config.nodes["openai/gpt-5.4-mini"].capabilities,
             vec![Capability::Chat, Capability::Image]
         );
         assert_eq!(
             config.nodes["ollama/llama3.2"].endpoint,
             Some("http://localhost:11434".to_string())
         );
-        assert_eq!(config.defaults.get("chat").unwrap(), "openai/gpt-4o");
+        assert_eq!(config.defaults.get("chat").unwrap(), "openai/gpt-5.4-mini");
         assert_eq!(config.consents.get("azure-cli"), Some(&true));
     }
 
