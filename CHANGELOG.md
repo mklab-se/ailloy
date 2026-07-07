@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-07-07
+
+### Added
+
+- **Folder-local configuration, closest-wins** — the nearest `.ailloy.yaml`
+  (walking up from the working directory) now fully defines the nodes and
+  defaults for that folder/repository; the machine-wide config applies only
+  where no local file exists. Add `extends: global` to a local file to merge
+  over the global config instead (the pre-1.1 behavior). Tool consents always
+  come from the global config (security decisions are never per-folder).
+- `ailloy ai config init-local [--extends-global]` writes a starter
+  `.ailloy.yaml`; `ailloy ai status` shows which config file is active.
+- `Config::load_from_dir` / `Config::load_local_from` and the `ConfigSource`
+  enum for library consumers.
+
 ## [1.0.0] - 2026-07-07
 
 Ailloy 1.0. The library API (nodes, `Client`, capabilities, config) has been stable in practice across several dependent tools, and this release rounds out the story for shipping AI-enabled Rust tools: secure key storage, structured output, script-friendly evaluation, and a programmatic config API. From here on, breaking changes bump the major version per SemVer.

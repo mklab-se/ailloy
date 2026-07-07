@@ -48,6 +48,7 @@ async fn run_config(command: Option<AiConfigCommands>) -> Result<()> {
         }
         Some(AiConfigCommands::DeleteNode { id }) => run_delete_node(&id),
         Some(AiConfigCommands::SetKey { id }) => run_set_key(&id),
+        Some(AiConfigCommands::InitLocal { extends_global }) => run_init_local(extends_global),
         Some(AiConfigCommands::SetDefault { node_name, task }) => {
             run_set_default(&task, &node_name)
         }
@@ -238,5 +239,46 @@ async fn run_test_all() -> Result<()> {
     if failures > 0 {
         anyhow::bail!("{failures} node(s) failed");
     }
+    Ok(())
+}
+
+/// Write a starter `.ailloy.yaml` for folder-local configuration.
+fn run_init_local(extends_global: bool) -> Result<()> {
+    let path = std::path::Path::new(".ailloy.yaml");
+    if path.exists() {
+        anyhow::bail!(".ailloy.yaml already exists in this directory");
+    }
+    let content = if extends_global {
+        "# Folder-local ailloy configuration for this repository.\n\
+         # `extends: global` merges these entries OVER the machine-wide config;\n\
+         # remove it to make this file the complete configuration here.\n\
+         extends: global\n\
+         defaults:\n\
+         #  chat: openai/gpt-5.4-mini\n\
+         nodes: {}\n"
+    } else {
+        "# Folder-local ailloy configuration for this repository.\n\
+         # The closest .ailloy.yaml wins entirely: only the nodes and defaults\n\
+         # in this file exist here (the machine-wide config is ignored, except\n\
+         # tool consents). Add `extends: global` to merge instead.\n\
+         nodes:\n\
+         #  openai/gpt-5.4-mini:\n\
+         #    provider: openai\n\
+         #    model: gpt-5.4-mini\n\
+         #    auth:\n\
+         #      env: OPENAI_API_KEY\n\
+         #    capabilities: [chat]\n\
+         defaults: {}\n"
+    };
+    std::fs::write(path, content)?;
+    println!(
+        "{} wrote .ailloy.yaml ({}) — commit it to share the setup, or add it to .gitignore to keep it personal",
+        "✓".green().bold(),
+        if extends_global {
+            "extends global"
+        } else {
+            "replaces global here"
+        }
+    );
     Ok(())
 }

@@ -302,7 +302,7 @@ This switches the node's auth to `keychain: true` — the key never touches the 
 
 ### Local project config
 
-Create `.ailloy.yaml` in your project root to override or add nodes for that project. Local config is merged with global config (nodes and defaults merge; consents are global-only).
+Create `.ailloy.yaml` in your project root to override or add nodes for that project. Local config is used instead of global config (nodes and defaults merge; consents are global-only).
 
 ## CLI Commands
 
@@ -385,6 +385,22 @@ cargo test                               # Run tests
 cargo clippy -- -D warnings              # Lint (zero warnings)
 cargo fmt --all -- --check               # Format check
 cargo run -- chat "hello"                # Run the CLI
+```
+
+
+## Folder-local configuration
+
+Drop a `.ailloy.yaml` in a repository and it becomes the complete ailloy
+configuration for everything run inside — different projects can use different
+providers, models, and defaults. The **closest** file (walking up from the
+working directory) wins; folders without one fall back to the machine-wide
+config. Add `extends: global` to merge with the global config instead of
+replacing it. Tool consents always come from the global config.
+
+```bash
+ailloy ai config init-local          # starter file (replaces global here)
+ailloy ai config init-local --extends-global
+ailloy ai status                     # shows which config file is active
 ```
 
 ## License
