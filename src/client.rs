@@ -7,7 +7,8 @@ use crate::config::{AiNode, Auth, Config, ProviderKind};
 use crate::error::ClientError;
 use crate::types::{
     ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageOptions,
-    ImageResponse, Message, Task,
+    ImageResponse, Message, Task, VideoJob, VideoJobStatus, VideoOptions, VideoProgress,
+    VideoResponse,
 };
 
 /// Unified provider trait. Override methods for the capabilities you support.
@@ -67,6 +68,118 @@ pub trait Provider: Send + Sync {
         _options: Option<&EmbedOptions>,
     ) -> Result<EmbedResponse> {
         Err(ClientError::Unsupported("embedding".to_string()).into())
+    }
+
+    /// Create an asynchronous video generation job.
+    async fn create_video_job(
+        &self,
+        _prompt: &str,
+        _options: Option<&VideoOptions>,
+    ) -> Result<VideoJob> {
+        Err(ClientError::Unsupported("video generation".to_string()).into())
+    }
+
+    /// Fetch the current state of a video generation job.
+    async fn get_video_job(&self, _id: &str) -> Result<VideoJob> {
+        Err(ClientError::Unsupported("video generation".to_string()).into())
+    }
+
+    /// Download a completed video generation by generation ID.
+    async fn download_video(&self, _generation_id: &str) -> Result<VideoResponse> {
+        Err(ClientError::Unsupported("video generation".to_string()).into())
+    }
+
+    /// Delete a video generation job and its artifacts.
+    async fn delete_video_job(&self, _id: &str) -> Result<()> {
+        Err(ClientError::Unsupported("video generation".to_string()).into())
+    }
+
+    /// Generate one or more videos from a text prompt.
+    ///
+    /// Default implementation creates a job via [`Provider::create_video_job`],
+    /// polls [`Provider::get_video_job`] until the job reaches a terminal
+    /// state (with exponential backoff, capped overall at 15 minutes), then
+    /// downloads every resulting generation via [`Provider::download_video`].
+    async fn generate_video(
+        &self,
+        prompt: &str,
+        options: Option<&VideoOptions>,
+        progress: Option<VideoProgress<'_>>,
+    ) -> Result<Vec<VideoResponse>> {
+        let job = self.create_video_job(prompt, options).await?;
+        let job =
+            poll_video_job_until_terminal(self, &job.id, 2_000, 10_000, 900_000, progress).await?;
+
+        match job.status {
+            VideoJobStatus::Succeeded => {
+                if job.generation_ids.is_empty() {
+                    anyhow::bail!(
+                        "job succeeded but returned no generations (job id {})",
+                        job.id
+                    );
+                }
+                let mut videos = Vec::with_capacity(job.generation_ids.len());
+                for generation_id in &job.generation_ids {
+                    videos.push(self.download_video(generation_id).await?);
+                }
+                Ok(videos)
+            }
+            VideoJobStatus::Failed | VideoJobStatus::Cancelled => {
+                let reason = job
+                    .failure_reason
+                    .unwrap_or_else(|| "no reason given".to_string());
+                anyhow::bail!(
+                    "video generation job {} ended with status '{}': {}",
+                    job.id,
+                    job.status,
+                    reason
+                );
+            }
+            _ => anyhow::bail!(
+                "video generation job {} did not reach a terminal state",
+                job.id
+            ),
+        }
+    }
+}
+
+/// Poll a video generation job until it reaches a terminal status, invoking
+/// `progress` after each poll and backing off exponentially between polls.
+///
+/// Exposed as `pub(crate)` so tests can drive it with tiny delays and a
+/// tight timeout.
+pub(crate) async fn poll_video_job_until_terminal<P: Provider + ?Sized>(
+    provider: &P,
+    job_id: &str,
+    initial_delay_ms: u64,
+    max_delay_ms: u64,
+    timeout_ms: u64,
+    progress: Option<VideoProgress<'_>>,
+) -> Result<VideoJob> {
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_millis(timeout_ms);
+    let mut delay_ms = initial_delay_ms;
+
+    loop {
+        let job = provider.get_video_job(job_id).await?;
+        if let Some(cb) = progress {
+            cb(&job);
+        }
+        if job.status.is_terminal() {
+            return Ok(job);
+        }
+
+        if start.elapsed() >= timeout {
+            anyhow::bail!(
+                "video generation job {} timed out after {}ms waiting for completion; \
+                 resume with get_video_job()/download_video(); job artifacts expire after 24 hours",
+                job_id,
+                timeout_ms
+            );
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        delay_ms = (delay_ms * 2).min(max_delay_ms);
     }
 }
 
@@ -281,6 +394,64 @@ impl Client {
             .into_iter()
             .next()
             .context("No embedding returned")
+    }
+
+    /// Generate a video from a text prompt (no options, no progress callback).
+    pub async fn generate_video(&self, prompt: &str) -> Result<Vec<VideoResponse>> {
+        self.provider.generate_video(prompt, None, None).await
+    }
+
+    /// Generate a video with options.
+    pub async fn generate_video_with(
+        &self,
+        prompt: &str,
+        options: &VideoOptions,
+    ) -> Result<Vec<VideoResponse>> {
+        options.validate()?;
+        self.provider
+            .generate_video(prompt, Some(options), None)
+            .await
+    }
+
+    /// Generate a video with options, invoking `progress` after each poll of
+    /// the job status.
+    pub async fn generate_video_with_progress(
+        &self,
+        prompt: &str,
+        options: &VideoOptions,
+        progress: impl Fn(&VideoJob) + Send + Sync,
+    ) -> Result<Vec<VideoResponse>> {
+        options.validate()?;
+        self.provider
+            .generate_video(prompt, Some(options), Some(&progress))
+            .await
+    }
+
+    /// Create an asynchronous video generation job.
+    pub async fn create_video_job(
+        &self,
+        prompt: &str,
+        options: Option<&VideoOptions>,
+    ) -> Result<VideoJob> {
+        if let Some(options) = options {
+            options.validate()?;
+        }
+        self.provider.create_video_job(prompt, options).await
+    }
+
+    /// Fetch the current state of a video generation job.
+    pub async fn get_video_job(&self, id: &str) -> Result<VideoJob> {
+        self.provider.get_video_job(id).await
+    }
+
+    /// Download a completed video generation by generation ID.
+    pub async fn download_video(&self, generation_id: &str) -> Result<VideoResponse> {
+        self.provider.download_video(generation_id).await
+    }
+
+    /// Delete a video generation job and its artifacts.
+    pub async fn delete_video_job(&self, id: &str) -> Result<()> {
+        self.provider.delete_video_job(id).await
     }
 
     /// Get the provider name.
@@ -837,6 +1008,268 @@ mod tests {
         assert!(
             err.contains("no images"),
             "Error should mention no images: {}",
+            err
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Video generation
+    // -----------------------------------------------------------------
+
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Mock provider with a scripted sequence of job statuses, to exercise
+    /// [`poll_video_job_until_terminal`] and the default `generate_video`.
+    struct MockVideoProvider {
+        statuses: Mutex<VecDeque<VideoJobStatus>>,
+        failure_reason: Option<String>,
+        poll_count: AtomicUsize,
+    }
+
+    impl MockVideoProvider {
+        fn new(statuses: Vec<VideoJobStatus>) -> Self {
+            Self {
+                statuses: Mutex::new(statuses.into()),
+                failure_reason: None,
+                poll_count: AtomicUsize::new(0),
+            }
+        }
+
+        fn with_failure(statuses: Vec<VideoJobStatus>, reason: impl Into<String>) -> Self {
+            Self {
+                statuses: Mutex::new(statuses.into()),
+                failure_reason: Some(reason.into()),
+                poll_count: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for MockVideoProvider {
+        fn name(&self) -> &str {
+            "mock-video"
+        }
+
+        async fn create_video_job(
+            &self,
+            _prompt: &str,
+            _options: Option<&VideoOptions>,
+        ) -> Result<VideoJob> {
+            // Real providers return the job in a non-terminal state right
+            // after creation; the scripted `statuses` queue is reserved for
+            // `get_video_job` polls so tests can precisely control how many
+            // polls occur before a terminal status appears.
+            Ok(VideoJob {
+                id: "job-1".to_string(),
+                status: VideoJobStatus::Queued,
+                generation_ids: vec![],
+                failure_reason: None,
+            })
+        }
+
+        async fn get_video_job(&self, id: &str) -> Result<VideoJob> {
+            self.poll_count.fetch_add(1, Ordering::SeqCst);
+            let status = {
+                let mut statuses = self.statuses.lock().unwrap();
+                statuses.pop_front().unwrap_or(VideoJobStatus::Running)
+            };
+            let (generation_ids, failure_reason) = match status {
+                VideoJobStatus::Succeeded => (vec!["gen-1".to_string(), "gen-2".to_string()], None),
+                VideoJobStatus::Failed | VideoJobStatus::Cancelled => {
+                    (vec![], self.failure_reason.clone())
+                }
+                _ => (vec![], None),
+            };
+            Ok(VideoJob {
+                id: id.to_string(),
+                status,
+                generation_ids,
+                failure_reason,
+            })
+        }
+
+        async fn download_video(&self, generation_id: &str) -> Result<VideoResponse> {
+            Ok(VideoResponse {
+                data: generation_id.as_bytes().to_vec(),
+                width: 1280,
+                height: 720,
+                duration_seconds: 4,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_poll_video_job_until_terminal_succeeds() {
+        let provider = MockVideoProvider::new(vec![
+            VideoJobStatus::Queued,
+            VideoJobStatus::Running,
+            VideoJobStatus::Succeeded,
+        ]);
+        let job = poll_video_job_until_terminal(&provider, "job-1", 1, 5, 5_000, None)
+            .await
+            .unwrap();
+        assert_eq!(job.status, VideoJobStatus::Succeeded);
+        assert_eq!(job.generation_ids, vec!["gen-1", "gen-2"]);
+        assert!(provider.poll_count.load(Ordering::SeqCst) >= 3);
+    }
+
+    #[tokio::test]
+    async fn test_poll_video_job_until_terminal_immediate_failure() {
+        let provider = MockVideoProvider::with_failure(
+            vec![VideoJobStatus::Failed],
+            "content policy violation",
+        );
+        let job = poll_video_job_until_terminal(&provider, "job-1", 1, 5, 5_000, None)
+            .await
+            .unwrap();
+        assert_eq!(job.status, VideoJobStatus::Failed);
+        assert_eq!(
+            job.failure_reason.as_deref(),
+            Some("content policy violation")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_poll_video_job_until_terminal_timeout() {
+        // Never returns a terminal status.
+        let provider = MockVideoProvider::new(vec![]);
+        let result = poll_video_job_until_terminal(&provider, "job-1", 1, 2, 5, None).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("job-1") && err.contains("expire after 24 hours"),
+            "Error should mention job id and expiry: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_poll_video_job_until_terminal_progress_callback_invoked() {
+        let provider = MockVideoProvider::new(vec![
+            VideoJobStatus::Queued,
+            VideoJobStatus::Running,
+            VideoJobStatus::Succeeded,
+        ]);
+        let calls = AtomicUsize::new(0);
+        let cb = |_job: &VideoJob| {
+            calls.fetch_add(1, Ordering::SeqCst);
+        };
+        let progress: VideoProgress = &cb;
+        let job = poll_video_job_until_terminal(&provider, "job-1", 1, 5, 5_000, Some(progress))
+            .await
+            .unwrap();
+        assert_eq!(job.status, VideoJobStatus::Succeeded);
+        assert!(calls.load(Ordering::SeqCst) >= 1);
+    }
+
+    #[tokio::test]
+    async fn test_generate_video_default_downloads_all_generations() {
+        // Terminal on the very first poll so the default `generate_video`
+        // (which uses real-world backoff timings) doesn't need to sleep.
+        let provider = MockVideoProvider::new(vec![VideoJobStatus::Succeeded]);
+        let videos = provider.generate_video("a cat", None, None).await.unwrap();
+        assert_eq!(videos.len(), 2);
+        assert_eq!(videos[0].data, b"gen-1");
+        assert_eq!(videos[1].data, b"gen-2");
+    }
+
+    #[tokio::test]
+    async fn test_generate_video_default_failed_job_errors_with_id_and_reason() {
+        let provider = MockVideoProvider::with_failure(
+            vec![VideoJobStatus::Failed],
+            "content policy violation",
+        );
+        let result = provider.generate_video("a cat", None, None).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("job-1") && err.contains("content policy violation"),
+            "Error should mention job id and failure reason: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_generate_video_default_succeeded_no_generations_errors() {
+        // A provider that reports Succeeded but returns no generation IDs.
+        struct EmptySuccessProvider;
+
+        #[async_trait]
+        impl Provider for EmptySuccessProvider {
+            fn name(&self) -> &str {
+                "empty-success"
+            }
+
+            async fn create_video_job(
+                &self,
+                _prompt: &str,
+                _options: Option<&VideoOptions>,
+            ) -> Result<VideoJob> {
+                Ok(VideoJob {
+                    id: "job-empty".to_string(),
+                    status: VideoJobStatus::Succeeded,
+                    generation_ids: vec![],
+                    failure_reason: None,
+                })
+            }
+
+            async fn get_video_job(&self, id: &str) -> Result<VideoJob> {
+                Ok(VideoJob {
+                    id: id.to_string(),
+                    status: VideoJobStatus::Succeeded,
+                    generation_ids: vec![],
+                    failure_reason: None,
+                })
+            }
+        }
+
+        let provider = EmptySuccessProvider;
+        let result = provider.generate_video("a cat", None, None).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("job-empty") && err.contains("no generations"),
+            "Error should mention job id and lack of generations: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_generate_video_unsupported_by_default() {
+        let client = Client::builder()
+            .local_agent()
+            .binary("echo")
+            .build()
+            .unwrap();
+        let result = client.generate_video("a cat").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("video generation"),
+            "Error should mention video generation: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_client_generate_video_with_validates_options() {
+        let client = Client::builder()
+            .local_agent()
+            .binary("echo")
+            .build()
+            .unwrap();
+        let bad_options = VideoOptions {
+            seconds: Some(999),
+            ..Default::default()
+        };
+        let result = client.generate_video_with("a cat", &bad_options).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Invalid video duration"),
+            "Error should mention invalid duration: {}",
             err
         );
     }
