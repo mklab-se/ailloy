@@ -861,7 +861,10 @@ impl ImageOptionsBuilder {
 
     /// DALL·E-only style hint; not supported by gpt-image models. Use
     /// `output_format`, `background`, `moderation`, etc. instead.
-    #[deprecated(note = "DALL·E-only; not supported by gpt-image models")]
+    #[deprecated(
+        since = "2.0.0",
+        note = "DALL·E-only; not supported by gpt-image models"
+    )]
     pub fn style(mut self, style: impl Into<String>) -> Self {
         self.style = Some(style.into());
         self

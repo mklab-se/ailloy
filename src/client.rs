@@ -753,6 +753,11 @@ impl Client {
     }
 
     /// Download a completed video generation by generation ID.
+    ///
+    /// `generation_id` must be a single generation id from
+    /// [`VideoJob::generation_ids`], not [`VideoJob::id`] — on a multi-variant
+    /// job, `id` is a `+`-joined composite of the individual generation ids
+    /// and is rejected here with an actionable error.
     pub async fn download_video(&self, generation_id: &str) -> Result<VideoResponse> {
         self.provider.download_video(generation_id).await
     }

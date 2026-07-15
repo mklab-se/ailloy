@@ -52,7 +52,8 @@ pub use config::{AiNode, Auth, Capability, EmbeddingMetadata};
 pub use conversation::{ChatHistory, Conversation, InMemoryHistory};
 pub use error::ClientError;
 pub use types::{
-    Background, ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageFormat,
-    ImageOptions, ImageResponse, InputFidelity, Message, Moderation, ResponseFormat, Role,
-    StreamEvent, Task, Usage, VideoJob, VideoJobStatus, VideoOptions, VideoProgress, VideoResponse,
+    Background, ChatOptions, ChatResponse, ChatStream, ContentPart, EmbedOptions, EmbedResponse,
+    ImageFormat, ImageOptions, ImageResponse, InputFidelity, Message, MessageContent, Moderation,
+    ResponseFormat, Role, StreamEvent, Task, Usage, VideoJob, VideoJobStatus, VideoOptions,
+    VideoProgress, VideoResponse,
 };

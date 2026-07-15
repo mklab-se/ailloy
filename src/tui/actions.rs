@@ -71,8 +71,6 @@ pub fn set_capability_default(config: &mut Config, cap_key: &str, node_id: &str)
 ///
 /// Errors with an actionable message when the node is unknown, the key is not a
 /// recognized parameter, or the value fails validation.
-// Wired to the parameter-editing UI in Task 5.3.
-#[allow(dead_code)]
 pub fn set_node_default(
     config: &mut Config,
     node_id: &str,

@@ -45,9 +45,12 @@ version bump — see `MIGRATION.md` for the upgrade path from 1.x.
   has no multi-variant field), so a multi-variant `VideoJob.id` is the
   per-video ids joined with `+`. Polling uses 2s→10s backoff and a 15-minute
   overall timeout; video/content artifacts expire ~24h after completion. New
-  `Provider`/`Client`/`blocking::Client` methods: `generate_video`,
-  `generate_video_with`, `generate_video_with_progress`, `create_video_job`,
-  `get_video_job`, `download_video`, `delete_video_job`
+  `Provider`/`Client` methods: `generate_video`, `generate_video_with`,
+  `generate_video_with_progress`, `create_video_job`, `get_video_job`,
+  `download_video`, `delete_video_job`; `blocking::Client` gained the
+  synchronous equivalents `generate_video`, `generate_video_with`, and the
+  job pass-throughs `create_video_job`, `get_video_job`, `download_video`,
+  `delete_video_job` (no progress-callback variant on the blocking client)
 - **`ailloy video` command** — `ailloy video "prompt" [-o clip.mp4] [--size WxH]
   [--seconds N] [--variants N] [--node ID] [--raw]`, with a spinner and
   per-transition status line (queued → preprocessing → running/processing →
@@ -116,6 +119,12 @@ version bump — see `MIGRATION.md` for the upgrade path from 1.x.
   the ratatui single-form session; `edit_node_interactive` is now `async`. The
   `inquire`-based interactive prompts and the crossterm table UI have been
   removed from `config_tui`
+- **`ImageResponse` gained a `pub usage: Option<Usage>` field, and
+  `ImageOptions` gained 8 new pub fields** (`output_format`, `compression`,
+  `n`, `background`, `moderation`, `input_fidelity`, `reference_images`,
+  `mask`) — neither type is `#[non_exhaustive]`, so 1.x code that constructs
+  either via a struct literal or exhaustively destructures them will fail to
+  compile until updated (use `..Default::default()` / partial destructuring)
 
 ### Deprecated
 

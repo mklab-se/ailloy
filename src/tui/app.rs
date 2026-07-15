@@ -122,15 +122,11 @@ impl App {
     }
 
     /// The node IDs in stable (sorted `BTreeMap`) order.
-    // Consumed by the table/detail rendering in Tasks 5.2/5.3.
-    #[allow(dead_code)]
     pub fn node_ids(&self) -> Vec<String> {
         self.config.nodes.keys().cloned().collect()
     }
 
     /// The ID of the currently selected node, if any.
-    // Consumed by the edit/delete/test flows in Tasks 5.3/5.4.
-    #[allow(dead_code)]
     pub fn selected_node_id(&self) -> Option<String> {
         self.node_ids().get(self.selected).cloned()
     }

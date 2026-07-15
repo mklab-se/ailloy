@@ -356,8 +356,17 @@ impl VideoJobsApi<'_> {
 
     /// Download a completed video: fetch the video object for size/seconds,
     /// then fetch the raw content bytes, and assemble a [`VideoResponse`].
-    /// `generation_id` is a single video id (never a `+`-joined composite).
+    /// `generation_id` is a single video id (never a `+`-joined composite) —
+    /// rejected before any HTTP call if it contains `+`.
     pub async fn download(&self, generation_id: &str) -> Result<VideoResponse> {
+        if generation_id.contains(MULTI_ID_SEP) {
+            anyhow::bail!(
+                "'{}' looks like a composite multi-variant job id — pass one of \
+                 VideoJob::generation_ids instead",
+                generation_id
+            );
+        }
+
         let meta = self.get_one(generation_id).await?;
         let (width, height) = parse_size_field(meta.size.as_deref());
         let duration_seconds = meta
@@ -692,5 +701,20 @@ mod tests {
         assert_eq!(parse_size_field(Some("bogus")), (0, 0));
         assert_eq!(parse_size_field(Some("720x")), (0, 0));
         assert_eq!(parse_size_field(None), (0, 0));
+    }
+
+    // --- composite-id guard on download ---
+
+    #[tokio::test]
+    async fn download_rejects_composite_id_before_any_http_call() {
+        let client = reqwest::Client::new();
+        let a = api("https://r.example.com", None, &client);
+        let err = a.download("a+b").await.unwrap_err().to_string();
+        assert!(err.contains("a+b"), "error was: {}", err);
+        assert!(
+            err.contains("generation_ids"),
+            "error should point at VideoJob::generation_ids, was: {}",
+            err
+        );
     }
 }
