@@ -337,7 +337,10 @@ async fn run_svg_generation(
         );
     }
 
-    let messages = vec![Message::system(SVG_SYSTEM_PROMPT), Message::user(prompt)];
+    let messages = vec![
+        Message::system(SVG_SYSTEM_PROMPT),
+        user_message(prompt, &args.attach)?,
+    ];
 
     let options = build_chat_options(args)?;
     let response = provider.chat(&messages, options.as_ref()).await?;
