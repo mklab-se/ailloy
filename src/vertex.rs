@@ -475,14 +475,14 @@ impl Provider for VertexAiClient {
         Ok(Box::pin(stream))
     }
 
-    async fn generate_image(
+    async fn generate_images(
         &self,
         prompt: &str,
         _options: Option<&ImageOptions>,
-    ) -> Result<ImageResponse> {
+    ) -> Result<Vec<ImageResponse>> {
         let token = Self::get_access_token().await?;
 
-        if self.is_imagen_model() {
+        let result: Result<ImageResponse> = if self.is_imagen_model() {
             // Imagen endpoint
             let url = format!("{}:predict", self.base_url());
             debug!(url = %url, model = %self.model, "Sending image generation request to Vertex AI (Imagen)");
@@ -617,7 +617,10 @@ impl Provider for VertexAiClient {
                 revised_prompt: None,
                 usage: None,
             })
-        }
+        };
+        let response = result?;
+
+        Ok(vec![response])
     }
 
     async fn embed(&self, texts: &[&str], options: Option<&EmbedOptions>) -> Result<EmbedResponse> {

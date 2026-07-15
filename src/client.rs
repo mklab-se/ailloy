@@ -35,13 +35,29 @@ pub trait Provider: Send + Sync {
         Err(ClientError::Unsupported("streaming".to_string()).into())
     }
 
-    /// Generate an image from a text prompt.
-    async fn generate_image(
+    /// Generate one or more images from a text prompt.
+    async fn generate_images(
         &self,
         _prompt: &str,
         _options: Option<&ImageOptions>,
-    ) -> Result<ImageResponse> {
+    ) -> Result<Vec<ImageResponse>> {
         Err(ClientError::Unsupported("image generation".to_string()).into())
+    }
+
+    /// Generate an image from a text prompt.
+    ///
+    /// Default implementation delegates to [`Provider::generate_images`] and
+    /// returns the first image.
+    async fn generate_image(
+        &self,
+        prompt: &str,
+        options: Option<&ImageOptions>,
+    ) -> Result<ImageResponse> {
+        let images = self.generate_images(prompt, options).await?;
+        images
+            .into_iter()
+            .next()
+            .context("Provider returned no images")
     }
 
     /// Generate embeddings for the given texts.
@@ -213,12 +229,34 @@ impl Client {
     }
 
     /// Generate an image with options.
+    #[deprecated(
+        since = "2.0.0",
+        note = "use generate_images_with; image models can return multiple variants"
+    )]
     pub async fn generate_image_with(
         &self,
         prompt: &str,
         options: &ImageOptions,
     ) -> Result<ImageResponse> {
-        self.provider.generate_image(prompt, Some(options)).await
+        let images = self.generate_images_with(prompt, options).await?;
+        images
+            .into_iter()
+            .next()
+            .context("Provider returned no images")
+    }
+
+    /// Generate one or more images from a text prompt.
+    pub async fn generate_images(&self, prompt: &str) -> Result<Vec<ImageResponse>> {
+        self.provider.generate_images(prompt, None).await
+    }
+
+    /// Generate one or more images with options.
+    pub async fn generate_images_with(
+        &self,
+        prompt: &str,
+        options: &ImageOptions,
+    ) -> Result<Vec<ImageResponse>> {
+        self.provider.generate_images(prompt, Some(options)).await
     }
 
     /// Generate embeddings for multiple texts.
@@ -747,5 +785,59 @@ mod tests {
         };
         let client = Client::from_node(&node).unwrap();
         assert_eq!(client.provider_name(), "ollama");
+    }
+
+    /// Mock provider implementing only `generate_images`, to exercise the
+    /// default `generate_image` method on the `Provider` trait.
+    struct MockImagesProvider {
+        images: Vec<crate::types::ImageResponse>,
+    }
+
+    #[async_trait]
+    impl Provider for MockImagesProvider {
+        fn name(&self) -> &str {
+            "mock-images"
+        }
+
+        async fn generate_images(
+            &self,
+            _prompt: &str,
+            _options: Option<&ImageOptions>,
+        ) -> Result<Vec<ImageResponse>> {
+            Ok(self.images.clone())
+        }
+    }
+
+    fn mock_image(tag: u8) -> ImageResponse {
+        ImageResponse {
+            data: vec![tag],
+            width: 1,
+            height: 1,
+            format: crate::types::ImageFormat::Png,
+            revised_prompt: None,
+            usage: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_generate_image_default_returns_first_of_generate_images() {
+        let provider = MockImagesProvider {
+            images: vec![mock_image(1), mock_image(2)],
+        };
+        let image = provider.generate_image("a prompt", None).await.unwrap();
+        assert_eq!(image.data, vec![1]);
+    }
+
+    #[tokio::test]
+    async fn test_generate_image_default_empty_vec_errors() {
+        let provider = MockImagesProvider { images: vec![] };
+        let result = provider.generate_image("a prompt", None).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("no images"),
+            "Error should mention no images: {}",
+            err
+        );
     }
 }

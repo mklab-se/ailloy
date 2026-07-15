@@ -17,7 +17,7 @@
 //! println!("{}", response.content);
 //! ```
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::types::{
     ChatOptions, ChatResponse, EmbedOptions, EmbedResponse, ImageOptions, ImageResponse, Message,
@@ -103,13 +103,35 @@ impl Client {
     }
 
     /// Generate an image with options.
+    #[deprecated(
+        since = "2.0.0",
+        note = "use generate_images_with; image models can return multiple variants"
+    )]
     pub fn generate_image_with(
         &self,
         prompt: &str,
         options: &ImageOptions,
     ) -> Result<ImageResponse> {
         self.runtime
-            .block_on(self.inner.generate_image_with(prompt, options))
+            .block_on(self.inner.generate_images_with(prompt, options))?
+            .into_iter()
+            .next()
+            .context("Provider returned no images")
+    }
+
+    /// Generate one or more images from a text prompt.
+    pub fn generate_images(&self, prompt: &str) -> Result<Vec<ImageResponse>> {
+        self.runtime.block_on(self.inner.generate_images(prompt))
+    }
+
+    /// Generate one or more images with options.
+    pub fn generate_images_with(
+        &self,
+        prompt: &str,
+        options: &ImageOptions,
+    ) -> Result<Vec<ImageResponse>> {
+        self.runtime
+            .block_on(self.inner.generate_images_with(prompt, options))
     }
 
     /// Generate embeddings for multiple texts.
