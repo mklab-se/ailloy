@@ -5,21 +5,128 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0] - 2026-07-16
+
+Ailloy 2.0: Foundry image generation, a full gpt-image parameter surface,
+sora-2 video generation, multimodal chat attachments, per-node default
+parameters, and a full-screen ratatui config dashboard. The message content
+model changes shape to support attachments, which is why this is a major
+version bump — see `MIGRATION.md` for the upgrade path from 1.x.
+
+### Added
+
+- **Image generation on Microsoft Foundry (`gpt-image-2`)** — `ProviderKind::MicrosoftFoundry`
+  now supports the `image` task and `FoundryClient` implements `generate_images`,
+  following the same v1-vs-dated endpoint rule as chat
+- **Full gpt-image parameter surface on `ImageOptions`** — `output_format`
+  (png/jpeg/webp), `compression` (0-100, jpeg/webp only), `n`/variants (1-10),
+  `background` (transparent/opaque/auto), `moderation` (auto/low),
+  `input_fidelity` (high/low), `reference_images` (`Vec<PathBuf>`), and `mask`;
+  validated client-side with actionable errors (e.g. webp rejected on
+  Azure/Foundry, DALL·E-only params rejected on gpt-image and vice versa)
+- **Image edits endpoint** — supplying `reference_images` (and optionally
+  `mask`) switches OpenAI/Azure/Foundry image requests to the multipart
+  `images/edits` API instead of `images/generations`; shared request/response
+  logic lives in the new `openai_images` module
+- **Multi-image results** — `Provider::generate_images` / `Client::generate_images`
+  / `Client::generate_images_with` (and `blocking` equivalents) return
+  `Vec<ImageResponse>`; `ImageResponse` gained `usage: Option<Usage>`
+- **`ailloy image` new flags** — `--format`, `--compression`, `--variants`,
+  `--background`, `--moderation`, `--fidelity`, `--ref FILE` (repeatable,
+  switches to edits), `--mask FILE`. With `--variants`, results are written as
+  `name.png`, `name-2.png`, `name-3.png`, ...
+- **Video generation (sora-2)** — `Capability::Video` / `Task::VideoGeneration`
+  (config key `video`), implemented for Azure OpenAI and Microsoft Foundry
+  nodes with a Sora deployment via the jobs API (`.../video/generations/jobs`,
+  polling with 2s→10s backoff, 15-minute overall timeout, 24h artifact
+  retention). New `Provider`/`Client`/`blocking::Client` methods:
+  `generate_video`, `generate_video_with`, `generate_video_with_progress`,
+  `create_video_job`, `get_video_job`, `download_video`, `delete_video_job`
+- **`ailloy video` command** — `ailloy video "prompt" [-o clip.mp4] [--size WxH]
+  [--seconds N] [--variants N] [--node ID] [--raw]`, with a spinner and
+  per-transition status line (queued → preprocessing → running/processing →
+  succeeded/failed). `ailloy chat "..." -o out.mp4` also routes to video
+  generation, mirroring image/SVG output routing
+- **Multimodal chat messages** — `Message.content` is now `MessageContent`
+  (`Text(String)` / `Parts(Vec<ContentPart>)`, `#[serde(untagged)]` so
+  existing plain-string wire/storage formats are unaffected).
+  `Message::user_with_attachments(text, &[PathBuf])` builds a message with
+  inferred media types (images, PDF, common text formats); `.text()`,
+  `.as_text()`, `.has_attachments()` helpers ease reading content. Provider
+  mapping covers OpenAI/Azure/Foundry (content-part arrays), Anthropic
+  (image/document blocks), Vertex (`inline_data` parts), and Ollama (`images`
+  array + inlined text); local agents and Ollama-with-non-text-files return an
+  actionable `Unsupported` error instead of silently dropping attachments
+- **`ailloy chat --attach FILE`** (repeatable) — attaches images, PDFs, or text
+  files to a chat message; works in single-shot, stdin, and interactive modes
+  (interactive mode attaches only to the first turn)
+- **Per-node default parameters** — `AiNode.node_defaults` (`defaults:` map
+  under a node in YAML) now resolves into requests: explicit call options >
+  node defaults > provider defaults. New `params.rs` module is the single
+  source of truth for recognized keys (`image.size`, `image.quality`,
+  `image.format`, `image.compression`, `image.background`, `image.variants`,
+  `video.size`, `video.seconds`, `video.variants`, `chat.temperature`,
+  `chat.max_tokens`, `embedding.dimensions`, with the legacy bare `dimensions`
+  key still read), their value shapes, and provider applicability — used for
+  both request-time resolution and TUI editing
+- **Full-screen ratatui config dashboard** — `ailloy ai config` (on a TTY) now
+  opens a two-pane node table + detail view (`src/tui/`). Keys: `↑`/`↓`/`j` to
+  navigate, `Tab` to switch focus, `Enter` to edit a per-node default, `a` add,
+  `e` edit, `x` delete, `d` set capability default, `k` store a keychain key,
+  `t` test connectivity, `q`/`Esc` quit. The detail pane's Defaults section
+  lists every registry parameter valid for the node's provider/capabilities,
+  with enum values via a select popup and numeric/size values via a validated
+  input popup, and shows "not configurable for this provider" where relevant.
+  The add/edit form is a provider selector with dynamic per-provider fields, an
+  auth selector, and capability toggles; Azure OpenAI / Microsoft Foundry offer
+  az-CLI discovery (subscription → resource → deployment) behind a consent
+  modal. Non-TTY invocations still fall back to printing status
+- **`dall-e-3` retirement entry** — Azure retired `dall-e-3` on 2026-03-04;
+  `ailloy ai status` now warns and suggests `gpt-image-2`
+- **`MIGRATION.md`** — full 1.x → 2.0 upgrade guide (message content enum,
+  deprecated image methods, the new `video` capability, node defaults, and
+  attachment support)
 
 ### Changed
 
-- **`ailloy ai config` is now a full-screen ratatui dashboard** replacing the
-  legacy `inquire`-based wizard. Browse nodes in a two-pane table/detail view and
-  add (`a`), edit (`e`), delete (`x`), set a capability default (`d`), store a
-  keychain key (`k`), or test connectivity (`t`) directly. The add/edit form is a
-  provider selector with dynamic per-provider fields, an auth selector, and
-  capability toggles; Azure OpenAI / Microsoft Foundry offer az-CLI discovery
-  (subscription → resource → deployment) behind a consent prompt.
-- **Breaking:** `config_tui::add_node_interactive` and `edit_node_interactive`
-  now run the ratatui single-form session; `edit_node_interactive` is now
-  `async`. The `inquire`-based interactive prompts and the crossterm table UI
-  have been removed from `config_tui`.
+- **`inquire` is now a `cli`-only dependency** — it backs `ai config set-key`'s
+  key prompt only; the `config-tui` feature no longer pulls it in (dashboard
+  interaction is all ratatui/crossterm)
+
+### Breaking
+
+- **`Message.content` is `MessageContent`, not `String`** — constructors
+  (`Message::user/system/assistant`) are unchanged and still accept
+  `&str`/`String`, but any code that *read* `.content` as a string must switch
+  to `.text()` or `.as_text()`. Serialization of plain-text messages is
+  byte-identical to 1.x (`#[serde(untagged)]`), so stored histories and wire
+  formats are unaffected. See `MIGRATION.md` §1
+- **`config_tui::add_node_interactive` and `edit_node_interactive`** now run
+  the ratatui single-form session; `edit_node_interactive` is now `async`. The
+  `inquire`-based interactive prompts and the crossterm table UI have been
+  removed from `config_tui`
+
+### Deprecated
+
+- **`Client::generate_image_with` / `blocking::Client::generate_image_with`**
+  — use `generate_images_with`, which returns `Vec<ImageResponse>` since some
+  image models can return multiple variants; the deprecated method still
+  returns just the first one
+- **`ImageOptionsBuilder::style`** — DALL·E-only hint that gpt-image models
+  ignore; prefer `.output_format()` / `.background()` / `.moderation()` /
+  `.input_fidelity()`
+
+### Fixed
+
+- **`ailloy ai status` (subcommand form)** now includes the `video` capability
+  in its printed status, matching the bare `ailloy ai` output
+- **`ailloy chat --attach ... -o file.svg`** now routes attachments through
+  the SVG-via-chat generation path instead of dropping them
+- **Config TUI terminal guard** now cleans up raw mode even when a later setup
+  step (alternate screen, mouse capture) fails, avoiding a corrupted terminal
+  on startup error
+
+## [1.1.0] - 2026-07-07
 
 ### Added
 

@@ -3,6 +3,8 @@
 //!
 //! Run: cargo run --example configure
 
+use std::collections::BTreeMap;
+
 use ailloy::config::{AiNode, Auth, Capability, Config, ProviderKind};
 
 fn main() -> anyhow::Result<()> {
@@ -24,6 +26,32 @@ fn main() -> anyhow::Result<()> {
         println!("node added (stored in ~/.config/ailloy/config.yaml)");
     } else {
         println!("node already present — left untouched");
+    }
+
+    // Per-node default parameters (`node_defaults` in Rust, `defaults:` under
+    // the node in YAML): a tool that always wants high-quality, longer-than-
+    // default video clips from a given node can set them once here instead of
+    // asking every caller to pass explicit options. Recognized keys and their
+    // value shapes live in `ailloy::params`; resolution order at request time
+    // is explicit options > node defaults > provider defaults.
+    let mut media_node = AiNode::new(ProviderKind::AzureOpenAi);
+    media_node.model = Some("gpt-image-2".into());
+    media_node.endpoint = Some("https://my-resource.openai.azure.com".into());
+    media_node.auth = Some(Auth::Keychain(true));
+    media_node.capabilities = vec![Capability::Image, Capability::Video];
+    media_node.node_defaults = Some(BTreeMap::from([
+        ("image.quality".to_string(), "high".to_string()),
+        ("video.seconds".to_string(), "8".to_string()),
+    ]));
+
+    if config.ensure_node("azure-openai/gpt-image-2".into(), media_node) {
+        if !config.defaults.contains_key("image") {
+            config.set_default_for("image", "azure-openai/gpt-image-2")?;
+        }
+        config.save()?;
+        println!("media node added with node_defaults (image.quality=high, video.seconds=8)");
+    } else {
+        println!("media node already present — left untouched");
     }
 
     // Secrets belong in the OS keychain, never in config files:

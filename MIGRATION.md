@@ -101,7 +101,7 @@ Currently only Azure OpenAI and Microsoft Foundry nodes with a Sora
 deployment support video generation; other providers return
 `ClientError::Unsupported`.
 
-## 4. Node-level default parameters (schema preview)
+## 4. Node-level default parameters
 
 Each `AiNode` gained an optional `defaults` map (`node_defaults` in Rust,
 serialized as `defaults:` under the node in YAML) for per-node parameter
@@ -124,15 +124,21 @@ Recognized keys in this release: `image.size`, `image.quality`,
 `image.format`, `image.compression`, `image.background`, `image.variants`,
 `video.size`, `video.seconds`, `video.variants`, `chat.temperature`,
 `chat.max_tokens`, `embedding.dimensions` (also accepts the legacy bare
-`dimensions` key).
+`dimensions` key). The full registry — including value shapes and which
+providers accept each key — lives in `src/params.rs`.
 
-**Note for early adopters:** the `defaults` field on `AiNode` and its YAML
-shape are part of this 2.0 release, but the resolution logic that actually
-fills unset `ImageOptions`/`VideoOptions`/`ChatOptions`/`EmbedOptions` fields
-from these keys ships slightly later in the same 2.0 release (tracked as
-Phase 4 internally). Explicit values passed to `*_with` calls always take
-precedence once resolution lands — nothing here changes behavior for callers
-who always pass explicit options.
+Resolution is wired into request construction along the `Client`
+(`from_config`/`with_node`/`for_capability`) path, so library consumers get it
+without extra work: **explicit call options always win**, then node defaults,
+then provider defaults. Passing an explicit `ImageOptions`/`VideoOptions`/
+`ChatOptions`/`EmbedOptions` field is never overridden by a node default —
+only unset fields get filled in.
+
+Node defaults are also editable interactively: the `ailloy ai config`
+dashboard's detail pane lists every registry parameter valid for the selected
+node's provider and capabilities (enum values via a select popup, numeric/size
+values via a validated input popup) and shows "not configurable for this
+provider" for parameters the node's provider doesn't support.
 
 ## 5. Attachment support
 

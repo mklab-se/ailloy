@@ -71,7 +71,7 @@ Add Ailloy to your project without CLI dependencies:
 
 ```toml
 [dependencies]
-ailloy = { version = "1.0", default-features = false }
+ailloy = { version = "2.0", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 anyhow = "1"
 ```
@@ -185,6 +185,88 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
+`gpt-image-2` is supported on OpenAI, Azure OpenAI, and Microsoft Foundry, with a
+full parameter surface: `output_format` (png/jpeg/webp), `compression`, `n`
+(1-10 variants), `background` (transparent/opaque/auto), `moderation`,
+`input_fidelity`, and `reference_images`/`mask` for image edits (switches to
+the edits endpoint automatically):
+
+```rust
+use ailloy::{Client, ImageFormat, ImageOptions};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let options = ImageOptions::builder()
+        .quality("high")
+        .output_format(ImageFormat::Png)
+        .n(2)
+        .build();
+    let images = client.generate_images_with("A sunset over the ocean", &options).await?;
+    for (i, image) in images.iter().enumerate() {
+        std::fs::write(format!("sunset-{i}.png"), &image.data)?;
+    }
+    Ok(())
+}
+```
+
+`Client::generate_image_with` is deprecated in favor of `generate_images_with`
+(some models return multiple variants) — see `MIGRATION.md`.
+
+### Video generation
+
+Generate short video clips with Sora (`sora-2`) on Azure OpenAI or Microsoft
+Foundry:
+
+```rust
+use ailloy::Client;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let videos = client.generate_video("A drone shot over a coastal cliff at sunrise").await?;
+    std::fs::write("clip.mp4", &videos[0].data)?;
+    Ok(())
+}
+```
+
+Video generation is job-based: `Client::create_video_job`, `get_video_job`,
+`download_video`, and `delete_video_job` are available for manual control, and
+`generate_video_with_progress` takes a callback invoked on every job-status
+transition. From the CLI:
+
+```bash
+ailloy video "A drone shot over a coastal cliff at sunrise"
+ailloy video "Logo animation" -o logo.mp4 --size 1280x720 --seconds 8
+ailloy "A cat playing piano" -o cat.mp4   # chat -o routing also generates video
+```
+
+### Chat attachments
+
+Attach images, PDFs, or text files to a chat message; the media type is
+inferred from the file extension:
+
+```rust
+use ailloy::{Client, Message};
+use std::path::PathBuf;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let message = Message::user_with_attachments(
+        "What's in this image?",
+        &[PathBuf::from("screenshot.png")],
+    )?;
+    let response = client.chat(&[message]).await?;
+    println!("{}", response.content);
+    Ok(())
+}
+```
+
+From the CLI: `ailloy chat "What's in this image?" --attach screenshot.png`
+(repeatable, works in single-shot, stdin, and interactive modes). Provider
+support and the full attachment-mapping table are in `MIGRATION.md`.
+
 ## Optional CLI (Secondary)
 
 If you want a terminal workflow or scripting support, install the CLI:
@@ -205,6 +287,13 @@ Configure your nodes:
 ```bash
 ailloy ai config
 ```
+
+This opens a full-screen dashboard: a node table on the left, and connection
+info, capabilities, and per-node parameter defaults for the selected node on
+the right. Keys: `↑`/`↓`/`j` navigate, `Tab` switch focus, `Enter` edit a
+default, `a` add a node, `e` edit, `x` delete, `d` set as the capability
+default, `k` store a keychain key, `t` test connectivity, `q`/`Esc` quit.
+Without a TTY it falls back to printing status.
 
 Use it directly:
 
@@ -238,20 +327,22 @@ Options: `--criteria/-c` or `--criteria-file`, input as an argument, `--file`, o
 
 ## Providers
 
-| Provider | Kind | Chat | Stream | Images | Auth |
-|----------|------|:----:|:------:|:------:|------|
-| OpenAI | `openai` | yes | yes | DALL-E | API key |
-| Anthropic | `anthropic` | yes | yes | — | API key |
-| Azure OpenAI | `azure-openai` | yes | yes | yes | API key / `az` CLI |
-| Microsoft Foundry | `microsoft-foundry` | yes | yes | — | API key / `az` CLI |
-| Google Vertex AI | `vertex-ai` | yes | yes | Imagen | `gcloud` CLI |
-| Ollama | `ollama` | yes | yes | — | None |
-| LM Studio | `openai` | yes | yes | — | None |
-| Local Agent | `local-agent` | yes | yes | — | None |
+| Provider | Kind | Chat | Stream | Images | Video | Auth |
+|----------|------|:----:|:------:|:------:|:-----:|------|
+| OpenAI | `openai` | yes | yes | DALL-E, gpt-image-2 | — | API key |
+| Anthropic | `anthropic` | yes | yes | — | — | API key |
+| Azure OpenAI | `azure-openai` | yes | yes | yes (gpt-image-2) | Sora | API key / `az` CLI |
+| Microsoft Foundry | `microsoft-foundry` | yes | yes | yes (gpt-image-2) | Sora | API key / `az` CLI |
+| Google Vertex AI | `vertex-ai` | yes | yes | Imagen | — | `gcloud` CLI |
+| Ollama | `ollama` | yes | yes | — | — | None |
+| LM Studio | `openai` | yes | yes | — | — | None |
+| Local Agent | `local-agent` | yes | yes | — | — | None |
 
 **LM Studio** uses the OpenAI-compatible API (`http://localhost:1234` by default). **Local Agent** delegates to CLI tools installed on your system: `claude`, `codex`, or `copilot`.
 
-**Azure OpenAI and Microsoft Foundry** default to the unified `/openai/v1/` endpoint surface — no dated `api-version` needed, and the `model` field is your deployment name. Nodes that set an explicit `api_version` in config keep using the legacy dated endpoints.
+**Azure OpenAI and Microsoft Foundry** default to the unified `/openai/v1/` endpoint surface — no dated `api-version` needed, and the `model` field is your deployment name. Nodes that set an explicit `api_version` in config keep using the legacy dated endpoints. Video (Sora) job endpoints append `?api-version=preview` on the v1 surface.
+
+Chat, image, and video attachments/mapping also vary by provider — see the provider support table in `MIGRATION.md` for exactly which providers accept image/PDF/text attachments.
 
 ## Configuration
 
@@ -285,9 +376,19 @@ nodes:
     endpoint: http://localhost:1234
     capabilities: [chat]
 
+  openai/gpt-image-2:
+    provider: openai
+    model: gpt-image-2
+    auth:
+      env: OPENAI_API_KEY
+    capabilities: [image]
+    defaults:
+      image.quality: high
+      image.format: png
+
 defaults:
   chat: openai/gpt-5.4-mini
-  image: openai/gpt-5.4-mini
+  image: openai/gpt-image-2
 ```
 
 ### API keys in the OS keychain
@@ -304,6 +405,17 @@ This switches the node's auth to `keychain: true` — the key never touches the 
 
 Create `.ailloy.yaml` in your project root to override or add nodes for that project. Local config is used instead of global config (nodes and defaults merge; consents are global-only).
 
+### Per-node default parameters
+
+Each node can carry its own defaults for tunable request parameters — `defaults:`
+under a node in YAML (`AiNode.node_defaults` in Rust), keyed by capability, e.g.
+`image.quality`, `image.format`, `video.seconds`, `chat.temperature`,
+`embedding.dimensions`. Resolution order is explicit call options > node
+defaults > provider defaults, so passing an explicit `ImageOptions`/`ChatOptions`
+always wins. The full set of recognized keys, their value shapes, and which
+providers accept them live in `src/params.rs` (also drives the `ailloy ai config`
+dashboard's Defaults editor — see below).
+
 ## CLI Commands
 
 | Command | Description |
@@ -311,11 +423,13 @@ Create `.ailloy.yaml` in your project root to override or add nodes for that pro
 | `ailloy <message>` | Send a message (shorthand for `ailloy chat`) |
 | `ailloy chat <message>` | Send a message to the configured AI node |
 | `ailloy chat -i` | Interactive conversation mode |
+| `ailloy chat <message> --attach FILE` | Attach an image/PDF/text file (repeatable) |
 | `ailloy image <prompt>` | Generate an image |
+| `ailloy video <prompt>` | Generate a video (sora-2, Azure OpenAI / Microsoft Foundry) |
 | `ailloy embed <text>` | Generate embeddings |
 | `ailloy eval <input> -c <criteria>` | LLM-as-judge evaluation (exit 0 pass, 1 fail) |
 | `ailloy ai` | Show AI status (includes model retirement warnings) |
-| `ailloy ai config` | Interactive node configuration wizard |
+| `ailloy ai config` | Full-screen node configuration dashboard (TUI) |
 | `ailloy ai config list-nodes` | List configured AI nodes |
 | `ailloy ai config add-node` | Add a new AI node interactively |
 | `ailloy ai config set-key <id>` | Store a node's API key in the OS keychain |
@@ -339,7 +453,9 @@ ailloy "message" --json                  # Force a single JSON object response
 ailloy "message" --schema out.json       # Force response to match a JSON Schema file
 ailloy "message" -o response.txt         # Save response to file
 ailloy "message" -o image.png            # Generate an image
+ailloy "message" -o clip.mp4             # Generate a video
 ailloy "message" -o diagram.svg          # Generate SVG via chat
+ailloy "message" --attach screenshot.png # Attach a file (repeatable)
 echo "prompt" | ailloy                   # Pipe input via stdin
 ailloy "message" --raw                   # Raw output (no newline, no metadata)
 ailloy -v chat "message"                 # Debug logging
@@ -352,28 +468,28 @@ Ailloy uses feature flags to keep the library lean:
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `cli` | Yes | CLI binary and all dependencies (clap, inquire, colored, etc.) |
+| `cli` | Yes | CLI binary and all dependencies (clap, clap_complete, inquire, colored, crossterm, ratatui, etc.) |
 | `keychain` | Yes | OS keychain storage for API keys (keyring) |
-| `config-tui` | No* | Interactive config wizards, status display, enable/disable (inquire, colored) |
+| `config-tui` | No* | Full-screen ratatui config dashboard, status display, enable/disable (colored, crossterm, ratatui) |
 
-\* `config-tui` is automatically included when `cli` is enabled.
+\* `config-tui` is automatically included when `cli` is enabled. `inquire` is a `cli`-only dependency (used by `ai config set-key`'s key prompt) — it is not pulled in by `config-tui` alone.
 
-Library users should disable default features. To get interactive config TUI without the full CLI:
+Library users should disable default features. To get the interactive config dashboard without the full CLI:
 
 ```toml
-ailloy = { version = "1.0", default-features = false, features = ["config-tui"] }
+ailloy = { version = "2.0", default-features = false, features = ["config-tui"] }
 ```
 
 For a pure library with no TUI deps:
 
 ```toml
-ailloy = { version = "1.0", default-features = false }
+ailloy = { version = "2.0", default-features = false }
 ```
 
 Add `keychain` to either of the above to read `auth: keychain` nodes without the CLI:
 
 ```toml
-ailloy = { version = "1.0", default-features = false, features = ["keychain"] }
+ailloy = { version = "2.0", default-features = false, features = ["keychain"] }
 ```
 
 ## Development
@@ -402,6 +518,15 @@ ailloy ai config init-local          # starter file (replaces global here)
 ailloy ai config init-local --extends-global
 ailloy ai status                     # shows which config file is active
 ```
+
+## Upgrading from 1.x
+
+Ailloy 2.0 changes `Message.content` from a plain `String` to a `MessageContent`
+enum (to support attachments) and deprecates `generate_image_with` /
+`ImageOptionsBuilder::style` in favor of their multi-image/gpt-image
+replacements. Message *construction* (`Message::user(..)` etc.) is unaffected;
+code that *reads* `.content` as a string needs a one-line change. See
+[`MIGRATION.md`](MIGRATION.md) for the full guide.
 
 ## License
 
