@@ -2380,6 +2380,12 @@ async fn azure_discover_flow() -> Result<(String, AiNode)> {
         anyhow::bail!("No deployment selected");
     };
     let deployment = &deployments[idx];
+    let model_name = deployment
+        .properties
+        .as_ref()
+        .and_then(|p| p.model.as_ref())
+        .and_then(|m| m.name.clone())
+        .unwrap_or_else(|| deployment.name.clone());
 
     let api_version = prompt_text("API version:", "2025-04-01-preview", None)?;
 
@@ -2405,7 +2411,7 @@ async fn azure_discover_flow() -> Result<(String, AiNode)> {
     let node = AiNode {
         provider: ProviderKind::AzureOpenAi,
         alias: None,
-        capabilities: vec![Capability::Chat, Capability::Image],
+        capabilities: azure_discover::capabilities_for_deployment(&model_name),
         auth: Some(auth),
         model: None,
         endpoint: Some(endpoint),
@@ -2502,7 +2508,7 @@ async fn foundry_discover_flow() -> Result<(String, AiNode)> {
     let node = AiNode {
         provider: ProviderKind::MicrosoftFoundry,
         alias: None,
-        capabilities: vec![Capability::Chat],
+        capabilities: azure_discover::capabilities_for_deployment(&model),
         auth: Some(auth),
         model: Some(model.clone()),
         endpoint: Some(endpoint),

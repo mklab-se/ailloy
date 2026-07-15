@@ -280,7 +280,7 @@ impl ChatArgs {
 // Image args
 // ---------------------------------------------------------------------------
 
-#[derive(clap::Args)]
+#[derive(clap::Args, Default)]
 pub struct ImageArgs {
     /// Image description / prompt
     pub message: Option<String>,
@@ -308,6 +308,39 @@ pub struct ImageArgs {
     /// Image style (e.g. natural, vivid)
     #[arg(long)]
     pub style: Option<String>,
+
+    /// Output image format (png, jpeg, webp)
+    #[arg(long)]
+    pub format: Option<String>,
+
+    /// Compression level 0-100 (only with --format jpeg or webp)
+    #[arg(long)]
+    pub compression: Option<u8>,
+
+    /// Number of image variants to generate, 1-10
+    #[arg(long)]
+    pub variants: Option<u8>,
+
+    /// Background transparency (transparent, opaque, auto)
+    #[arg(long)]
+    pub background: Option<String>,
+
+    /// Content moderation strictness (auto, low)
+    #[arg(long)]
+    pub moderation: Option<String>,
+
+    /// How closely edits should preserve details from reference images (high, low)
+    #[arg(long)]
+    pub fidelity: Option<String>,
+
+    /// Reference image to edit/compose from (repeatable); using this switches
+    /// to the edits endpoint and drives the generation from these images
+    #[arg(long = "ref", value_name = "FILE")]
+    pub reference: Vec<String>,
+
+    /// Mask image for inpainting (requires at least one --ref image)
+    #[arg(long, value_name = "FILE")]
+    pub mask: Option<String>,
 
     /// Raw output (no banner, no metadata)
     #[arg(long)]

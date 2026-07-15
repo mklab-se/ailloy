@@ -4,9 +4,11 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use futures_util::StreamExt;
 
-use ailloy::client::create_provider_from_node;
+use ailloy::client::{Provider, create_provider_from_node};
 use ailloy::config::Config;
-use ailloy::types::{ImageOptions, Message, StreamEvent};
+use ailloy::types::{
+    Background, ImageFormat, ImageOptions, InputFidelity, Message, Moderation, StreamEvent,
+};
 
 use super::util::{Spinner, ThinkFilter, file_hyperlink, strip_think_blocks};
 use crate::cli::ImageArgs;
@@ -54,40 +56,7 @@ async fn run_direct(args: &ImageArgs, config: &Config, prompt: &str, quiet: bool
         );
     }
 
-    let options = build_image_options(args);
-
-    let image = if quiet {
-        provider.generate_image(prompt, Some(&options)).await?
-    } else {
-        let spinner = Spinner::start("Generating image...");
-        let result = provider.generate_image(prompt, Some(&options)).await;
-        spinner.stop();
-        result?
-    };
-
-    let output = args
-        .output
-        .clone()
-        .unwrap_or_else(|| auto_filename(&image.format.to_string()));
-
-    std::fs::write(&output, &image.data)
-        .with_context(|| format!("Failed to write image to: {}", output))?;
-
-    if !quiet {
-        eprintln!(
-            "{} {} ({}x{}, {})",
-            "Saved to:".dimmed(),
-            file_hyperlink(&output),
-            image.width,
-            image.height,
-            image.format
-        );
-        if let Some(revised) = &image.revised_prompt {
-            eprintln!("{} {}", "Revised prompt:".dimmed(), revised.dimmed());
-        }
-    }
-
-    Ok(())
+    generate_and_save(provider.as_ref(), prompt, args, quiet).await
 }
 
 async fn run_interactive(args: ImageArgs, config: Config, quiet: bool) -> Result<()> {
@@ -325,40 +294,7 @@ async fn generate_image(
         );
     }
 
-    let options = build_image_options(args);
-
-    let image = if quiet {
-        provider.generate_image(prompt, Some(&options)).await?
-    } else {
-        let spinner = Spinner::start("Generating image...");
-        let result = provider.generate_image(prompt, Some(&options)).await;
-        spinner.stop();
-        result?
-    };
-
-    let output = args
-        .output
-        .clone()
-        .unwrap_or_else(|| auto_filename(&image.format.to_string()));
-
-    std::fs::write(&output, &image.data)
-        .with_context(|| format!("Failed to write image to: {}", output))?;
-
-    if !quiet {
-        eprintln!(
-            "{} {} ({}x{}, {})",
-            "Saved to:".dimmed(),
-            file_hyperlink(&output),
-            image.width,
-            image.height,
-            image.format
-        );
-        if let Some(revised) = &image.revised_prompt {
-            eprintln!("{} {}", "Revised prompt:".dimmed(), revised.dimmed());
-        }
-    }
-
-    Ok(())
+    generate_and_save(provider.as_ref(), prompt, args, quiet).await
 }
 
 // ---------------------------------------------------------------------------
@@ -380,13 +316,141 @@ fn resolve_image_node(node_override: Option<&str>, config: &Config) -> Result<St
     }
 }
 
-fn build_image_options(args: &ImageArgs) -> ImageOptions {
-    ImageOptions {
+/// Generate image(s) with the given provider and prompt, then write each
+/// variant to disk and print metadata (unless `quiet`).
+async fn generate_and_save(
+    provider: &dyn Provider,
+    prompt: &str,
+    args: &ImageArgs,
+    quiet: bool,
+) -> Result<()> {
+    let options = build_image_options(args)?;
+
+    let images = if quiet {
+        provider.generate_images(prompt, Some(&options)).await?
+    } else {
+        let spinner = Spinner::start("Generating image...");
+        let result = provider.generate_images(prompt, Some(&options)).await;
+        spinner.stop();
+        result?
+    };
+
+    if images.is_empty() {
+        anyhow::bail!("Provider returned no images");
+    }
+
+    let base_output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| auto_filename(&images[0].format.to_string()));
+
+    for (i, image) in images.iter().enumerate() {
+        let output = variant_path(&base_output, i);
+        std::fs::write(&output, &image.data)
+            .with_context(|| format!("Failed to write image to: {}", output))?;
+
+        if !quiet {
+            eprintln!(
+                "{} {} ({}x{}, {})",
+                "Saved to:".dimmed(),
+                file_hyperlink(&output),
+                image.width,
+                image.height,
+                image.format
+            );
+            if let Some(revised) = &image.revised_prompt {
+                eprintln!("{} {}", "Revised prompt:".dimmed(), revised.dimmed());
+            }
+        }
+    }
+
+    if !quiet {
+        if let Some(usage) = images.iter().find_map(|img| img.usage.as_ref()) {
+            eprintln!(
+                "{} {} prompt + {} completion = {} total",
+                "Tokens:".dimmed(),
+                usage.prompt_tokens.to_string().dimmed(),
+                usage.completion_tokens.to_string().dimmed(),
+                usage.total_tokens.to_string().dimmed(),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Build [`ImageOptions`] from CLI flags, parsing enum flags via their
+/// `FromStr` impls so invalid values surface actionable errors.
+pub(crate) fn build_image_options(args: &ImageArgs) -> Result<ImageOptions> {
+    let output_format = args
+        .format
+        .as_deref()
+        .map(str::parse::<ImageFormat>)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let background = args
+        .background
+        .as_deref()
+        .map(str::parse::<Background>)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let moderation = args
+        .moderation
+        .as_deref()
+        .map(str::parse::<Moderation>)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let input_fidelity = args
+        .fidelity
+        .as_deref()
+        .map(str::parse::<InputFidelity>)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    let options = ImageOptions {
         size: args.size.as_deref().and_then(parse_size),
         quality: args.quality.clone(),
         style: args.style.clone(),
-        ..Default::default()
+        output_format,
+        compression: args.compression,
+        n: args.variants,
+        background,
+        moderation,
+        input_fidelity,
+        reference_images: args
+            .reference
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect(),
+        mask: args.mask.as_ref().map(std::path::PathBuf::from),
+    };
+
+    options.validate()?;
+
+    Ok(options)
+}
+
+/// Compute the output path for the `index`-th image variant (0-based).
+/// `index == 0` returns `path` unchanged; subsequent variants get a
+/// `-2`, `-3`, ... suffix inserted before the last extension (or appended if
+/// there is none).
+pub(crate) fn variant_path(path: &str, index: usize) -> String {
+    if index == 0 {
+        return path.to_string();
     }
+    let suffix = format!("-{}", index + 1);
+
+    let (dir, file_name) = match path.rfind('/') {
+        Some(pos) => (&path[..=pos], &path[pos + 1..]),
+        None => ("", path),
+    };
+
+    let new_file_name = match file_name.rfind('.') {
+        Some(pos) if pos > 0 => format!("{}{}{}", &file_name[..pos], suffix, &file_name[pos..]),
+        _ => format!("{}{}", file_name, suffix),
+    };
+
+    format!("{}{}", dir, new_file_name)
 }
 
 fn parse_size(s: &str) -> Option<(u32, u32)> {
@@ -509,5 +573,117 @@ mod tests {
     fn test_extract_suggested_prompt_short_quotes() {
         // Short quotes should be ignored
         assert_eq!(extract_suggested_prompt("Use \"vivid\" style"), None);
+    }
+
+    // --- Task 1.7: variant_path ---
+
+    #[test]
+    fn test_variant_path_first_index_unchanged() {
+        assert_eq!(variant_path("out.png", 0), "out.png");
+        assert_eq!(variant_path("a/b.out.png", 0), "a/b.out.png");
+    }
+
+    #[test]
+    fn test_variant_path_suffixes_before_extension() {
+        assert_eq!(variant_path("out.png", 1), "out-2.png");
+        assert_eq!(variant_path("out.png", 2), "out-3.png");
+    }
+
+    #[test]
+    fn test_variant_path_preserves_directory_and_last_extension_only() {
+        assert_eq!(variant_path("a/b.out.png", 1), "a/b.out-2.png");
+    }
+
+    #[test]
+    fn test_variant_path_no_extension_appends_suffix() {
+        assert_eq!(variant_path("noext", 1), "noext-2");
+        assert_eq!(variant_path("dir/sub/noext", 1), "dir/sub/noext-2");
+    }
+
+    // --- Task 1.7: build_image_options ---
+
+    #[test]
+    fn test_build_image_options_defaults() {
+        let args = ImageArgs::default();
+        let opts = build_image_options(&args).unwrap();
+        assert_eq!(opts.size, None);
+        assert_eq!(opts.output_format, None);
+        assert_eq!(opts.compression, None);
+        assert_eq!(opts.n, None);
+        assert_eq!(opts.background, None);
+        assert_eq!(opts.moderation, None);
+        assert_eq!(opts.input_fidelity, None);
+        assert!(opts.reference_images.is_empty());
+        assert_eq!(opts.mask, None);
+    }
+
+    #[test]
+    fn test_build_image_options_maps_all_flags() {
+        let args = ImageArgs {
+            size: Some("1024x1024".to_string()),
+            quality: Some("hd".to_string()),
+            format: Some("webp".to_string()),
+            compression: Some(80),
+            variants: Some(3),
+            background: Some("opaque".to_string()),
+            moderation: Some("low".to_string()),
+            fidelity: Some("high".to_string()),
+            reference: vec!["ref1.png".to_string(), "ref2.png".to_string()],
+            mask: Some("mask.png".to_string()),
+            ..Default::default()
+        };
+        let opts = build_image_options(&args).unwrap();
+        assert_eq!(opts.size, Some((1024, 1024)));
+        assert_eq!(opts.quality.as_deref(), Some("hd"));
+        assert_eq!(opts.output_format, Some(ailloy::types::ImageFormat::Webp));
+        assert_eq!(opts.compression, Some(80));
+        assert_eq!(opts.n, Some(3));
+        assert_eq!(opts.background, Some(ailloy::types::Background::Opaque));
+        assert_eq!(opts.moderation, Some(ailloy::types::Moderation::Low));
+        assert_eq!(
+            opts.input_fidelity,
+            Some(ailloy::types::InputFidelity::High)
+        );
+        assert_eq!(
+            opts.reference_images,
+            vec![
+                std::path::PathBuf::from("ref1.png"),
+                std::path::PathBuf::from("ref2.png"),
+            ]
+        );
+        assert_eq!(opts.mask, Some(std::path::PathBuf::from("mask.png")));
+    }
+
+    #[test]
+    fn test_build_image_options_invalid_format_is_actionable() {
+        let args = ImageArgs {
+            format: Some("bmp".to_string()),
+            ..Default::default()
+        };
+        let err = build_image_options(&args).unwrap_err().to_string();
+        assert!(err.contains("bmp"));
+        assert!(err.contains("png"));
+    }
+
+    #[test]
+    fn test_build_image_options_invalid_background_is_actionable() {
+        let args = ImageArgs {
+            background: Some("invisible".to_string()),
+            ..Default::default()
+        };
+        let err = build_image_options(&args).unwrap_err().to_string();
+        assert!(err.contains("invisible"));
+    }
+
+    #[test]
+    fn test_build_image_options_validate_rejects_bad_combo() {
+        // compression without output_format triggers ImageOptions::validate()
+        let args = ImageArgs {
+            compression: Some(50),
+            ..Default::default()
+        };
+        let err = build_image_options(&args).unwrap_err().to_string();
+        assert!(err.contains("compression"));
+        assert!(err.contains("output_format"));
     }
 }
