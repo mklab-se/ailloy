@@ -1,13 +1,17 @@
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 
 use anyhow::{Context, Result};
 use colored::Colorize;
 use futures_util::StreamExt;
 
-use ailloy::client::{Provider, create_provider_from_node};
+use ailloy::client::{
+    Provider, create_provider_from_node, merge_chat_defaults, merge_image_defaults,
+};
 use ailloy::config::Config;
 use ailloy::types::{
-    Background, ImageFormat, ImageOptions, InputFidelity, Message, Moderation, StreamEvent,
+    Background, ChatOptions, ImageFormat, ImageOptions, InputFidelity, Message, Moderation,
+    StreamEvent,
 };
 
 use super::util::{Spinner, ThinkFilter, file_hyperlink, strip_think_blocks};
@@ -56,7 +60,14 @@ async fn run_direct(args: &ImageArgs, config: &Config, prompt: &str, quiet: bool
         );
     }
 
-    generate_and_save(provider.as_ref(), prompt, args, quiet).await
+    generate_and_save(
+        provider.as_ref(),
+        prompt,
+        args,
+        node.node_defaults.as_ref(),
+        quiet,
+    )
+    .await
 }
 
 async fn run_interactive(args: ImageArgs, config: Config, quiet: bool) -> Result<()> {
@@ -69,6 +80,16 @@ async fn run_interactive(args: ImageArgs, config: Config, quiet: bool) -> Result
 
     let (_, chat_node) = config.get_node(&chat_node_id).unwrap();
     let chat_provider = create_provider_from_node(&chat_node_id, chat_node)?;
+
+    // The interview conversation uses the chat node — honor its per-node
+    // chat defaults (e.g. chat.temperature) for every stream below.
+    let interview_options = {
+        let mut opts = ChatOptions::default();
+        if let Some(defaults) = &chat_node.node_defaults {
+            merge_chat_defaults(&mut opts, defaults);
+        }
+        opts
+    };
 
     let version = env!("CARGO_PKG_VERSION");
     eprintln!(
@@ -96,7 +117,9 @@ async fn run_interactive(args: ImageArgs, config: Config, quiet: bool) -> Result
     eprintln!();
     {
         let spinner = Spinner::start("Thinking...");
-        let mut stream = chat_provider.chat_stream(&history, None).await?;
+        let mut stream = chat_provider
+            .chat_stream(&history, Some(&interview_options))
+            .await?;
         spinner.stop();
 
         let mut assembled = String::new();
@@ -190,7 +213,9 @@ async fn run_interactive(args: ImageArgs, config: Config, quiet: bool) -> Result
         history.push(Message::user(input));
 
         // Stream AI response
-        let mut stream = chat_provider.chat_stream(&history, None).await?;
+        let mut stream = chat_provider
+            .chat_stream(&history, Some(&interview_options))
+            .await?;
         let mut assembled = String::new();
         let mut think_filter = ThinkFilter::new();
         while let Some(event) = stream.next().await {
@@ -236,7 +261,9 @@ async fn run_interactive(args: ImageArgs, config: Config, quiet: bool) -> Result
                 ));
 
                 let spinner = Spinner::start("Thinking...");
-                let mut stream = chat_provider.chat_stream(&history, None).await?;
+                let mut stream = chat_provider
+                    .chat_stream(&history, Some(&interview_options))
+                    .await?;
                 spinner.stop();
 
                 let mut followup = String::new();
@@ -294,7 +321,14 @@ async fn generate_image(
         );
     }
 
-    generate_and_save(provider.as_ref(), prompt, args, quiet).await
+    generate_and_save(
+        provider.as_ref(),
+        prompt,
+        args,
+        node.node_defaults.as_ref(),
+        quiet,
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -322,9 +356,14 @@ async fn generate_and_save(
     provider: &dyn Provider,
     prompt: &str,
     args: &ImageArgs,
+    node_defaults: Option<&BTreeMap<String, String>>,
     quiet: bool,
 ) -> Result<()> {
-    let options = build_image_options(args)?;
+    let mut options = build_image_options(args)?;
+    // Fill unset fields from per-node defaults; explicit flags already won.
+    if let Some(defaults) = node_defaults {
+        merge_image_defaults(&mut options, defaults);
+    }
 
     let images = if quiet {
         provider.generate_images(prompt, Some(&options)).await?
@@ -673,6 +712,47 @@ mod tests {
         };
         let err = build_image_options(&args).unwrap_err().to_string();
         assert!(err.contains("invisible"));
+    }
+
+    // --- Task 6.2: CLI honors per-node default parameters ---
+
+    #[test]
+    fn test_node_defaults_fill_unset_image_options() {
+        // No CLI flags → build_image_options yields all-None, then node
+        // defaults populate the unset fields.
+        let opts_from_flags = build_image_options(&ImageArgs::default()).unwrap();
+        let mut opts = opts_from_flags;
+        let defaults = BTreeMap::from([
+            ("image.format".to_string(), "jpeg".to_string()),
+            ("image.compression".to_string(), "80".to_string()),
+            ("image.quality".to_string(), "low".to_string()),
+        ]);
+        merge_image_defaults(&mut opts, &defaults);
+        assert_eq!(opts.output_format, Some(ImageFormat::Jpeg));
+        assert_eq!(opts.compression, Some(80));
+        assert_eq!(opts.quality.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn test_explicit_image_flags_win_over_node_defaults() {
+        // Explicit flags are already Some; merging node defaults must not
+        // clobber them.
+        let args = ImageArgs {
+            format: Some("webp".to_string()),
+            compression: Some(50),
+            quality: Some("hd".to_string()),
+            ..Default::default()
+        };
+        let mut opts = build_image_options(&args).unwrap();
+        let defaults = BTreeMap::from([
+            ("image.format".to_string(), "jpeg".to_string()),
+            ("image.compression".to_string(), "80".to_string()),
+            ("image.quality".to_string(), "low".to_string()),
+        ]);
+        merge_image_defaults(&mut opts, &defaults);
+        assert_eq!(opts.output_format, Some(ImageFormat::Webp));
+        assert_eq!(opts.compression, Some(50));
+        assert_eq!(opts.quality.as_deref(), Some("hd"));
     }
 
     #[test]

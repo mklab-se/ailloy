@@ -214,7 +214,7 @@ fn parse_size(value: &str) -> Option<(u32, u32)> {
 /// Fill only the `None` fields of `opts` from a node's stored `image.*`
 /// defaults. Explicit (already-`Some`) values always win. Unparseable stored
 /// values are logged and skipped.
-pub(crate) fn merge_image_defaults(opts: &mut ImageOptions, defaults: &BTreeMap<String, String>) {
+pub fn merge_image_defaults(opts: &mut ImageOptions, defaults: &BTreeMap<String, String>) {
     if opts.size.is_none() {
         if let Some(v) = defaults.get("image.size") {
             match parse_size(v) {
@@ -264,7 +264,7 @@ pub(crate) fn merge_image_defaults(opts: &mut ImageOptions, defaults: &BTreeMap<
 
 /// Fill only the `None` fields of `opts` from a node's stored `video.*`
 /// defaults.
-pub(crate) fn merge_video_defaults(opts: &mut VideoOptions, defaults: &BTreeMap<String, String>) {
+pub fn merge_video_defaults(opts: &mut VideoOptions, defaults: &BTreeMap<String, String>) {
     if opts.size.is_none() {
         if let Some(v) = defaults.get("video.size") {
             match parse_size(v) {
@@ -293,7 +293,7 @@ pub(crate) fn merge_video_defaults(opts: &mut VideoOptions, defaults: &BTreeMap<
 
 /// Fill only the `None` fields of `opts` from a node's stored `chat.*`
 /// defaults.
-pub(crate) fn merge_chat_defaults(opts: &mut ChatOptions, defaults: &BTreeMap<String, String>) {
+pub fn merge_chat_defaults(opts: &mut ChatOptions, defaults: &BTreeMap<String, String>) {
     if opts.temperature.is_none() {
         if let Some(v) = defaults.get("chat.temperature") {
             match v.parse::<f32>() {
@@ -315,7 +315,7 @@ pub(crate) fn merge_chat_defaults(opts: &mut ChatOptions, defaults: &BTreeMap<St
 /// Fill only the `None` field of `opts` from a node's stored
 /// `embedding.dimensions` default, honoring the legacy un-namespaced
 /// `dimensions` key when the namespaced one is absent.
-pub(crate) fn merge_embed_defaults(opts: &mut EmbedOptions, defaults: &BTreeMap<String, String>) {
+pub fn merge_embed_defaults(opts: &mut EmbedOptions, defaults: &BTreeMap<String, String>) {
     if opts.dimensions.is_none() {
         if let Some(v) = defaults
             .get("embedding.dimensions")

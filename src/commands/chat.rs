@@ -5,8 +5,10 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use futures_util::StreamExt;
 
-use ailloy::client::create_provider_from_node;
-use ailloy::config::Config;
+use ailloy::client::{
+    create_provider_from_node, merge_chat_defaults, merge_image_defaults, merge_video_defaults,
+};
+use ailloy::config::{AiNode, Config};
 use ailloy::types::{ChatOptions, ImageOptions, Message, StreamEvent, VideoOptions};
 
 use super::util::{Spinner, ThinkFilter, file_hyperlink, strip_think_blocks};
@@ -129,7 +131,7 @@ pub async fn run(args: ChatArgs, quiet: bool) -> Result<()> {
     }
     messages.push(user_message(&message, &args.attach)?);
 
-    let options = build_chat_options(&args)?;
+    let options = apply_node_chat_defaults(build_chat_options(&args)?, node);
 
     if !quiet {
         eprintln!("{} {}", "Using:".dimmed(), provider.name().dimmed());
@@ -232,7 +234,10 @@ async fn run_image_generation(
         );
     }
 
-    let options = ImageOptions::default();
+    let mut options = ImageOptions::default();
+    if let Some(defaults) = &node.node_defaults {
+        merge_image_defaults(&mut options, defaults);
+    }
 
     let image = if quiet {
         provider.generate_image(prompt, Some(&options)).await?
@@ -283,7 +288,10 @@ async fn run_video_generation(
         );
     }
 
-    let options = VideoOptions::default();
+    let mut options = VideoOptions::default();
+    if let Some(defaults) = &node.node_defaults {
+        merge_video_defaults(&mut options, defaults);
+    }
 
     let videos = if quiet {
         provider
@@ -342,7 +350,7 @@ async fn run_svg_generation(
         user_message(prompt, &args.attach)?,
     ];
 
-    let options = build_chat_options(args)?;
+    let options = apply_node_chat_defaults(build_chat_options(args)?, node);
     let response = provider.chat(&messages, options.as_ref()).await?;
 
     std::fs::write(output, &response.content)
@@ -391,7 +399,7 @@ async fn run_interactive(
         ));
     }
 
-    let chat_options = build_chat_options(&args)?;
+    let chat_options = apply_node_chat_defaults(build_chat_options(&args)?, node);
 
     // Generate greeting or handle initial message. Attachments (if any) apply
     // only to this first user message.
@@ -526,6 +534,20 @@ async fn run_interactive(
     }
 
     Ok(())
+}
+
+/// Merge the resolved node's per-node chat defaults into the CLI-built options,
+/// filling only fields the user did not set. Returns `Some` whenever the node
+/// carries (non-empty) defaults so they still apply when no flags were passed.
+fn apply_node_chat_defaults(opts: Option<ChatOptions>, node: &AiNode) -> Option<ChatOptions> {
+    match node.node_defaults.as_ref().filter(|d| !d.is_empty()) {
+        Some(defaults) => {
+            let mut merged = opts.unwrap_or_default();
+            merge_chat_defaults(&mut merged, defaults);
+            Some(merged)
+        }
+        None => opts,
+    }
 }
 
 fn build_chat_options(args: &ChatArgs) -> Result<Option<ChatOptions>> {

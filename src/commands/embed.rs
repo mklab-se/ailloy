@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
 
-use ailloy::client::create_provider_from_node;
+use ailloy::client::{create_provider_from_node, merge_embed_defaults};
 use ailloy::config::{Auth, Config};
+use ailloy::types::EmbedOptions;
 
 use crate::cli::EmbedArgs;
 
@@ -39,7 +40,14 @@ pub async fn run(args: EmbedArgs, quiet: bool) -> Result<()> {
         );
     }
 
-    let response = provider.embed(&[text], None).await?;
+    // Honor per-node default parameters (e.g. embedding.dimensions). Explicit
+    // call options would win, but the embed CLI exposes none today.
+    let mut options = EmbedOptions::default();
+    if let Some(defaults) = &node.node_defaults {
+        merge_embed_defaults(&mut options, defaults);
+    }
+
+    let response = provider.embed(&[text], Some(&options)).await?;
 
     let vector = response
         .embeddings

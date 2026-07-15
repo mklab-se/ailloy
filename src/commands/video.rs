@@ -3,7 +3,9 @@ use std::sync::Mutex;
 use anyhow::{Context, Result};
 use colored::Colorize;
 
-use ailloy::client::{Provider, create_provider_from_node};
+use std::collections::BTreeMap;
+
+use ailloy::client::{Provider, create_provider_from_node, merge_video_defaults};
 use ailloy::config::Config;
 use ailloy::types::{VideoJob, VideoJobStatus, VideoOptions, VideoProgress};
 
@@ -35,7 +37,14 @@ async fn run_direct(args: &VideoArgs, config: &Config, prompt: &str, quiet: bool
         );
     }
 
-    generate_and_save(provider.as_ref(), prompt, args, quiet).await
+    generate_and_save(
+        provider.as_ref(),
+        prompt,
+        args,
+        node.node_defaults.as_ref(),
+        quiet,
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -71,9 +80,14 @@ async fn generate_and_save(
     provider: &dyn Provider,
     prompt: &str,
     args: &VideoArgs,
+    node_defaults: Option<&BTreeMap<String, String>>,
     quiet: bool,
 ) -> Result<()> {
-    let options = build_video_options(args)?;
+    let mut options = build_video_options(args)?;
+    // Fill unset fields from per-node defaults; explicit flags already won.
+    if let Some(defaults) = node_defaults {
+        merge_video_defaults(&mut options, defaults);
+    }
 
     // Track the last-seen job status so we only print on transitions, not
     // on every poll.
