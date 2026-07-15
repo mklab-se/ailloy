@@ -8,7 +8,8 @@ use tracing::debug;
 
 use crate::client::Provider;
 use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, Message, StreamEvent,
+    ChatOptions, ChatResponse, ChatStream, ContentPart, EmbedOptions, EmbedResponse, Message,
+    MessageContent, Role, StreamEvent,
 };
 
 const DEFAULT_ENDPOINT: &str = "http://localhost:11434";
@@ -23,10 +24,10 @@ pub struct OllamaClient {
 #[derive(Serialize)]
 struct ChatRequest<'a> {
     model: &'a str,
-    // TODO(Task 3.2): text-only Message content serializes to the 1.x
-    // plain-string shape; multi-part MessageContent::Parts still needs
-    // translation to the Ollama content/images format here.
-    messages: &'a [Message],
+    /// Ollama chat message array, built via [`to_ollama_messages`]: text-only
+    /// messages keep a plain-string `content`; images travel in a per-message
+    /// `images: [<b64>]` field; text files are inlined into `content`.
+    messages: serde_json::Value,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     options: Option<OllamaOptions>,
@@ -132,6 +133,73 @@ impl OllamaClient {
     }
 }
 
+/// Build the Ollama `/api/chat` message array.
+///
+/// Text-only messages keep a plain-string `content` (1.x wire shape). For
+/// messages with attachments, image parts are base64-encoded into a
+/// per-message `images` array (Ollama's native multimodal field), and text
+/// files are inlined into `content` with a header line. A non-UTF-8 file part
+/// (e.g. a PDF) is rejected with an actionable error, since Ollama cannot carry
+/// binary documents.
+fn to_ollama_messages(messages: &[Message]) -> Result<serde_json::Value> {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+
+    let mut out = Vec::with_capacity(messages.len());
+    for m in messages {
+        let role = match m.role {
+            Role::System => "system",
+            Role::User => "user",
+            Role::Assistant => "assistant",
+        };
+        match &m.content {
+            MessageContent::Text(s) => {
+                out.push(serde_json::json!({"role": role, "content": s}));
+            }
+            MessageContent::Parts(parts) => {
+                let mut text = String::new();
+                let mut images: Vec<String> = Vec::new();
+                for p in parts {
+                    match p {
+                        ContentPart::Text { text: t } => {
+                            if !text.is_empty() {
+                                text.push('\n');
+                            }
+                            text.push_str(t);
+                        }
+                        ContentPart::Image { data, .. } => {
+                            images.push(STANDARD.encode(data));
+                        }
+                        ContentPart::File {
+                            data,
+                            media_type,
+                            filename,
+                        } => {
+                            let contents = std::str::from_utf8(data).map_err(|_| {
+                                anyhow::anyhow!(
+                                    "Ollama cannot attach '{}' ({}): Ollama supports image attachments and text files only. Use an OpenAI, Anthropic, or Azure node for PDF and other binary documents.",
+                                    filename,
+                                    media_type
+                                )
+                            })?;
+                            text.push_str(&format!(
+                                "\n\n--- attached file: {} ({}) ---\n{}",
+                                filename, media_type, contents
+                            ));
+                        }
+                    }
+                }
+                let mut msg = serde_json::json!({"role": role, "content": text});
+                if !images.is_empty() {
+                    msg["images"] = serde_json::json!(images);
+                }
+                out.push(msg);
+            }
+        }
+    }
+    Ok(serde_json::Value::Array(out))
+}
+
 #[async_trait]
 impl Provider for OllamaClient {
     fn name(&self) -> &str {
@@ -148,7 +216,7 @@ impl Provider for OllamaClient {
 
         let request = ChatRequest {
             model: &self.model,
-            messages,
+            messages: to_ollama_messages(messages)?,
             stream: false,
             options: Self::build_options(options),
             format: options
@@ -192,7 +260,7 @@ impl Provider for OllamaClient {
 
         let request = ChatRequest {
             model: &self.model,
-            messages,
+            messages: to_ollama_messages(messages)?,
             stream: true,
             options: Self::build_options(options),
             format: options
@@ -332,5 +400,73 @@ mod tests {
         let response: EmbedApiResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.model, "nomic-embed-text");
         assert_eq!(response.embeddings.len(), 2);
+    }
+
+    #[test]
+    fn to_ollama_messages_text_only_stays_plain_string() {
+        let wire = to_ollama_messages(&[Message::user("hello")]).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!([{"role": "user", "content": "hello"}])
+        );
+        assert!(wire[0].get("images").is_none());
+    }
+
+    #[test]
+    fn to_ollama_messages_image_becomes_images_array() {
+        let content = MessageContent::from(vec![
+            ContentPart::Text {
+                text: "what is this".to_string(),
+            },
+            ContentPart::Image {
+                data: vec![0xDE, 0xAD, 0xBE, 0xEF],
+                media_type: "image/png".to_string(),
+            },
+        ]);
+        let wire = to_ollama_messages(&[Message::user(content)]).unwrap();
+        assert_eq!(wire[0]["role"], "user");
+        assert_eq!(wire[0]["content"], "what is this");
+        assert_eq!(wire[0]["images"], serde_json::json!(["3q2+7w=="]));
+    }
+
+    #[test]
+    fn to_ollama_messages_text_file_inlined() {
+        let content = MessageContent::from(vec![
+            ContentPart::Text {
+                text: "summarize".to_string(),
+            },
+            ContentPart::File {
+                data: b"col1,col2\n1,2\n".to_vec(),
+                media_type: "text/csv".to_string(),
+                filename: "data.csv".to_string(),
+            },
+        ]);
+        let wire = to_ollama_messages(&[Message::user(content)]).unwrap();
+        let text = wire[0]["content"].as_str().unwrap();
+        assert!(text.contains("summarize"), "text was: {text}");
+        assert!(
+            text.contains("--- attached file: data.csv (text/csv) ---"),
+            "text was: {text}"
+        );
+        assert!(text.contains("col1,col2"), "text was: {text}");
+        assert!(wire[0].get("images").is_none());
+    }
+
+    #[test]
+    fn to_ollama_messages_pdf_errors() {
+        let content = MessageContent::from(vec![ContentPart::File {
+            // Invalid UTF-8 bytes → cannot be inlined as text.
+            data: vec![0x25, 0x50, 0x44, 0x46, 0xFF, 0xFE],
+            media_type: "application/pdf".to_string(),
+            filename: "report.pdf".to_string(),
+        }]);
+        let err = to_ollama_messages(&[Message::user(content)])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("report.pdf"), "err: {err}");
+        assert!(
+            err.contains("image attachments and text files only"),
+            "err: {err}"
+        );
     }
 }

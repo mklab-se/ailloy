@@ -270,6 +270,72 @@ impl Message {
     }
 }
 
+/// Build the OpenAI Chat Completions `messages` array from our [`Message`]s.
+///
+/// A text-only message stays wire-compatible with ailloy 1.x — its `content`
+/// is a bare JSON string, never an array. A message carrying attachment parts
+/// becomes a content array of typed blocks:
+/// - text → `{"type":"text","text":…}`
+/// - image → `{"type":"image_url","image_url":{"url":"data:<media>;base64,<b64>"}}`
+/// - file → `{"type":"file","file":{"filename":…,"file_data":"data:<media>;base64,<b64>"}}`
+///
+/// Shared by every OpenAI-compatible surface (OpenAI, Azure OpenAI, Foundry).
+pub(crate) fn to_openai_wire(messages: &[Message]) -> serde_json::Value {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+
+    fn role_str(role: &Role) -> &'static str {
+        match role {
+            Role::System => "system",
+            Role::User => "user",
+            Role::Assistant => "assistant",
+        }
+    }
+
+    let arr: Vec<serde_json::Value> = messages
+        .iter()
+        .map(|m| match &m.content {
+            MessageContent::Text(s) => serde_json::json!({
+                "role": role_str(&m.role),
+                "content": s,
+            }),
+            MessageContent::Parts(parts) => {
+                let blocks: Vec<serde_json::Value> = parts
+                    .iter()
+                    .map(|p| match p {
+                        ContentPart::Text { text } => serde_json::json!({
+                            "type": "text",
+                            "text": text,
+                        }),
+                        ContentPart::Image { data, media_type } => serde_json::json!({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": format!("data:{};base64,{}", media_type, STANDARD.encode(data)),
+                            },
+                        }),
+                        ContentPart::File {
+                            data,
+                            media_type,
+                            filename,
+                        } => serde_json::json!({
+                            "type": "file",
+                            "file": {
+                                "filename": filename,
+                                "file_data": format!("data:{};base64,{}", media_type, STANDARD.encode(data)),
+                            },
+                        }),
+                    })
+                    .collect();
+                serde_json::json!({
+                    "role": role_str(&m.role),
+                    "content": blocks,
+                })
+            }
+        })
+        .collect();
+    serde_json::Value::Array(arr)
+}
+
 /// Options for controlling chat generation.
 #[derive(Debug, Clone, Default)]
 pub struct ChatOptions {
@@ -1205,6 +1271,89 @@ mod tests {
             .to_string();
         assert!(err.contains("Failed to read attachment"), "err: {err}");
         assert!(err.contains("missing.png"), "err: {err}");
+    }
+
+    // --- Task 3.2: OpenAI-family multimodal wire mapping ---
+
+    #[test]
+    fn to_openai_wire_text_only_keeps_plain_string_content() {
+        // Regression: a text-only message must serialize with `content` as a
+        // bare string (1.x wire shape), never an array.
+        let msgs = vec![Message::user("hello world")];
+        let wire = to_openai_wire(&msgs);
+        assert_eq!(
+            wire,
+            serde_json::json!([{"role": "user", "content": "hello world"}])
+        );
+        assert!(
+            wire[0]["content"].is_string(),
+            "content must stay a plain string, got: {}",
+            wire[0]["content"]
+        );
+    }
+
+    #[test]
+    fn to_openai_wire_text_image_file_full_shape() {
+        let content = MessageContent::from(vec![
+            ContentPart::Text {
+                text: "look".to_string(),
+            },
+            ContentPart::Image {
+                data: vec![0xDE, 0xAD, 0xBE, 0xEF],
+                media_type: "image/png".to_string(),
+            },
+            ContentPart::File {
+                data: b"hi".to_vec(),
+                media_type: "application/pdf".to_string(),
+                filename: "doc.pdf".to_string(),
+            },
+        ]);
+        let msgs = vec![Message::user(content)];
+        let wire = to_openai_wire(&msgs);
+        assert_eq!(
+            wire,
+            serde_json::json!([{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "look"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,3q2+7w=="}},
+                    {"type": "file", "file": {"filename": "doc.pdf", "file_data": "data:application/pdf;base64,aGk="}},
+                ]
+            }])
+        );
+    }
+
+    #[test]
+    fn to_openai_wire_multi_message_mix() {
+        let msgs = vec![
+            Message::system("be brief"),
+            Message::user(MessageContent::from(vec![
+                ContentPart::Text {
+                    text: "what is this".to_string(),
+                },
+                ContentPart::Image {
+                    data: vec![0x00],
+                    media_type: "image/jpeg".to_string(),
+                },
+            ])),
+            Message::assistant("a cat"),
+        ];
+        let wire = to_openai_wire(&msgs);
+        // System + assistant stay plain strings; the user message is an array.
+        assert_eq!(
+            wire[0],
+            serde_json::json!({"role": "system", "content": "be brief"})
+        );
+        assert!(wire[1]["content"].is_array());
+        assert_eq!(wire[1]["content"][1]["type"], "image_url");
+        assert_eq!(
+            wire[1]["content"][1]["image_url"]["url"],
+            "data:image/jpeg;base64,AA=="
+        );
+        assert_eq!(
+            wire[2],
+            serde_json::json!({"role": "assistant", "content": "a cat"})
+        );
     }
 
     #[test]

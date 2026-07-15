@@ -36,10 +36,10 @@ pub struct FoundryClient {
 #[derive(Serialize)]
 struct ChatRequest<'a> {
     model: &'a str,
-    // TODO(Task 3.2): text-only Message content serializes to the 1.x
-    // plain-string shape; multi-part MessageContent::Parts still needs
-    // translation to the Foundry content-array format here.
-    messages: &'a [Message],
+    /// OpenAI Chat Completions message array, built via
+    /// [`crate::types::to_openai_wire`]; identical body shape on the v1 and
+    /// dated surfaces.
+    messages: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -337,11 +337,12 @@ impl Provider for FoundryClient {
 
         let (header_name, header_value) = self.get_auth_header().await?;
 
+        let wire_messages = crate::types::to_openai_wire(messages);
         let mut temperature = options.and_then(|o| o.temperature);
         let response = loop {
             let request = ChatRequest {
                 model: &self.model,
-                messages,
+                messages: wire_messages.clone(),
                 max_completion_tokens: options.and_then(|o| o.max_tokens),
                 temperature,
                 stream: false,
@@ -409,7 +410,7 @@ impl Provider for FoundryClient {
 
         let request = ChatRequest {
             model: &self.model,
-            messages,
+            messages: crate::types::to_openai_wire(messages),
             max_completion_tokens: options.and_then(|o| o.max_tokens),
             temperature: options.and_then(|o| o.temperature),
             stream: true,
@@ -662,6 +663,58 @@ mod tests {
         let response: EmbedApiResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.data.len(), 1);
         assert_eq!(response.data[0].embedding, vec![0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn chat_request_embeds_wire_messages() {
+        use crate::types::{ContentPart, Message, MessageContent};
+
+        // Text-only regression: content stays a plain string in the body.
+        let text_req = ChatRequest {
+            model: "claude-sonnet-5",
+            messages: crate::types::to_openai_wire(&[Message::user("hello")]),
+            max_completion_tokens: None,
+            temperature: None,
+            stream: false,
+            stream_options: None,
+            response_format: None,
+        };
+        let json = serde_json::to_value(&text_req).unwrap();
+        assert_eq!(
+            json["messages"],
+            serde_json::json!([{"role": "user", "content": "hello"}])
+        );
+
+        // Attachment message embeds the typed content array.
+        let content = MessageContent::from(vec![
+            ContentPart::Text {
+                text: "see".to_string(),
+            },
+            ContentPart::File {
+                data: b"hi".to_vec(),
+                media_type: "application/pdf".to_string(),
+                filename: "doc.pdf".to_string(),
+            },
+        ]);
+        let file_req = ChatRequest {
+            model: "claude-sonnet-5",
+            messages: crate::types::to_openai_wire(&[Message::user(content)]),
+            max_completion_tokens: None,
+            temperature: None,
+            stream: false,
+            stream_options: None,
+            response_format: None,
+        };
+        let json = serde_json::to_value(&file_req).unwrap();
+        assert_eq!(json["messages"][0]["content"][1]["type"], "file");
+        assert_eq!(
+            json["messages"][0]["content"][1]["file"]["filename"],
+            "doc.pdf"
+        );
+        assert_eq!(
+            json["messages"][0]["content"][1]["file"]["file_data"],
+            "data:application/pdf;base64,aGk="
+        );
     }
 }
 

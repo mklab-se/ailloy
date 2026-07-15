@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::client::Provider;
-use crate::types::{ChatOptions, ChatResponse, ChatStream, Message, Role, StreamEvent, Usage};
+use crate::types::{
+    ChatOptions, ChatResponse, ChatStream, ContentPart, Message, MessageContent, Role, StreamEvent,
+    Usage,
+};
 
 const API_ENDPOINT: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
@@ -39,9 +42,55 @@ struct MessagesRequest<'a> {
 #[derive(Serialize, Clone)]
 struct AnthropicMessage {
     role: &'static str,
-    // TODO(Task 3.2): only the flattened text of the message is sent; image /
-    // file parts must be translated to Anthropic content blocks here.
-    content: String,
+    /// Either a bare string (text-only message, 1.x wire shape) or an array of
+    /// Anthropic content blocks (`text` / `image` / `document`) when the
+    /// message carries attachments. Built by [`anthropic_content`].
+    content: serde_json::Value,
+}
+
+/// Map a [`MessageContent`] to the Anthropic `content` field.
+///
+/// Text-only content stays a bare JSON string (unchanged from 1.x). Multi-part
+/// content becomes an array of content blocks: text → `{"type":"text",…}`,
+/// image → `{"type":"image","source":{"type":"base64",…}}`, file →
+/// `{"type":"document","source":{"type":"base64",…}}`.
+fn anthropic_content(content: &MessageContent) -> serde_json::Value {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+
+    match content {
+        MessageContent::Text(s) => serde_json::Value::String(s.clone()),
+        MessageContent::Parts(parts) => {
+            let blocks: Vec<serde_json::Value> = parts
+                .iter()
+                .map(|p| match p {
+                    ContentPart::Text { text } => serde_json::json!({
+                        "type": "text",
+                        "text": text,
+                    }),
+                    ContentPart::Image { data, media_type } => serde_json::json!({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": STANDARD.encode(data),
+                        },
+                    }),
+                    ContentPart::File {
+                        data, media_type, ..
+                    } => serde_json::json!({
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": STANDARD.encode(data),
+                        },
+                    }),
+                })
+                .collect();
+            serde_json::Value::Array(blocks)
+        }
+    }
 }
 
 // Response types
@@ -165,13 +214,13 @@ impl AnthropicClient {
                 Role::User => {
                     converted.push(AnthropicMessage {
                         role: "user",
-                        content: msg.content.text(),
+                        content: anthropic_content(&msg.content),
                     });
                 }
                 Role::Assistant => {
                     converted.push(AnthropicMessage {
                         role: "assistant",
-                        content: msg.content.text(),
+                        content: anthropic_content(&msg.content),
                     });
                 }
             }
@@ -431,5 +480,65 @@ impl Provider for AnthropicClient {
         );
 
         Ok(Box::pin(stream))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Message;
+
+    #[test]
+    fn text_only_message_stays_plain_string() {
+        // Regression: a text-only message keeps `content` as a bare string.
+        let (system, converted) = AnthropicClient::convert_messages(&[Message::user("hi there")]);
+        assert!(system.is_none());
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0].role, "user");
+        let json = serde_json::to_value(&converted[0]).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"role": "user", "content": "hi there"})
+        );
+        assert!(json["content"].is_string());
+    }
+
+    #[test]
+    fn parts_message_maps_to_content_blocks() {
+        let content = MessageContent::from(vec![
+            ContentPart::Text {
+                text: "read this".to_string(),
+            },
+            ContentPart::Image {
+                data: vec![0xDE, 0xAD, 0xBE, 0xEF],
+                media_type: "image/png".to_string(),
+            },
+            ContentPart::File {
+                data: b"hi".to_vec(),
+                media_type: "application/pdf".to_string(),
+                filename: "doc.pdf".to_string(),
+            },
+        ]);
+        let (_, converted) = AnthropicClient::convert_messages(&[Message::user(content)]);
+        let json = serde_json::to_value(&converted[0]).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "read this"},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "3q2+7w=="}},
+                    {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "aGk="}},
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn system_message_is_extracted_as_text() {
+        let (system, converted) =
+            AnthropicClient::convert_messages(&[Message::system("be terse"), Message::user("ok")]);
+        assert_eq!(system.as_deref(), Some("be terse"));
+        assert_eq!(converted.len(), 1);
     }
 }

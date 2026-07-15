@@ -11,7 +11,22 @@ use tokio::process::Command;
 use tracing::debug;
 
 use crate::client::Provider;
+use crate::error::ClientError;
 use crate::types::{ChatOptions, ChatResponse, ChatStream, Message, StreamEvent};
+
+/// Local CLI agents accept a flattened text prompt only; they have no channel
+/// for image or file attachments. Reject such messages with an actionable
+/// error rather than silently dropping the attachments.
+fn ensure_no_attachments(messages: &[Message]) -> Result<()> {
+    if messages.iter().any(|m| m.content.has_attachments()) {
+        return Err(ClientError::Unsupported(
+            "attachments (local agents accept text only — use an API node for attachments)"
+                .to_string(),
+        )
+        .into());
+    }
+    Ok(())
+}
 
 /// Client that delegates to a locally installed AI CLI tool.
 pub struct LocalAgentClient {
@@ -90,6 +105,7 @@ impl Provider for LocalAgentClient {
         messages: &[Message],
         _options: Option<&ChatOptions>,
     ) -> Result<ChatResponse> {
+        ensure_no_attachments(messages)?;
         let prompt = Self::build_prompt(messages);
 
         debug!(binary = %self.binary, "Sending prompt to local agent");
@@ -124,6 +140,7 @@ impl Provider for LocalAgentClient {
         messages: &[Message],
         _options: Option<&ChatOptions>,
     ) -> Result<ChatStream> {
+        ensure_no_attachments(messages)?;
         let prompt = Self::build_prompt(messages);
 
         debug!(binary = %self.binary, "Sending streaming prompt to local agent");
@@ -237,6 +254,31 @@ mod tests {
             debug.contains("\"exec\""),
             "full path codex should use exec"
         );
+    }
+
+    #[test]
+    fn ensure_no_attachments_rejects_attachments() {
+        use crate::types::{ContentPart, MessageContent};
+
+        let msg = Message::user(MessageContent::from(vec![
+            ContentPart::Text {
+                text: "look".to_string(),
+            },
+            ContentPart::Image {
+                data: vec![1, 2, 3],
+                media_type: "image/png".to_string(),
+            },
+        ]));
+        let err = ensure_no_attachments(&[msg]).unwrap_err().to_string();
+        assert!(err.contains("attachments"), "err: {err}");
+        assert!(err.contains("text only"), "err: {err}");
+        assert!(err.contains("API node"), "err: {err}");
+    }
+
+    #[test]
+    fn ensure_no_attachments_allows_text_only() {
+        assert!(ensure_no_attachments(&[Message::user("plain text")]).is_ok());
+        assert!(ensure_no_attachments(&[Message::system("sys"), Message::user("hi")]).is_ok());
     }
 
     #[test]

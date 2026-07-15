@@ -31,10 +31,10 @@ pub struct OpenAiClient {
 #[derive(Serialize)]
 struct ChatRequest<'a> {
     model: &'a str,
-    // TODO(Task 3.2): Message serializes text-only content to the plain-string
-    // wire shape (unchanged from 1.x); multi-part MessageContent::Parts still
-    // needs translation to the OpenAI content-array format here.
-    messages: &'a [Message],
+    /// OpenAI Chat Completions message array, built via
+    /// [`crate::types::to_openai_wire`] (plain-string content for text-only
+    /// messages, typed content blocks for attachments).
+    messages: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -406,11 +406,12 @@ impl Provider for OpenAiClient {
         let url = format!("{}/v1/chat/completions", self.base_url());
         debug!(url = %url, model = %self.model, "Sending chat request");
 
+        let wire_messages = crate::types::to_openai_wire(messages);
         let mut temperature = options.and_then(|o| o.temperature);
         let response = loop {
             let request = ChatRequest {
                 model: &self.model,
-                messages,
+                messages: wire_messages.clone(),
                 max_completion_tokens: options.and_then(|o| o.max_tokens),
                 temperature,
                 stream: false,
@@ -479,7 +480,7 @@ impl Provider for OpenAiClient {
 
         let request = ChatRequest {
             model: &self.model,
-            messages,
+            messages: crate::types::to_openai_wire(messages),
             max_completion_tokens: options.and_then(|o| o.max_tokens),
             temperature: options.and_then(|o| o.temperature),
             stream: true,

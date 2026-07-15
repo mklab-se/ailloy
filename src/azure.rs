@@ -44,10 +44,10 @@ pub struct AzureOpenAiClient {
 struct ChatRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<&'a str>,
-    // TODO(Task 3.2): text-only Message content serializes to the 1.x
-    // plain-string shape; multi-part MessageContent::Parts still needs
-    // translation to the Azure OpenAI content-array format here.
-    messages: &'a [Message],
+    /// OpenAI Chat Completions message array, built via
+    /// [`crate::types::to_openai_wire`]; identical body shape on the v1 and
+    /// dated surfaces.
+    messages: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -328,11 +328,12 @@ impl Provider for AzureOpenAiClient {
 
         let (header_name, header_value) = self.get_auth_header().await?;
 
+        let wire_messages = crate::types::to_openai_wire(messages);
         let mut temperature = options.and_then(|o| o.temperature);
         let response = loop {
             let request = ChatRequest {
                 model: self.body_model(),
-                messages,
+                messages: wire_messages.clone(),
                 max_completion_tokens: options.and_then(|o| o.max_tokens),
                 temperature,
                 stream: false,
@@ -400,7 +401,7 @@ impl Provider for AzureOpenAiClient {
 
         let request = ChatRequest {
             model: self.body_model(),
-            messages,
+            messages: crate::types::to_openai_wire(messages),
             max_completion_tokens: options.and_then(|o| o.max_tokens),
             temperature: options.and_then(|o| o.temperature),
             stream: true,
@@ -653,6 +654,53 @@ mod tests {
         let response: EmbedApiResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.data.len(), 1);
         assert_eq!(response.data[0].embedding, vec![0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn chat_request_embeds_wire_messages() {
+        use crate::types::{ContentPart, Message, MessageContent};
+
+        // Text-only regression: content stays a plain string in the body.
+        let text_req = ChatRequest {
+            model: Some("gpt-5-mini"),
+            messages: crate::types::to_openai_wire(&[Message::user("hello")]),
+            max_completion_tokens: None,
+            temperature: None,
+            stream: false,
+            stream_options: None,
+            response_format: None,
+        };
+        let json = serde_json::to_value(&text_req).unwrap();
+        assert_eq!(
+            json["messages"],
+            serde_json::json!([{"role": "user", "content": "hello"}])
+        );
+
+        // Attachment message embeds the typed content array.
+        let content = MessageContent::from(vec![
+            ContentPart::Text {
+                text: "see".to_string(),
+            },
+            ContentPart::Image {
+                data: vec![0xDE, 0xAD, 0xBE, 0xEF],
+                media_type: "image/png".to_string(),
+            },
+        ]);
+        let img_req = ChatRequest {
+            model: Some("gpt-5-mini"),
+            messages: crate::types::to_openai_wire(&[Message::user(content)]),
+            max_completion_tokens: None,
+            temperature: None,
+            stream: false,
+            stream_options: None,
+            response_format: None,
+        };
+        let json = serde_json::to_value(&img_req).unwrap();
+        assert_eq!(json["messages"][0]["content"][1]["type"], "image_url");
+        assert_eq!(
+            json["messages"][0]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,3q2+7w=="
+        );
     }
 }
 
