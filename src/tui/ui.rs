@@ -332,6 +332,17 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
             lines.push(line);
         }
     }
+    // Registry params for this node's capabilities that params_for excluded
+    // (provider-filtered, e.g. image.format on Vertex). Shown as dimmed,
+    // non-selectable hints — detail_selected only ranges over `params`.
+    for def in crate::params::PARAMS {
+        if node.capabilities.contains(&def.capability) && !params.iter().any(|p| p.key == def.key) {
+            lines.push(Line::styled(
+                format!("  {}   (not available for this provider)", def.key),
+                dim,
+            ));
+        }
+    }
     lines.push(Line::styled(
         "  Enter: edit · params shown are valid for this node",
         dim,
@@ -539,6 +550,36 @@ mod tests {
             text.contains("image.quality"),
             "detail pane lists an image param for an image node"
         );
+    }
+
+    #[test]
+    fn draw_detail_shows_provider_unavailable_params_dimmed() {
+        // Vertex supports image, but the OpenAI-family-only image params
+        // (image.format/compression/background) are provider-filtered out.
+        let mut config = Config::default();
+        config.nodes.insert(
+            "vertex-ai/imagen".to_string(),
+            node_with_caps(
+                ProviderKind::VertexAi,
+                vec![Capability::Chat, Capability::Image],
+            ),
+        );
+        let app = App::new(config, "ailloy");
+        let backend = TestBackend::new(140, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        let text = buffer_to_string(&terminal);
+        assert!(
+            text.contains("not available for this provider"),
+            "provider-excluded params render the unavailable hint"
+        );
+        assert!(
+            text.contains("image.format"),
+            "the excluded param key itself is listed"
+        );
+        // Still-configurable params are listed normally too.
+        assert!(text.contains("image.quality"));
     }
 
     #[test]

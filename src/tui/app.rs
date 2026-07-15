@@ -347,6 +347,22 @@ mod tests {
     }
 
     #[test]
+    fn detail_selected_resets_when_node_selection_changes_up() {
+        let mut app = App::new(config_with_capable_nodes(), "ailloy");
+        // Select the second node, then scroll the detail cursor down.
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.selected, 1);
+        app.focus = Focus::Detail;
+        app.handle_key(key(KeyCode::Down));
+        assert!(app.detail_selected > 0);
+        // Back in the node list, Up changes the node and resets the cursor.
+        app.focus = Focus::NodeList;
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.selected, 0);
+        assert_eq!(app.detail_selected, 0, "changing node (Up) resets cursor");
+    }
+
+    #[test]
     fn tab_into_detail_clamps_stale_cursor() {
         let mut app = App::new(config_with_capable_nodes(), "ailloy");
         // Simulate a stale cursor beyond the param range.
