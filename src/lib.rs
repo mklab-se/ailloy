@@ -36,6 +36,7 @@ pub mod foundry;
 pub mod local_agent;
 pub mod ollama;
 pub mod openai;
+mod openai_images;
 pub mod retirement;
 pub mod terminal;
 pub mod types;
