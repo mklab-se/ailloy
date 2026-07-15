@@ -9,12 +9,13 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table};
+use ratatui::widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table};
 
 use crate::config::{AiNode, Auth, Capability, Config};
-use crate::params::params_for;
+use crate::params::{ParamDef, ParamKind, params_for};
 use crate::retirement::retirement_warning;
-use crate::tui::app::{App, Focus};
+use crate::tui::app::{App, Focus, Mode};
+use crate::tui::forms::Editor;
 
 /// The four capability columns shown in the node table, in display order.
 const CAPABILITY_COLUMNS: &[Capability] = &[
@@ -94,6 +95,135 @@ pub fn draw(frame: &mut Frame, app: &App) {
         draw_status(frame, app, status_area);
     }
     draw_footer(frame, footer_area);
+
+    // Overlay the default editor popup on top of the Browse view.
+    if let Mode::EditDefault { editor, .. } = &app.mode {
+        draw_edit_popup(frame, app, editor, area);
+    }
+}
+
+/// A rectangle centered in `area` with the given fixed width/height (clamped to
+/// `area`).
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    Rect {
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
+/// A dimmed hint describing the accepted values for a parameter kind.
+fn kind_hint(kind: &ParamKind) -> String {
+    match kind {
+        ParamKind::Enum(values) => format!("one of: {}", values.join(", ")),
+        ParamKind::UInt { min, max } => format!("{min}..={max}"),
+        ParamKind::Float { min, max } => format!("{min}..={max}"),
+        ParamKind::Size => "WxH e.g. 1280x720".to_string(),
+    }
+}
+
+/// Render the centered popup used to edit a per-node default parameter.
+///
+/// Text editors show an input line with a visible cursor plus an error (red) or
+/// hint (dimmed) line; select editors show the list of choices with the current
+/// one highlighted. Both share a footer of key hints.
+fn draw_edit_popup(frame: &mut Frame, app: &App, editor: &Editor, area: Rect) {
+    // The parameter being edited (for the title and the value hint).
+    let def: Option<&ParamDef> = editing_param_def(app);
+    let title = def.map(|d| d.key).unwrap_or("edit default");
+
+    let popup = centered_rect(60, 9, area);
+    let block = Block::default()
+        .title(format!(" {title} "))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(popup);
+
+    frame.render_widget(Clear, popup);
+    frame.render_widget(block, popup);
+
+    // Split inner into: body (fills), footer (1 line).
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+    let body_area = chunks[0];
+    let footer_area = chunks[1];
+
+    match &editor.choices {
+        // --- Select editor: list of choices, current highlighted -----------
+        Some((choices, selected)) => {
+            let lines: Vec<Line> = choices
+                .iter()
+                .enumerate()
+                .map(|(idx, choice)| {
+                    if idx == *selected {
+                        Line::styled(
+                            format!("▸ {choice}"),
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        Line::from(format!("  {choice}"))
+                    }
+                })
+                .collect();
+            frame.render_widget(Paragraph::new(lines), body_area);
+        }
+        // --- Text editor: input line + error/hint --------------------------
+        None => {
+            let value_line = Line::from(vec![
+                Span::styled("› ", Style::default().fg(Color::DarkGray)),
+                Span::raw(editor.value.clone()),
+            ]);
+            let second = match &editor.error {
+                Some(err) => Line::styled(err.clone(), Style::default().fg(Color::Red)),
+                None => {
+                    let hint = def
+                        .map(|d| kind_hint(&d.kind))
+                        .unwrap_or_else(|| "enter a value".to_string());
+                    Line::styled(hint, Style::default().fg(Color::DarkGray))
+                }
+            };
+            frame.render_widget(
+                Paragraph::new(vec![value_line, Line::from(""), second]),
+                body_area,
+            );
+
+            // Place the terminal cursor after the "› " prefix + cursor offset.
+            let prefix = 2u16;
+            let cursor_col =
+                body_area.x + prefix + editor.value[..editor.cursor].chars().count() as u16;
+            frame.set_cursor_position((cursor_col, body_area.y));
+        }
+    }
+
+    let footer = Paragraph::new(Line::styled(
+        "Enter save · Esc cancel",
+        Style::default().fg(Color::DarkGray),
+    ));
+    frame.render_widget(footer, footer_area);
+}
+
+/// The [`ParamDef`] currently being edited, resolved from the selected node and
+/// the mode's `param_idx`. Mirrors the reducer's own lookup.
+fn editing_param_def(app: &App) -> Option<&'static ParamDef> {
+    let param_idx = match &app.mode {
+        Mode::EditDefault { param_idx, .. } => *param_idx,
+        _ => return None,
+    };
+    let node_id = app.selected_node_id()?;
+    let node = app.config.nodes.get(&node_id)?;
+    params_for(&node.provider, &node.capabilities)
+        .get(param_idx)
+        .copied()
 }
 
 /// Header bar: tool name, config path, and an AI enabled/disabled indicator.
@@ -580,6 +710,43 @@ mod tests {
         );
         // Still-configurable params are listed normally too.
         assert!(text.contains("image.quality"));
+    }
+
+    #[test]
+    fn draw_renders_edit_popup_with_title_and_hint() {
+        let mut config = Config::default();
+        config.nodes.insert(
+            "openai/img".to_string(),
+            node_with_caps(
+                ProviderKind::OpenAi,
+                vec![Capability::Chat, Capability::Image],
+            ),
+        );
+        let mut app = App::new(config, "ailloy");
+        let id = app.selected_node_id().unwrap();
+        let node = &app.config.nodes[&id];
+        let idx = params_for(&node.provider, &node.capabilities)
+            .iter()
+            .position(|d| d.key == "image.compression")
+            .unwrap();
+        app.focus = Focus::Detail;
+        app.detail_selected = idx;
+        app.mode = Mode::EditDefault {
+            param_idx: idx,
+            editor: Editor::text(""),
+        };
+
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        let text = buffer_to_string(&terminal);
+        assert!(
+            text.contains("image.compression"),
+            "popup title shows the param key"
+        );
+        assert!(text.contains("0..=100"), "popup shows the range hint");
+        assert!(text.contains("Enter save"), "popup footer key hints render");
     }
 
     #[test]

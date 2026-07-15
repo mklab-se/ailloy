@@ -8,7 +8,12 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::Config;
+use crate::params::{self, ParamDef, ParamKind, params_for};
+use crate::tui::actions;
 use crate::tui::forms::{Editor, NodeForm};
+
+/// The synthetic leading choice in an Enum default editor that clears the key.
+pub(crate) const UNSET_CHOICE: &str = "(unset)";
 
 /// Which pane currently has keyboard focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,6 +160,7 @@ impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<Effect> {
         match self.mode {
             Mode::Browse => self.handle_browse_key(key),
+            Mode::EditDefault { .. } => self.handle_edit_default_key(key),
             // Other modes are wired up in later tasks; ignore input for now.
             _ => None,
         }
@@ -209,8 +215,208 @@ impl App {
                 }
                 None
             }
+            // Enter on an editable default row (detail pane) opens the editor.
+            KeyCode::Enter => {
+                if self.focus == Focus::Detail {
+                    self.begin_edit_default();
+                }
+                None
+            }
             // All other keys are extended in later tasks.
             _ => None,
+        }
+    }
+
+    /// The [`ParamDef`] the detail cursor currently points at, if the selected
+    /// node has an editable parameter there.
+    fn param_def_at_cursor(&self) -> Option<&'static ParamDef> {
+        let node_id = self.selected_node_id()?;
+        let node = self.config.nodes.get(&node_id)?;
+        params_for(&node.provider, &node.capabilities)
+            .get(self.detail_selected)
+            .copied()
+    }
+
+    /// The [`ParamDef`] currently being edited (by the mode's `param_idx`).
+    fn editing_param_def(&self) -> Option<&'static ParamDef> {
+        let param_idx = match &self.mode {
+            Mode::EditDefault { param_idx, .. } => *param_idx,
+            _ => return None,
+        };
+        let node_id = self.selected_node_id()?;
+        let node = self.config.nodes.get(&node_id)?;
+        params_for(&node.provider, &node.capabilities)
+            .get(param_idx)
+            .copied()
+    }
+
+    /// Enter [`Mode::EditDefault`] for the parameter under the detail cursor,
+    /// building the appropriate editor for its [`ParamKind`].
+    fn begin_edit_default(&mut self) {
+        let Some(def) = self.param_def_at_cursor() else {
+            return;
+        };
+        let idx = self.detail_selected;
+        let node_id = match self.selected_node_id() {
+            Some(id) => id,
+            None => return,
+        };
+        // Current stored value (if any) for this key on the selected node.
+        let current = self
+            .config
+            .nodes
+            .get(&node_id)
+            .and_then(|n| n.default_for(def.key))
+            .map(str::to_string);
+
+        let editor = match &def.kind {
+            ParamKind::Enum(choices) => {
+                let mut options = vec![UNSET_CHOICE.to_string()];
+                options.extend(choices.iter().map(|c| c.to_string()));
+                // Index 0 is "(unset)"; a stored value maps to its slot + 1.
+                let selected = current
+                    .as_deref()
+                    .and_then(|v| choices.iter().position(|c| *c == v))
+                    .map(|p| p + 1)
+                    .unwrap_or(0);
+                Editor::select(options, selected)
+            }
+            // UInt / Float / Size are free-text with live validation.
+            _ => Editor::text(current.unwrap_or_default()),
+        };
+
+        self.mode = Mode::EditDefault {
+            param_idx: idx,
+            editor,
+        };
+    }
+
+    /// Key handling while in [`Mode::EditDefault`].
+    fn handle_edit_default_key(&mut self, key: KeyEvent) -> Option<Effect> {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Browse;
+                None
+            }
+            KeyCode::Enter => self.commit_edit_default(),
+            _ => {
+                // Look up the def first so the immutable borrow ends before we
+                // take a mutable borrow of the editor.
+                let def = self.editing_param_def();
+                if let Mode::EditDefault { editor, .. } = &mut self.mode {
+                    if let Some((choices, selected)) = editor.choices.as_mut() {
+                        // Select editor: Up/Down move the highlight.
+                        match key.code {
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                *selected = selected.saturating_sub(1);
+                            }
+                            KeyCode::Down | KeyCode::Char('j') if *selected + 1 < choices.len() => {
+                                *selected += 1;
+                            }
+                            _ => {}
+                        }
+                        editor.value = choices.get(*selected).cloned().unwrap_or_default();
+                    } else {
+                        // Text editor: edit the value at the cursor.
+                        match key.code {
+                            KeyCode::Char(c) => {
+                                editor.value.insert(editor.cursor, c);
+                                editor.cursor += c.len_utf8();
+                            }
+                            KeyCode::Backspace => {
+                                if editor.cursor > 0 {
+                                    let prev = editor.value[..editor.cursor]
+                                        .chars()
+                                        .next_back()
+                                        .map(char::len_utf8)
+                                        .unwrap_or(1);
+                                    editor.cursor -= prev;
+                                    editor.value.remove(editor.cursor);
+                                }
+                            }
+                            KeyCode::Left if editor.cursor > 0 => {
+                                let prev = editor.value[..editor.cursor]
+                                    .chars()
+                                    .next_back()
+                                    .map(char::len_utf8)
+                                    .unwrap_or(1);
+                                editor.cursor -= prev;
+                            }
+                            KeyCode::Right if editor.cursor < editor.value.len() => {
+                                let next = editor.value[editor.cursor..]
+                                    .chars()
+                                    .next()
+                                    .map(char::len_utf8)
+                                    .unwrap_or(1);
+                                editor.cursor += next;
+                            }
+                            _ => {}
+                        }
+                        // Live validation: empty clears the key (valid); any
+                        // other value must pass the param's validator.
+                        if let Some(def) = def {
+                            let trimmed = editor.value.trim();
+                            editor.error = if trimmed.is_empty() {
+                                None
+                            } else {
+                                params::validate_value(def, trimmed).err()
+                            };
+                        }
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    /// Commit the current [`Mode::EditDefault`] value: write it through
+    /// [`actions::set_node_default`], returning to Browse with a save effect on
+    /// success. A live validation error present makes Enter a no-op.
+    fn commit_edit_default(&mut self) -> Option<Effect> {
+        // Resolve the value the editor commits to (None clears the key).
+        let value: Option<String> = match &self.mode {
+            Mode::EditDefault { editor, .. } => {
+                if editor.error.is_some() {
+                    // Standing validation error: refuse to commit.
+                    return None;
+                }
+                match &editor.choices {
+                    Some((choices, selected)) => match choices.get(*selected) {
+                        Some(choice) if choice == UNSET_CHOICE => None,
+                        Some(choice) => Some(choice.clone()),
+                        None => None,
+                    },
+                    None => {
+                        let trimmed = editor.value.trim();
+                        if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed.to_string())
+                        }
+                    }
+                }
+            }
+            _ => return None,
+        };
+
+        let node_id = self.selected_node_id()?;
+        let key = self.editing_param_def()?.key.to_string();
+
+        match actions::set_node_default(&mut self.config, &node_id, &key, value.as_deref()) {
+            Ok(()) => {
+                self.mode = Mode::Browse;
+                self.dirty = true;
+                self.status_line = Some(format!("saved {key}"));
+                Some(Effect::Save)
+            }
+            Err(e) => {
+                // Should not happen given live validation, but surface it
+                // rather than silently discarding the input.
+                if let Mode::EditDefault { editor, .. } = &mut self.mode {
+                    editor.error = Some(e.to_string());
+                }
+                None
+            }
         }
     }
 }
@@ -376,5 +582,171 @@ mod tests {
     fn selected_params_len_zero_for_empty_config() {
         let app = App::new(Config::default(), "ailloy");
         assert_eq!(app.selected_params_len(), 0);
+    }
+
+    // --- Task 5.3: per-node default editing -----------------------------
+
+    /// Index of `key` in the selected node's parameter list.
+    fn param_index(app: &App, key: &str) -> usize {
+        let id = app.selected_node_id().unwrap();
+        let node = &app.config.nodes[&id];
+        params_for(&node.provider, &node.capabilities)
+            .iter()
+            .position(|d| d.key == key)
+            .unwrap_or_else(|| panic!("param '{key}' not found for selected node"))
+    }
+
+    /// Enter Browse→edit for the given param key on the selected node.
+    fn open_editor(app: &mut App, key: &str) {
+        app.focus = Focus::Detail;
+        app.detail_selected = param_index(app, key);
+        app.handle_key(key_ev(KeyCode::Enter));
+    }
+
+    fn key_ev(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn enter_opens_select_editor_for_enum_param() {
+        let mut app = App::new(config_with_capable_nodes(), "ailloy");
+        open_editor(&mut app, "image.quality");
+        match &app.mode {
+            Mode::EditDefault { editor, .. } => {
+                let (choices, _) = editor.choices.as_ref().expect("enum → select editor");
+                assert_eq!(choices[0], UNSET_CHOICE, "leading (unset) choice");
+                assert!(choices.iter().any(|c| c == "high"), "enum values present");
+            }
+            _ => panic!("expected EditDefault mode"),
+        }
+    }
+
+    #[test]
+    fn enter_opens_text_editor_for_uint_param() {
+        let mut app = App::new(config_with_capable_nodes(), "ailloy");
+        open_editor(&mut app, "image.compression");
+        match &app.mode {
+            Mode::EditDefault { editor, .. } => {
+                assert!(editor.choices.is_none(), "uint → free-text editor");
+                assert_eq!(editor.value, "", "no stored value → empty");
+                assert_eq!(editor.cursor, 0);
+            }
+            _ => panic!("expected EditDefault mode"),
+        }
+    }
+
+    #[test]
+    fn typing_and_backspace_update_text_editor() {
+        let mut app = App::new(config_with_capable_nodes(), "ailloy");
+        open_editor(&mut app, "image.compression");
+        app.handle_key(key_ev(KeyCode::Char('5')));
+        app.handle_key(key_ev(KeyCode::Char('0')));
+        match &app.mode {
+            Mode::EditDefault { editor, .. } => {
+                assert_eq!(editor.value, "50");
+                assert_eq!(editor.cursor, 2);
+                assert!(editor.error.is_none(), "50 is a valid compression");
+            }
+            _ => panic!("expected EditDefault mode"),
+        }
+        app.handle_key(key_ev(KeyCode::Backspace));
+        match &app.mode {
+            Mode::EditDefault { editor, .. } => {
+                assert_eq!(editor.value, "5");
+                assert_eq!(editor.cursor, 1);
+            }
+            _ => panic!("expected EditDefault mode"),
+        }
+    }
+
+    #[test]
+    fn invalid_text_sets_error_and_enter_is_noop() {
+        let mut app = App::new(config_with_capable_nodes(), "ailloy");
+        open_editor(&mut app, "image.compression");
+        // 999 is out of the 0..=100 range.
+        for c in ['9', '9', '9'] {
+            app.handle_key(key_ev(KeyCode::Char(c)));
+        }
+        match &app.mode {
+            Mode::EditDefault { editor, .. } => {
+                assert!(editor.error.is_some(), "out-of-range value sets an error");
+            }
+            _ => panic!("expected EditDefault mode"),
+        }
+        // Enter with an error present must not commit.
+        let effect = app.handle_key(key_ev(KeyCode::Enter));
+        assert!(effect.is_none(), "Enter is a no-op while invalid");
+        assert!(
+            matches!(app.mode, Mode::EditDefault { .. }),
+            "stays in edit mode"
+        );
+        assert!(!app.dirty);
+        let id = app.selected_node_id().unwrap();
+        assert!(app.config.nodes[&id].node_defaults.is_none());
+    }
+
+    #[test]
+    fn valid_text_enter_commits_and_saves() {
+        let mut app = App::new(config_with_capable_nodes(), "ailloy");
+        open_editor(&mut app, "image.compression");
+        app.handle_key(key_ev(KeyCode::Char('5')));
+        app.handle_key(key_ev(KeyCode::Char('0')));
+        let effect = app.handle_key(key_ev(KeyCode::Enter));
+        assert_eq!(effect, Some(Effect::Save));
+        assert!(matches!(app.mode, Mode::Browse), "back to Browse");
+        assert!(app.dirty);
+        assert_eq!(app.status_line.as_deref(), Some("saved image.compression"));
+        let id = app.selected_node_id().unwrap();
+        assert_eq!(
+            app.config.nodes[&id].default_for("image.compression"),
+            Some("50")
+        );
+    }
+
+    #[test]
+    fn select_enter_commits_chosen_value() {
+        let mut app = App::new(config_with_capable_nodes(), "ailloy");
+        open_editor(&mut app, "image.quality");
+        // choices: ["(unset)", "low", "medium", "high", "auto"] → Down → "low".
+        app.handle_key(key_ev(KeyCode::Down));
+        let effect = app.handle_key(key_ev(KeyCode::Enter));
+        assert_eq!(effect, Some(Effect::Save));
+        let id = app.selected_node_id().unwrap();
+        assert_eq!(
+            app.config.nodes[&id].default_for("image.quality"),
+            Some("low")
+        );
+    }
+
+    #[test]
+    fn select_unset_removes_existing_key() {
+        let mut app = App::new(config_with_capable_nodes(), "ailloy");
+        // Pre-set a stored default so the editor opens on it.
+        let id = app.selected_node_id().unwrap();
+        actions::set_node_default(&mut app.config, &id, "image.quality", Some("high")).unwrap();
+
+        open_editor(&mut app, "image.quality");
+        // Editor should start on the stored value ("high"); move to (unset).
+        for _ in 0..5 {
+            app.handle_key(key_ev(KeyCode::Up));
+        }
+        let effect = app.handle_key(key_ev(KeyCode::Enter));
+        assert_eq!(effect, Some(Effect::Save));
+        assert_eq!(app.config.nodes[&id].default_for("image.quality"), None);
+        // Map dropped once empty.
+        assert!(app.config.nodes[&id].node_defaults.is_none());
+    }
+
+    #[test]
+    fn esc_cancels_without_touching_config() {
+        let mut app = App::new(config_with_capable_nodes(), "ailloy");
+        open_editor(&mut app, "image.compression");
+        app.handle_key(key_ev(KeyCode::Char('7')));
+        let effect = app.handle_key(key_ev(KeyCode::Esc));
+        assert!(effect.is_none());
+        assert!(matches!(app.mode, Mode::Browse));
+        assert!(!app.dirty);
+        let id = app.selected_node_id().unwrap();
+        assert!(app.config.nodes[&id].node_defaults.is_none());
     }
 }
