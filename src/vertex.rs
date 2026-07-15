@@ -221,12 +221,16 @@ impl VertexAiClient {
         let mut system = None;
         let mut contents = Vec::new();
 
+        // TODO(Task 3.2): all three sites below flatten MessageContent::Parts
+        // to text via .text() and hardcode inline_data: None; image/file parts
+        // must be mapped to GeminiPart.inline_data (base64 + mime_type) here.
         for msg in messages {
             match msg.role {
                 Role::System => {
                     system = Some(GeminiContent {
                         role: "user".to_string(),
                         parts: vec![GeminiPart {
+                            // TODO(Task 3.2): map Parts → inline_data
                             text: Some(msg.content.text()),
                             inline_data: None,
                         }],
@@ -236,6 +240,7 @@ impl VertexAiClient {
                     contents.push(GeminiContent {
                         role: "user".to_string(),
                         parts: vec![GeminiPart {
+                            // TODO(Task 3.2): map Parts → inline_data
                             text: Some(msg.content.text()),
                             inline_data: None,
                         }],
@@ -245,6 +250,7 @@ impl VertexAiClient {
                     contents.push(GeminiContent {
                         role: "model".to_string(),
                         parts: vec![GeminiPart {
+                            // TODO(Task 3.2): map Parts → inline_data
                             text: Some(msg.content.text()),
                             inline_data: None,
                         }],
