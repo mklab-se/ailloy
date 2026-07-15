@@ -101,37 +101,35 @@ pub(crate) fn build_generations_body(
             if let Some(style) = opts.and_then(|o| o.style.as_deref()) {
                 body["style"] = serde_json::json!(style);
             }
+            // Collect ALL explicitly-set gpt-image-only params into one error,
+            // so no offending param is masked by another (e.g. compression can
+            // only ever be set together with output_format, per validate()).
+            let mut offending: Vec<&str> = Vec::new();
             if opts.and_then(|o| o.output_format).is_some() {
-                anyhow::bail!(
-                    "output_format is a gpt-image-only parameter and is not supported by DALL·E models; remove output_format, or use quality/style instead."
-                );
+                offending.push("output_format");
             }
             if opts.and_then(|o| o.compression).is_some() {
-                anyhow::bail!(
-                    "compression is a gpt-image-only parameter and is not supported by DALL·E models; remove compression."
-                );
+                offending.push("compression");
             }
             if opts.and_then(|o| o.background).is_some() {
-                anyhow::bail!(
-                    "background is a gpt-image-only parameter and is not supported by DALL·E models; remove background."
-                );
+                offending.push("background");
             }
             if opts.and_then(|o| o.moderation).is_some() {
-                anyhow::bail!(
-                    "moderation is a gpt-image-only parameter and is not supported by DALL·E models; remove moderation."
-                );
+                offending.push("moderation");
             }
             if opts.and_then(|o| o.input_fidelity).is_some() {
-                anyhow::bail!(
-                    "input_fidelity is a gpt-image-only parameter and is not supported by DALL·E models; remove input_fidelity."
-                );
+                offending.push("input_fidelity");
             }
             if opts
                 .map(|o| !o.reference_images.is_empty())
                 .unwrap_or(false)
             {
+                offending.push("reference_images");
+            }
+            if !offending.is_empty() {
                 anyhow::bail!(
-                    "reference images (image editing) are a gpt-image-only feature and are not supported by DALL·E models; remove reference_images, or switch to a gpt-image model."
+                    "The following gpt-image-only parameters are not supported by DALL·E models: {}. Remove them, or switch to a gpt-image model.",
+                    offending.join(", ")
                 );
             }
         }
@@ -460,6 +458,9 @@ mod tests {
 
     #[test]
     fn dalle_rejects_compression() {
+        // compression can only be set together with output_format (validate()
+        // enforces jpeg/webp), so the error must name BOTH offending params —
+        // compression must not be masked by output_format.
         let opts = ImageOptions::builder()
             .output_format(ImageFormat::Jpeg)
             .compression(50)
@@ -468,6 +469,14 @@ mod tests {
             build_generations_body(Some("dall-e-3"), "a cat", Some(&opts), ImageFlavor::DallE)
                 .unwrap_err()
                 .to_string();
+        assert!(
+            err.contains("compression"),
+            "error must name compression: {err}"
+        );
+        assert!(
+            err.contains("output_format"),
+            "error must name output_format: {err}"
+        );
         assert!(err.contains("DALL"));
     }
 
@@ -518,6 +527,28 @@ mod tests {
             build_generations_body(Some("dall-e-2"), "a cat", Some(&opts), ImageFlavor::DallE)
                 .unwrap_err()
                 .to_string();
+        assert!(
+            err.contains("reference_images"),
+            "error must name reference_images: {err}"
+        );
+        assert!(err.contains("DALL"));
+    }
+
+    #[test]
+    fn dalle_lists_all_offending_params_in_one_error() {
+        let opts = ImageOptions::builder()
+            .output_format(ImageFormat::Webp)
+            .compression(30)
+            .background(Background::Auto)
+            .moderation(Moderation::Low)
+            .build();
+        let err =
+            build_generations_body(Some("dall-e-3"), "a cat", Some(&opts), ImageFlavor::DallE)
+                .unwrap_err()
+                .to_string();
+        for param in ["output_format", "compression", "background", "moderation"] {
+            assert!(err.contains(param), "error must name {param}: {err}");
+        }
         assert!(err.contains("DALL"));
     }
 
