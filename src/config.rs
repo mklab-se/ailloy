@@ -68,7 +68,11 @@ impl ProviderKind {
         matches!(
             (self, task),
             (_, "chat")
-                | (Self::OpenAi | Self::AzureOpenAi | Self::VertexAi, "image")
+                | (
+                    Self::OpenAi | Self::AzureOpenAi | Self::VertexAi | Self::MicrosoftFoundry,
+                    "image"
+                )
+                | (Self::AzureOpenAi | Self::MicrosoftFoundry, "video")
                 | (
                     Self::OpenAi
                         | Self::AzureOpenAi
@@ -91,6 +95,9 @@ impl ProviderKind {
         if self.supports_task("image") {
             caps.push(Capability::Image);
         }
+        if self.supports_task("video") {
+            caps.push(Capability::Video);
+        }
         if self.supports_task("embedding") {
             caps.push(Capability::Embedding);
         }
@@ -109,6 +116,7 @@ pub enum Capability {
     Chat,
     Image,
     Embedding,
+    Video,
 }
 
 impl Capability {
@@ -118,6 +126,7 @@ impl Capability {
             Self::Chat => "chat",
             Self::Image => "image",
             Self::Embedding => "embedding",
+            Self::Video => "video",
         }
     }
 
@@ -127,6 +136,7 @@ impl Capability {
             Self::Chat => "Chat",
             Self::Image => "Image Generation",
             Self::Embedding => "Embedding",
+            Self::Video => "Video Generation",
         }
     }
 }
@@ -144,8 +154,9 @@ impl std::str::FromStr for Capability {
             "chat" => Ok(Self::Chat),
             "image" => Ok(Self::Image),
             "embedding" => Ok(Self::Embedding),
+            "video" => Ok(Self::Video),
             _ => Err(format!(
-                "Unknown capability '{}'. Valid: chat, image, embedding",
+                "Unknown capability '{}'. Valid: chat, image, embedding, video",
                 s
             )),
         }
@@ -479,6 +490,7 @@ pub const ALL_CAPABILITIES: &[(&str, &str)] = &[
     ("chat", "Chat"),
     ("image", "Image Generation"),
     ("embedding", "Embedding"),
+    ("video", "Video Generation"),
 ];
 
 /// Ordered list of task keys with human-readable labels (backward-compatible alias).
@@ -1128,7 +1140,18 @@ mod tests {
             "embedding".parse::<Capability>().unwrap(),
             Capability::Embedding
         );
+        assert_eq!("video".parse::<Capability>().unwrap(), Capability::Video);
         assert!("invalid".parse::<Capability>().is_err());
+    }
+
+    #[test]
+    fn test_capability_video_serde_roundtrip() {
+        let json = serde_json::to_string(&Capability::Video).unwrap();
+        assert_eq!(json, "\"video\"");
+        let parsed: Capability = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, Capability::Video);
+        assert_eq!(Capability::Video.config_key(), "video");
+        assert_eq!(Capability::Video.label(), "Video Generation");
     }
 
     #[test]
@@ -1291,10 +1314,30 @@ mod tests {
         assert!(ProviderKind::OpenAi.supports_task("image"));
         assert!(!ProviderKind::Anthropic.supports_task("image"));
         assert!(ProviderKind::AzureOpenAi.supports_task("image"));
-        assert!(!ProviderKind::MicrosoftFoundry.supports_task("image"));
+        assert!(ProviderKind::MicrosoftFoundry.supports_task("image"));
         assert!(ProviderKind::VertexAi.supports_task("image"));
         assert!(!ProviderKind::Ollama.supports_task("image"));
         assert!(!ProviderKind::LocalAgent.supports_task("image"));
+    }
+
+    #[test]
+    fn foundry_supports_image() {
+        assert!(ProviderKind::MicrosoftFoundry.supports_task("image"));
+    }
+
+    #[test]
+    fn azure_and_foundry_support_video() {
+        assert!(ProviderKind::AzureOpenAi.supports_task("video"));
+        assert!(ProviderKind::MicrosoftFoundry.supports_task("video"));
+    }
+
+    #[test]
+    fn others_do_not_support_video() {
+        assert!(!ProviderKind::OpenAi.supports_task("video"));
+        assert!(!ProviderKind::Anthropic.supports_task("video"));
+        assert!(!ProviderKind::VertexAi.supports_task("video"));
+        assert!(!ProviderKind::Ollama.supports_task("video"));
+        assert!(!ProviderKind::LocalAgent.supports_task("video"));
     }
 
     #[test]

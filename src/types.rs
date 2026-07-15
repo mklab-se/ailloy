@@ -359,6 +359,7 @@ impl EmbedOptionsBuilder {
 pub enum Task {
     Chat,
     ImageGeneration,
+    VideoGeneration,
     Transcription,
     Embedding,
 }
@@ -369,6 +370,7 @@ impl Task {
         match self {
             Self::Chat => "chat",
             Self::ImageGeneration => "image",
+            Self::VideoGeneration => "video",
             Self::Transcription => "transcription",
             Self::Embedding => "embedding",
         }
@@ -379,6 +381,7 @@ impl Task {
         match self {
             Self::Chat => Some(crate::config::Capability::Chat),
             Self::ImageGeneration => Some(crate::config::Capability::Image),
+            Self::VideoGeneration => Some(crate::config::Capability::Video),
             Self::Transcription => None,
             Self::Embedding => Some(crate::config::Capability::Embedding),
         }
@@ -518,6 +521,15 @@ mod tests {
         assert_eq!(
             Task::Embedding.to_capability(),
             Some(crate::config::Capability::Embedding),
+        );
+    }
+
+    #[test]
+    fn video_task_config_key() {
+        assert_eq!(Task::VideoGeneration.config_key(), "video");
+        assert_eq!(
+            Task::VideoGeneration.to_capability(),
+            Some(crate::config::Capability::Video),
         );
     }
 }
