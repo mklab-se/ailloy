@@ -243,11 +243,22 @@ pub fn merge_image_defaults(opts: &mut ImageOptions, defaults: &BTreeMap<String,
             }
         }
     }
+    // Compression only makes sense for jpeg/webp. Gate the default on the
+    // *effective* output format (the format fill above already ran), so a
+    // node default like `image.compression: 80` doesn't invalidate a PNG
+    // request (e.g. `-o out.png` overriding a jpeg node default).
     if opts.compression.is_none() {
         if let Some(v) = defaults.get("image.compression") {
-            match v.parse::<u8>() {
-                Ok(c) => opts.compression = Some(c),
-                Err(_) => warn_unparseable_default("image.compression", v),
+            match opts.output_format {
+                Some(ImageFormat::Jpeg) | Some(ImageFormat::Webp) => match v.parse::<u8>() {
+                    Ok(c) => opts.compression = Some(c),
+                    Err(_) => warn_unparseable_default("image.compression", v),
+                },
+                _ => tracing::debug!(
+                    "skipping node default 'image.compression' = '{}': \
+                     effective output format is not jpeg or webp",
+                    v
+                ),
             }
         }
     }
@@ -1783,6 +1794,58 @@ mod tests {
         let mut opts = ImageOptions::default();
         merge_image_defaults(&mut opts, &defaults);
         assert_eq!(opts.size, None);
+    }
+
+    #[test]
+    fn merge_image_defaults_skips_compression_when_effective_format_is_png() {
+        // Simulates `-o out.png` overriding a jpeg node default: the preset
+        // Png format must suppress the compression default, and the merged
+        // options must still validate.
+        let defaults = defaults_map(&[("image.format", "jpeg"), ("image.compression", "80")]);
+        let mut opts = ImageOptions {
+            output_format: Some(ImageFormat::Png),
+            ..Default::default()
+        };
+        merge_image_defaults(&mut opts, &defaults);
+        assert_eq!(opts.output_format, Some(ImageFormat::Png));
+        assert_eq!(opts.compression, None);
+        assert!(opts.validate().is_ok());
+    }
+
+    #[test]
+    fn merge_image_defaults_fills_compression_when_format_default_is_jpeg() {
+        // No presets: the format default (jpeg) resolves first, so the
+        // compression default applies too.
+        let defaults = defaults_map(&[("image.format", "jpeg"), ("image.compression", "80")]);
+        let mut opts = ImageOptions::default();
+        merge_image_defaults(&mut opts, &defaults);
+        assert_eq!(opts.output_format, Some(ImageFormat::Jpeg));
+        assert_eq!(opts.compression, Some(80));
+    }
+
+    #[test]
+    fn merge_image_defaults_skips_compression_without_effective_format() {
+        // A compression default alone (no format default, no preset format)
+        // must not be filled — compression requires jpeg/webp.
+        let defaults = defaults_map(&[("image.compression", "80")]);
+        let mut opts = ImageOptions::default();
+        merge_image_defaults(&mut opts, &defaults);
+        assert_eq!(opts.output_format, None);
+        assert_eq!(opts.compression, None);
+    }
+
+    #[test]
+    fn merge_image_defaults_keeps_explicit_compression() {
+        // Explicit --compression is already Some; merge only fills None, so
+        // the gate never touches it regardless of format.
+        let defaults = defaults_map(&[("image.compression", "80")]);
+        let mut opts = ImageOptions {
+            output_format: Some(ImageFormat::Webp),
+            compression: Some(50),
+            ..Default::default()
+        };
+        merge_image_defaults(&mut opts, &defaults);
+        assert_eq!(opts.compression, Some(50));
     }
 
     /// A newtype forwarding to a shared `CapturingProvider` so a test can hold
