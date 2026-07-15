@@ -41,9 +41,10 @@ async fn main() -> Result<()> {
         .with_target(false)
         .init();
 
-    // --raw on chat/image implies --quiet and --no-color
+    // --raw on chat/image/video implies --quiet and --no-color
     let is_raw = matches!(&cli.command, Commands::Chat(args) if args.raw)
-        || matches!(&cli.command, Commands::Image(args) if args.raw);
+        || matches!(&cli.command, Commands::Image(args) if args.raw)
+        || matches!(&cli.command, Commands::Video(args) if args.raw);
     let quiet = cli.quiet || is_raw;
 
     if cli.no_color || is_raw {
@@ -73,6 +74,7 @@ async fn main() -> Result<()> {
             std::process::exit(code as i32);
         }
         Commands::Image(args) => commands::image::run(args, quiet).await,
+        Commands::Video(args) => commands::video::run(args, quiet).await,
         Commands::Embed(args) => commands::embed::run(args, quiet).await,
         Commands::Ai { command } => commands::ai::run(command).await,
         Commands::Completion(args) => commands::completion::run(args),
@@ -94,7 +96,7 @@ async fn main() -> Result<()> {
                     let mut config = ailloy::config::Config::load_global()?;
                     ailloy::config_tui::run_interactive_config(
                         &mut config,
-                        &["chat", "image", "embedding"],
+                        &["chat", "image", "video", "embedding"],
                     )
                     .await?;
                     Ok(())

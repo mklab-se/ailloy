@@ -4,8 +4,8 @@
 
 ailloy is a vendor-flexible AI integration library and CLI. It provides a
 unified interface to multiple AI providers for chat, embeddings, and image
-generation, with a node-based configuration system that makes switching
-providers trivial.
+and video generation, with a node-based configuration system that makes
+switching providers trivial.
 
 ## CLI Command Reference
 
@@ -26,7 +26,7 @@ Send a message to the configured AI provider.
 | `--temperature <F>` | Temperature (0.0-2.0) |
 | `--json` | Force the response to be a single JSON object (script-friendly) |
 | `--schema <FILE>` | Force the response to match a JSON Schema file (implies `--json`) |
-| `-o, --output <FILE>` | Save response to file (image extensions trigger image gen) |
+| `-o, --output <FILE>` | Save response to file (image extensions trigger image gen, `.mp4` triggers video gen) |
 | `-i, --interactive` | Interactive conversation mode |
 | `--raw` | Output only raw model response |
 
@@ -59,6 +59,38 @@ Generate an image from a text description.
 | `--raw` | No banner, no metadata |
 
 With `--variants`, results are written as `name.png`, `name-2.png`, `name-3.png`, ...
+
+### Video
+
+```
+ailloy video [MESSAGE] [OPTIONS]
+```
+
+Generate a video from a text description. Requires a node with the `video`
+capability -- currently only Azure OpenAI and Microsoft Foundry nodes with a
+Sora deployment support this.
+
+| Flag | Description |
+|------|-------------|
+| `-n, --node <ID>` | Node to use for video generation |
+| `-o, --output <FILE>` | Output file path (default: `ailloy-video-<timestamp>.mp4`) |
+| `--size <WxH>` | Video size (e.g. 1280x720) |
+| `--seconds <1-20>` | Clip duration in seconds |
+| `--variants <1-5>` | Number of video variants to generate |
+| `--raw` | Print only the output path(s), no banner or metadata |
+
+Video generation is asynchronous: the CLI creates a job, polls until it
+completes (or fails), and prints a status line each time the job status
+changes (queued -> preprocessing -> running/processing -> succeeded). With
+`--variants`, results are written as `name.mp4`, `name-2.mp4`, `name-3.mp4`, ...
+
+```bash
+ailloy video "A drone shot over a coastal cliff at sunrise"
+ailloy video "Logo animation" -o logo.mp4 --size 1280x720 --seconds 8
+```
+
+Chat's `-o` routing also recognizes `.mp4` and delegates to video generation
+with default options: `ailloy "A cat playing piano" -o cat.mp4`.
 
 ### Embed
 
@@ -141,19 +173,20 @@ ailloy ai skill --reference   # Output this reference
 
 ## Provider Types
 
-| Provider | Chat | Stream | Embed | Image | Auth |
-|----------|------|--------|-------|-------|------|
-| `openai` | yes | yes | yes | yes | API key, keychain, or env (`OPENAI_API_KEY`) |
-| `anthropic` | yes | yes | no | no | API key, keychain, or env (`ANTHROPIC_API_KEY`) |
-| `azure-openai` | yes | yes | yes | yes | API key, keychain, Azure CLI, or env |
-| `microsoft-foundry` | yes | yes | yes | no | API key, keychain, or Azure CLI |
-| `vertex-ai` | yes | yes | yes | yes | gcloud CLI |
-| `ollama` | yes | yes | yes | no | None (local) |
-| `local-agent` | yes | yes | no | no | None (local binary: claude, codex, copilot) |
+| Provider | Chat | Stream | Embed | Image | Video | Auth |
+|----------|------|--------|-------|-------|-------|------|
+| `openai` | yes | yes | yes | yes | no | API key, keychain, or env (`OPENAI_API_KEY`) |
+| `anthropic` | yes | yes | no | no | no | API key, keychain, or env (`ANTHROPIC_API_KEY`) |
+| `azure-openai` | yes | yes | yes | yes | yes (Sora deployment) | API key, keychain, Azure CLI, or env |
+| `microsoft-foundry` | yes | yes | yes | no | yes (Sora deployment) | API key, keychain, or Azure CLI |
+| `vertex-ai` | yes | yes | yes | yes | no | gcloud CLI |
+| `ollama` | yes | yes | yes | no | no | None (local) |
+| `local-agent` | yes | yes | no | no | no | None (local binary: claude, codex, copilot) |
 
 Azure OpenAI and Microsoft Foundry default to the unified `/openai/v1/`
 endpoint surface (model field = deployment name). Set `api_version` on the
-node to use the legacy dated endpoints instead.
+node to use the legacy dated endpoints instead. Video generation is only
+available on Azure OpenAI and Microsoft Foundry nodes with a Sora deployment.
 
 ## Configuration
 

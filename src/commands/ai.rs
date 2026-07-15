@@ -8,7 +8,7 @@ use crate::cli::{AiCommands, AiConfigCommands, NodeCommands};
 
 pub async fn run(command: Option<AiCommands>) -> Result<()> {
     match command {
-        None => config_tui::print_ai_status("ailloy", &["chat", "image"]),
+        None => config_tui::print_ai_status("ailloy", &["chat", "image", "video"]),
         Some(AiCommands::Config { command }) => run_config(command).await,
         Some(AiCommands::Test { message, all }) => {
             if all {
@@ -31,8 +31,11 @@ async fn run_config(command: Option<AiConfigCommands>) -> Result<()> {
     match command {
         None => {
             let mut config = Config::load_global()?;
-            config_tui::run_interactive_config(&mut config, &["chat", "image", "embedding"])
-                .await?;
+            config_tui::run_interactive_config(
+                &mut config,
+                &["chat", "image", "video", "embedding"],
+            )
+            .await?;
             Ok(())
         }
         Some(AiConfigCommands::AddNode) => {

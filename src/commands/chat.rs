@@ -7,7 +7,7 @@ use futures_util::StreamExt;
 
 use ailloy::client::create_provider_from_node;
 use ailloy::config::Config;
-use ailloy::types::{ChatOptions, ImageOptions, Message, StreamEvent};
+use ailloy::types::{ChatOptions, ImageOptions, Message, StreamEvent, VideoOptions};
 
 use super::util::{Spinner, ThinkFilter, file_hyperlink, strip_think_blocks};
 use crate::cli::ChatArgs;
@@ -16,6 +16,30 @@ const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp"];
 
 const SVG_SYSTEM_PROMPT: &str =
     "Generate valid SVG markup. Output only the raw SVG code with no explanation or markdown.";
+
+/// What kind of generation a chat `-o <path>` output extension routes to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputKind {
+    Image,
+    Svg,
+    Video,
+    Text,
+}
+
+/// Classify an output path's extension for `-o` routing.
+fn output_kind(path: &str) -> OutputKind {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase());
+
+    match ext.as_deref() {
+        Some(e) if IMAGE_EXTENSIONS.contains(&e) => OutputKind::Image,
+        Some("svg") => OutputKind::Svg,
+        Some("mp4") => OutputKind::Video,
+        _ => OutputKind::Text,
+    }
+}
 
 /// Resolve the node to use from args and config.
 fn resolve_node_id(args: &ChatArgs, config: &Config, task: &str) -> Result<String> {
@@ -66,20 +90,20 @@ pub async fn run(args: ChatArgs, quiet: bool) -> Result<()> {
         "No message provided. Use 'ailloy \"message\"' or pipe via stdin, or use -i for interactive mode.",
     )?;
 
-    // Determine if this is an image generation request
+    // Determine if this is an image/video/SVG generation request based on
+    // the -o extension.
     if let Some(ref output) = args.output {
-        let ext = Path::new(output)
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase());
-
-        if let Some(ref ext) = ext {
-            if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+        match output_kind(output) {
+            OutputKind::Image => {
                 return run_image_generation(&args, &config, &message, output, quiet).await;
             }
-            if ext == "svg" {
+            OutputKind::Svg => {
                 return run_svg_generation(&args, &config, &message, output, quiet).await;
             }
+            OutputKind::Video => {
+                return run_video_generation(&args, &config, &message, output, quiet).await;
+            }
+            OutputKind::Text => {}
         }
     }
 
@@ -223,6 +247,61 @@ async fn run_image_generation(
         if let Some(revised) = &image.revised_prompt {
             eprintln!("{} {}", "Revised prompt:".dimmed(), revised.dimmed());
         }
+    }
+
+    Ok(())
+}
+
+async fn run_video_generation(
+    args: &ChatArgs,
+    config: &Config,
+    prompt: &str,
+    output: &str,
+    quiet: bool,
+) -> Result<()> {
+    let node_id = resolve_node_id(args, config, "video")
+        .or_else(|_| resolve_node_id(args, config, "chat"))?;
+    let (_, node) = config.get_node(&node_id).unwrap();
+    let provider = create_provider_from_node(&node_id, node)?;
+
+    if !quiet {
+        eprintln!(
+            "{} {} (video generation)",
+            "Using:".dimmed(),
+            provider.name().dimmed()
+        );
+    }
+
+    let options = VideoOptions::default();
+
+    let videos = if quiet {
+        provider
+            .generate_video(prompt, Some(&options), None)
+            .await?
+    } else {
+        let spinner = Spinner::start("Generating video...");
+        let result = provider.generate_video(prompt, Some(&options), None).await;
+        spinner.stop();
+        result?
+    };
+
+    let video = videos
+        .into_iter()
+        .next()
+        .context("Provider returned no videos")?;
+
+    std::fs::write(output, &video.data)
+        .with_context(|| format!("Failed to write video to: {}", output))?;
+
+    if !quiet {
+        eprintln!(
+            "{} {} ({}x{}, {}s)",
+            "Saved to:".dimmed(),
+            file_hyperlink(output),
+            video.width,
+            video.height,
+            video.duration_seconds,
+        );
     }
 
     Ok(())
@@ -532,5 +611,36 @@ mod tests {
         let mut filter = ThinkFilter::new();
         filter.feed("<think>unclosed");
         assert_eq!(filter.flush(), "");
+    }
+
+    // --- Task 2.4: -o extension routing ---
+
+    #[test]
+    fn test_output_kind_image_extensions() {
+        assert_eq!(output_kind("out.png"), OutputKind::Image);
+        assert_eq!(output_kind("out.jpg"), OutputKind::Image);
+        assert_eq!(output_kind("out.jpeg"), OutputKind::Image);
+        assert_eq!(output_kind("out.webp"), OutputKind::Image);
+        assert_eq!(output_kind("OUT.PNG"), OutputKind::Image);
+    }
+
+    #[test]
+    fn test_output_kind_svg() {
+        assert_eq!(output_kind("out.svg"), OutputKind::Svg);
+        assert_eq!(output_kind("out.SVG"), OutputKind::Svg);
+    }
+
+    #[test]
+    fn test_output_kind_video() {
+        assert_eq!(output_kind("out.mp4"), OutputKind::Video);
+        assert_eq!(output_kind("out.MP4"), OutputKind::Video);
+        assert_eq!(output_kind("dir/clip.mp4"), OutputKind::Video);
+    }
+
+    #[test]
+    fn test_output_kind_text_fallback() {
+        assert_eq!(output_kind("out.txt"), OutputKind::Text);
+        assert_eq!(output_kind("out"), OutputKind::Text);
+        assert_eq!(output_kind("out.json"), OutputKind::Text);
     }
 }

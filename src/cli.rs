@@ -31,6 +31,9 @@ pub enum Commands {
     /// Generate an image from a text description
     Image(ImageArgs),
 
+    /// Generate a video from a text description
+    Video(VideoArgs),
+
     /// Generate embeddings from text
     Embed(EmbedArgs),
 
@@ -348,6 +351,40 @@ pub struct ImageArgs {
 }
 
 // ---------------------------------------------------------------------------
+// Video args
+// ---------------------------------------------------------------------------
+
+#[derive(clap::Args, Default)]
+pub struct VideoArgs {
+    /// Video description / prompt
+    pub message: Option<String>,
+
+    /// Node to use for video generation (overrides default)
+    #[arg(short, long)]
+    pub node: Option<String>,
+
+    /// Output file path (auto-generated if omitted)
+    #[arg(short, long)]
+    pub output: Option<String>,
+
+    /// Video size (e.g. 1280x720)
+    #[arg(long)]
+    pub size: Option<String>,
+
+    /// Clip duration in seconds, 1-20
+    #[arg(long)]
+    pub seconds: Option<u32>,
+
+    /// Number of video variants to generate, 1-5
+    #[arg(long)]
+    pub variants: Option<u8>,
+
+    /// Raw output (no banner, no metadata)
+    #[arg(long)]
+    pub raw: bool,
+}
+
+// ---------------------------------------------------------------------------
 // Embed args
 // ---------------------------------------------------------------------------
 
@@ -457,6 +494,7 @@ pub struct CompletionArgs {
 pub const KNOWN_SUBCOMMANDS: &[&str] = &[
     "chat",
     "image",
+    "video",
     "embed",
     "eval",
     "ai",
