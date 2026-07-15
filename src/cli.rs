@@ -270,6 +270,10 @@ pub struct ChatArgs {
     /// Output only the raw model response (no newline, no metadata, no color)
     #[arg(long)]
     pub raw: bool,
+
+    /// Attach a file (image, pdf, or text) — repeatable
+    #[arg(long = "attach", value_name = "FILE")]
+    pub attach: Vec<String>,
 }
 
 impl ChatArgs {

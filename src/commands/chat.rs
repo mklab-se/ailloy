@@ -41,6 +41,17 @@ fn output_kind(path: &str) -> OutputKind {
     }
 }
 
+/// Build a user [`Message`], attaching files (if any) via
+/// [`Message::user_with_attachments`]. With an empty `attach` list this is
+/// equivalent to `Message::user(text)` (plain `Text` content).
+fn user_message(text: &str, attach: &[String]) -> Result<Message> {
+    if attach.is_empty() {
+        return Ok(Message::user(text));
+    }
+    let paths: Vec<std::path::PathBuf> = attach.iter().map(std::path::PathBuf::from).collect();
+    Message::user_with_attachments(text, &paths)
+}
+
 /// Resolve the node to use from args and config.
 fn resolve_node_id(args: &ChatArgs, config: &Config, task: &str) -> Result<String> {
     if let Some(ref node_ref) = args.effective_node() {
@@ -116,7 +127,7 @@ pub async fn run(args: ChatArgs, quiet: bool) -> Result<()> {
     if let Some(system) = &args.system {
         messages.push(Message::system(system));
     }
-    messages.push(Message::user(&message));
+    messages.push(user_message(&message, &args.attach)?);
 
     let options = build_chat_options(&args)?;
 
@@ -379,9 +390,10 @@ async fn run_interactive(
 
     let chat_options = build_chat_options(&args)?;
 
-    // Generate greeting or handle initial message
+    // Generate greeting or handle initial message. Attachments (if any) apply
+    // only to this first user message.
     let greeting_msg = initial_message.unwrap_or_else(|| "Say hi briefly.".to_string());
-    history.push(Message::user(&greeting_msg));
+    history.push(user_message(&greeting_msg, &args.attach)?);
 
     eprintln!();
     {
@@ -547,6 +559,37 @@ fn build_chat_options(args: &ChatArgs) -> Result<Option<ChatOptions>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- Task 3.3: --attach plumbing ---
+
+    #[test]
+    fn test_user_message_no_attach_is_plain_text() {
+        let msg = user_message("hello", &[]).unwrap();
+        assert_eq!(msg.content.as_text(), Some("hello"));
+        assert!(!msg.content.has_attachments());
+    }
+
+    #[test]
+    fn test_user_message_with_attach_builds_parts() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("pic.png");
+        std::fs::write(&png, [0x89, b'P', b'N', b'G', 1, 2, 3]).unwrap();
+
+        let msg = user_message("look at this", &[png.to_string_lossy().into_owned()]).unwrap();
+        assert!(msg.content.has_attachments());
+        let ailloy::types::MessageContent::Parts(parts) = &msg.content else {
+            panic!("expected Parts");
+        };
+        assert_eq!(parts.len(), 2);
+    }
+
+    #[test]
+    fn test_user_message_missing_file_errors() {
+        let err = user_message("hi", &["/nonexistent/definitely/missing.png".to_string()])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Failed to read attachment"), "err: {err}");
+    }
 
     #[test]
     fn test_strip_think_blocks_simple() {

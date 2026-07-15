@@ -29,8 +29,12 @@ Send a message to the configured AI provider.
 | `-o, --output <FILE>` | Save response to file (image extensions trigger image gen, `.mp4` triggers video gen) |
 | `-i, --interactive` | Interactive conversation mode |
 | `--raw` | Output only raw model response |
+| `--attach <FILE>` | Attach a file (image, pdf, or text) — repeatable |
 
 Reads from stdin when piped. Running `ailloy "message"` is shorthand for `ailloy chat "message"`.
+`--attach` accepts images (png, jpg, jpeg, gif, webp), pdf, and text files (txt, md, csv, json,
+yaml, yml, xml, html); the media type is inferred from the extension. In `-i`/`--interactive`
+mode, `--attach` files are attached to the first user message only.
 
 ### Image
 
