@@ -11,8 +11,8 @@ use tracing::debug;
 
 use crate::client::Provider;
 use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageFormat, ImageOptions,
-    ImageResponse, Message, Role, StreamEvent, Usage,
+    ChatOptions, ChatResponse, ChatStream, ContentPart, EmbedOptions, EmbedResponse, ImageFormat,
+    ImageOptions, ImageResponse, Message, MessageContent, Role, StreamEvent, Usage,
 };
 
 /// Client for Google Vertex AI (Gemini models, Imagen).
@@ -217,6 +217,45 @@ impl VertexAiClient {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
+    /// Map a message's content to Gemini parts: text parts become
+    /// `{text}` parts; image/file parts become `{inlineData: {mimeType, data}}`
+    /// parts (Gemini accepts `application/pdf` and other documents inline).
+    fn content_to_parts(content: &MessageContent) -> Vec<GeminiPart> {
+        use base64::engine::general_purpose::STANDARD;
+
+        match content {
+            MessageContent::Text(s) => vec![GeminiPart {
+                text: Some(s.clone()),
+                inline_data: None,
+            }],
+            MessageContent::Parts(parts) => parts
+                .iter()
+                .map(|p| match p {
+                    ContentPart::Text { text } => GeminiPart {
+                        text: Some(text.clone()),
+                        inline_data: None,
+                    },
+                    ContentPart::Image { data, media_type } => GeminiPart {
+                        text: None,
+                        inline_data: Some(InlineData {
+                            mime_type: media_type.clone(),
+                            data: STANDARD.encode(data),
+                        }),
+                    },
+                    ContentPart::File {
+                        data, media_type, ..
+                    } => GeminiPart {
+                        text: None,
+                        inline_data: Some(InlineData {
+                            mime_type: media_type.clone(),
+                            data: STANDARD.encode(data),
+                        }),
+                    },
+                })
+                .collect(),
+        }
+    }
+
     fn convert_messages(messages: &[Message]) -> (Option<GeminiContent>, Vec<GeminiContent>) {
         let mut system = None;
         let mut contents = Vec::new();
@@ -224,10 +263,12 @@ impl VertexAiClient {
         for msg in messages {
             match msg.role {
                 Role::System => {
+                    // System instructions are text-only by design; attachments
+                    // belong on user turns, so flattening to text is correct here.
                     system = Some(GeminiContent {
                         role: "user".to_string(),
                         parts: vec![GeminiPart {
-                            text: Some(msg.content.clone()),
+                            text: Some(msg.content.text()),
                             inline_data: None,
                         }],
                     });
@@ -235,19 +276,13 @@ impl VertexAiClient {
                 Role::User => {
                     contents.push(GeminiContent {
                         role: "user".to_string(),
-                        parts: vec![GeminiPart {
-                            text: Some(msg.content.clone()),
-                            inline_data: None,
-                        }],
+                        parts: Self::content_to_parts(&msg.content),
                     });
                 }
                 Role::Assistant => {
                     contents.push(GeminiContent {
                         role: "model".to_string(),
-                        parts: vec![GeminiPart {
-                            text: Some(msg.content.clone()),
-                            inline_data: None,
-                        }],
+                        parts: Self::content_to_parts(&msg.content),
                     });
                 }
             }
@@ -475,14 +510,14 @@ impl Provider for VertexAiClient {
         Ok(Box::pin(stream))
     }
 
-    async fn generate_image(
+    async fn generate_images(
         &self,
         prompt: &str,
         _options: Option<&ImageOptions>,
-    ) -> Result<ImageResponse> {
+    ) -> Result<Vec<ImageResponse>> {
         let token = Self::get_access_token().await?;
 
-        if self.is_imagen_model() {
+        let result: Result<ImageResponse> = if self.is_imagen_model() {
             // Imagen endpoint
             let url = format!("{}:predict", self.base_url());
             debug!(url = %url, model = %self.model, "Sending image generation request to Vertex AI (Imagen)");
@@ -542,6 +577,7 @@ impl Provider for VertexAiClient {
                 height,
                 format,
                 revised_prompt: None,
+                usage: None,
             })
         } else {
             // Gemini with image generation (Nano Banana style)
@@ -614,8 +650,12 @@ impl Provider for VertexAiClient {
                 height,
                 format,
                 revised_prompt: None,
+                usage: None,
             })
-        }
+        };
+        let response = result?;
+
+        Ok(vec![response])
     }
 
     async fn embed(&self, texts: &[&str], options: Option<&EmbedOptions>) -> Result<EmbedResponse> {
@@ -684,5 +724,57 @@ mod tests {
             response.predictions[0].embeddings.values,
             vec![0.1, 0.2, 0.3]
         );
+    }
+
+    #[test]
+    fn convert_messages_text_only_unchanged() {
+        let (system, contents) = VertexAiClient::convert_messages(&[
+            Message::system("be brief"),
+            Message::user("hello"),
+        ]);
+        let system = system.unwrap();
+        assert_eq!(system.parts[0].text.as_deref(), Some("be brief"));
+        assert!(system.parts[0].inline_data.is_none());
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0].role, "user");
+        assert_eq!(contents[0].parts.len(), 1);
+        assert_eq!(contents[0].parts[0].text.as_deref(), Some("hello"));
+        assert!(contents[0].parts[0].inline_data.is_none());
+    }
+
+    #[test]
+    fn convert_messages_maps_attachments_to_inline_data() {
+        let content = MessageContent::from(vec![
+            ContentPart::Text {
+                text: "what is this".to_string(),
+            },
+            ContentPart::Image {
+                data: vec![0xDE, 0xAD, 0xBE, 0xEF],
+                media_type: "image/png".to_string(),
+            },
+            ContentPart::File {
+                data: b"hi".to_vec(),
+                media_type: "application/pdf".to_string(),
+                filename: "doc.pdf".to_string(),
+            },
+        ]);
+        let (_, contents) = VertexAiClient::convert_messages(&[Message::user(content)]);
+        let parts = &contents[0].parts;
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0].text.as_deref(), Some("what is this"));
+
+        let img = parts[1].inline_data.as_ref().unwrap();
+        assert_eq!(img.mime_type, "image/png");
+        assert_eq!(img.data, "3q2+7w==");
+        assert!(parts[1].text.is_none());
+
+        let pdf = parts[2].inline_data.as_ref().unwrap();
+        assert_eq!(pdf.mime_type, "application/pdf");
+        assert_eq!(pdf.data, "aGk=");
+
+        // Round-trips to the documented `inlineData` wire shape.
+        let json = serde_json::to_value(&contents[0]).unwrap();
+        assert_eq!(json["parts"][1]["inlineData"]["mimeType"], "image/png");
+        assert_eq!(json["parts"][1]["inlineData"]["data"], "3q2+7w==");
     }
 }

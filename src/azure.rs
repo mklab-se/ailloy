@@ -4,16 +4,19 @@ use std::process::Stdio;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use base64::Engine;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::client::Provider;
-use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageFormat, ImageOptions,
-    ImageResponse, Message, StreamEvent, Usage,
+use crate::openai_images::{
+    ImageFlavor, build_edits_form, build_generations_body, parse_images_response, wants_edits,
 };
+use crate::types::{
+    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageOptions,
+    ImageResponse, Message, StreamEvent, Usage, VideoJob, VideoOptions, VideoResponse,
+};
+use crate::video_jobs::VideoJobsApi;
 
 /// Authentication method for Azure OpenAI.
 #[derive(Debug, Clone)]
@@ -41,7 +44,10 @@ pub struct AzureOpenAiClient {
 struct ChatRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<&'a str>,
-    messages: &'a [Message],
+    /// OpenAI Chat Completions message array, built via
+    /// [`crate::types::to_openai_wire`]; identical body shape on the v1 and
+    /// dated surfaces.
+    messages: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -113,31 +119,6 @@ struct StreamDelta {
     content: Option<String>,
 }
 
-// Image generation types
-#[derive(Serialize)]
-struct ImageGenRequest<'a> {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    model: Option<&'a str>,
-    prompt: &'a str,
-    n: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    size: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    quality: Option<&'a str>,
-    response_format: &'a str,
-}
-
-#[derive(Deserialize)]
-struct ImageGenResponse {
-    data: Vec<ImageData>,
-}
-
-#[derive(Deserialize)]
-struct ImageData {
-    b64_json: Option<String>,
-    revised_prompt: Option<String>,
-}
-
 // Embedding types
 #[derive(Serialize)]
 struct EmbedRequest<'a> {
@@ -164,6 +145,20 @@ struct EmbedData {
 struct EmbedApiUsage {
     prompt_tokens: u32,
     total_tokens: u32,
+}
+
+/// Pick the image request shape for a deployment/model name.
+///
+/// Azure/Foundry only ever exposes DALL·E or gpt-image style deployments;
+/// anything not explicitly named `dall-e*` is treated as a gpt-image
+/// deployment (including custom deployment names that don't echo the
+/// underlying model).
+fn flavor_for(name: &str) -> ImageFlavor {
+    if name.starts_with("dall-e") {
+        ImageFlavor::DallE
+    } else {
+        ImageFlavor::AzureGptImage
+    }
 }
 
 impl AzureOpenAiClient {
@@ -230,6 +225,10 @@ impl AzureOpenAiClient {
 
     fn image_url(&self) -> String {
         self.url_for("images/generations")
+    }
+
+    fn edits_url(&self) -> String {
+        self.url_for("images/edits")
     }
 
     fn embed_url(&self) -> String {
@@ -300,6 +299,17 @@ impl AzureOpenAiClient {
             }
         }
     }
+
+    /// Build a [`VideoJobsApi`] scoped to this client's endpoint and
+    /// api-version, using the given auth header.
+    fn video_api(&self, header: (&'static str, String)) -> VideoJobsApi<'_> {
+        VideoJobsApi {
+            client: &self.client,
+            base: self.base_url(),
+            api_version: self.api_version.as_deref(),
+            header,
+        }
+    }
 }
 
 #[async_trait]
@@ -318,11 +328,12 @@ impl Provider for AzureOpenAiClient {
 
         let (header_name, header_value) = self.get_auth_header().await?;
 
+        let wire_messages = crate::types::to_openai_wire(messages);
         let mut temperature = options.and_then(|o| o.temperature);
         let response = loop {
             let request = ChatRequest {
                 model: self.body_model(),
-                messages,
+                messages: wire_messages.clone(),
                 max_completion_tokens: options.and_then(|o| o.max_tokens),
                 temperature,
                 stream: false,
@@ -390,7 +401,7 @@ impl Provider for AzureOpenAiClient {
 
         let request = ChatRequest {
             model: self.body_model(),
-            messages,
+            messages: crate::types::to_openai_wire(messages),
             max_completion_tokens: options.and_then(|o| o.max_tokens),
             temperature: options.and_then(|o| o.temperature),
             stream: true,
@@ -508,37 +519,42 @@ impl Provider for AzureOpenAiClient {
         Ok(Box::pin(stream))
     }
 
-    async fn generate_image(
+    async fn generate_images(
         &self,
         prompt: &str,
         options: Option<&ImageOptions>,
-    ) -> Result<ImageResponse> {
-        let url = self.image_url();
-        debug!(url = %url, "Sending image generation request to Azure OpenAI");
-
+    ) -> Result<Vec<ImageResponse>> {
         let (header_name, header_value) = self.get_auth_header().await?;
+        let flavor = flavor_for(&self.deployment);
 
-        let size = options
-            .and_then(|o| o.size)
-            .map(|(w, h)| format!("{}x{}", w, h));
+        let response = if wants_edits(options) {
+            // `wants_edits` only returns true when `options` is `Some` with
+            // non-empty `reference_images`.
+            let opts = options.expect("wants_edits(true) implies options is Some");
+            let url = self.edits_url();
+            debug!(url = %url, "Sending image edit request to Azure OpenAI");
 
-        let request = ImageGenRequest {
-            model: self.body_model(),
-            prompt,
-            n: 1,
-            size,
-            quality: options.and_then(|o| o.quality.as_deref()),
-            response_format: "b64_json",
+            let form = build_edits_form(self.body_model(), prompt, opts).await?;
+            self.client
+                .post(&url)
+                .header(header_name, &header_value)
+                .multipart(form)
+                .send()
+                .await
+                .context("Failed to send image edit request to Azure OpenAI")?
+        } else {
+            let url = self.image_url();
+            debug!(url = %url, "Sending image generation request to Azure OpenAI");
+
+            let body = build_generations_body(self.body_model(), prompt, options, flavor)?;
+            self.client
+                .post(&url)
+                .header(header_name, &header_value)
+                .json(&body)
+                .send()
+                .await
+                .context("Failed to send image generation request to Azure OpenAI")?
         };
-
-        let response = self
-            .client
-            .post(&url)
-            .header(header_name, &header_value)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send image generation request to Azure OpenAI")?;
 
         let status = response.status();
         if !status.is_success() {
@@ -546,36 +562,12 @@ impl Provider for AzureOpenAiClient {
             anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
         }
 
-        let api_response: ImageGenResponse = response
-            .json()
+        let body = response
+            .text()
             .await
-            .context("Failed to parse Azure image generation response")?;
+            .context("Failed to read Azure OpenAI image response")?;
 
-        let image_data = api_response
-            .data
-            .first()
-            .context("No image data in response")?;
-
-        let b64 = image_data
-            .b64_json
-            .as_ref()
-            .context("No base64 image data in response")?;
-
-        let data = base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .context("Failed to decode base64 image data")?;
-
-        let (width, height) = crate::types::image_dimensions(&data)
-            .or_else(|| options.and_then(|o| o.size))
-            .unwrap_or((1024, 1024));
-
-        Ok(ImageResponse {
-            data,
-            width,
-            height,
-            format: ImageFormat::Png,
-            revised_prompt: image_data.revised_prompt.clone(),
-        })
+        parse_images_response(&body, options.and_then(|o| o.size))
     }
 
     async fn embed(&self, texts: &[&str], options: Option<&EmbedOptions>) -> Result<EmbedResponse> {
@@ -620,6 +612,36 @@ impl Provider for AzureOpenAiClient {
             }),
         })
     }
+
+    async fn create_video_job(
+        &self,
+        prompt: &str,
+        options: Option<&VideoOptions>,
+    ) -> Result<VideoJob> {
+        if let Some(options) = options {
+            options.validate()?;
+        }
+        debug!(deployment = %self.deployment, "Creating video generation job on Azure OpenAI");
+        let header = self.get_auth_header().await?;
+        self.video_api(header)
+            .create(&self.deployment, prompt, options)
+            .await
+    }
+
+    async fn get_video_job(&self, id: &str) -> Result<VideoJob> {
+        let header = self.get_auth_header().await?;
+        self.video_api(header).get(id).await
+    }
+
+    async fn download_video(&self, generation_id: &str) -> Result<VideoResponse> {
+        let header = self.get_auth_header().await?;
+        self.video_api(header).download(generation_id).await
+    }
+
+    async fn delete_video_job(&self, id: &str) -> Result<()> {
+        let header = self.get_auth_header().await?;
+        self.video_api(header).delete(id).await
+    }
 }
 
 #[cfg(test)]
@@ -632,6 +654,53 @@ mod tests {
         let response: EmbedApiResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.data.len(), 1);
         assert_eq!(response.data[0].embedding, vec![0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn chat_request_embeds_wire_messages() {
+        use crate::types::{ContentPart, Message, MessageContent};
+
+        // Text-only regression: content stays a plain string in the body.
+        let text_req = ChatRequest {
+            model: Some("gpt-5-mini"),
+            messages: crate::types::to_openai_wire(&[Message::user("hello")]),
+            max_completion_tokens: None,
+            temperature: None,
+            stream: false,
+            stream_options: None,
+            response_format: None,
+        };
+        let json = serde_json::to_value(&text_req).unwrap();
+        assert_eq!(
+            json["messages"],
+            serde_json::json!([{"role": "user", "content": "hello"}])
+        );
+
+        // Attachment message embeds the typed content array.
+        let content = MessageContent::from(vec![
+            ContentPart::Text {
+                text: "see".to_string(),
+            },
+            ContentPart::Image {
+                data: vec![0xDE, 0xAD, 0xBE, 0xEF],
+                media_type: "image/png".to_string(),
+            },
+        ]);
+        let img_req = ChatRequest {
+            model: Some("gpt-5-mini"),
+            messages: crate::types::to_openai_wire(&[Message::user(content)]),
+            max_completion_tokens: None,
+            temperature: None,
+            stream: false,
+            stream_options: None,
+            response_format: None,
+        };
+        let json = serde_json::to_value(&img_req).unwrap();
+        assert_eq!(json["messages"][0]["content"][1]["type"], "image_url");
+        assert_eq!(
+            json["messages"][0]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,3q2+7w=="
+        );
     }
 }
 
@@ -659,6 +728,10 @@ mod v1_surface_tests {
             "https://r.openai.azure.com/openai/v1/images/generations"
         );
         assert_eq!(
+            c.edits_url(),
+            "https://r.openai.azure.com/openai/v1/images/edits"
+        );
+        assert_eq!(
             c.body_model(),
             Some("gpt-5-mini"),
             "v1 bodies carry the deployment as model"
@@ -677,6 +750,58 @@ mod v1_surface_tests {
             c.chat_url(),
             "https://r.openai.azure.com/openai/deployments/dep/chat/completions?api-version=2024-10-21"
         );
+        assert_eq!(
+            c.edits_url(),
+            "https://r.openai.azure.com/openai/deployments/dep/images/edits?api-version=2024-10-21"
+        );
         assert_eq!(c.body_model(), None, "legacy bodies must not carry model");
+    }
+
+    #[test]
+    fn flavor_for_selects_dalle_for_dalle_deployments() {
+        assert!(matches!(flavor_for("dall-e-3"), ImageFlavor::DallE));
+        assert!(matches!(flavor_for("dall-e-2"), ImageFlavor::DallE));
+    }
+
+    #[test]
+    fn flavor_for_selects_azure_gpt_image_for_everything_else() {
+        assert!(matches!(
+            flavor_for("gpt-image-1"),
+            ImageFlavor::AzureGptImage
+        ));
+        assert!(matches!(
+            flavor_for("my-custom-deployment"),
+            ImageFlavor::AzureGptImage
+        ));
+    }
+
+    #[test]
+    fn video_api_builds_urls_from_client_base_and_api_version() {
+        let c = AzureOpenAiClient::new(
+            "https://r.openai.azure.com",
+            "sora-2-deployment",
+            AzureAuth::AzureCli,
+        );
+        let api = c.video_api(("Authorization", "Bearer test".to_string()));
+        assert_eq!(
+            api.videos_url(),
+            "https://r.openai.azure.com/openai/v1/videos"
+        );
+        assert_eq!(
+            api.video_url("video_1"),
+            "https://r.openai.azure.com/openai/v1/videos/video_1"
+        );
+
+        let c = AzureOpenAiClient::with_api_version(
+            "https://r.openai.azure.com/",
+            "sora-2-deployment",
+            "2025-04-01-preview",
+            AzureAuth::AzureCli,
+        );
+        let api = c.video_api(("Authorization", "Bearer test".to_string()));
+        assert_eq!(
+            api.videos_url(),
+            "https://r.openai.azure.com/openai/v1/videos?api-version=2025-04-01-preview"
+        );
     }
 }

@@ -1,12 +1,18 @@
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 
 use anyhow::{Context, Result};
 use colored::Colorize;
 use futures_util::StreamExt;
 
-use ailloy::client::create_provider_from_node;
+use ailloy::client::{
+    Provider, create_provider_from_node, merge_chat_defaults, merge_image_defaults,
+};
 use ailloy::config::Config;
-use ailloy::types::{ImageOptions, Message, StreamEvent};
+use ailloy::types::{
+    Background, ChatOptions, ImageFormat, ImageOptions, InputFidelity, Message, Moderation,
+    StreamEvent,
+};
 
 use super::util::{Spinner, ThinkFilter, file_hyperlink, strip_think_blocks};
 use crate::cli::ImageArgs;
@@ -54,40 +60,14 @@ async fn run_direct(args: &ImageArgs, config: &Config, prompt: &str, quiet: bool
         );
     }
 
-    let options = build_image_options(args);
-
-    let image = if quiet {
-        provider.generate_image(prompt, Some(&options)).await?
-    } else {
-        let spinner = Spinner::start("Generating image...");
-        let result = provider.generate_image(prompt, Some(&options)).await;
-        spinner.stop();
-        result?
-    };
-
-    let output = args
-        .output
-        .clone()
-        .unwrap_or_else(|| auto_filename(&image.format.to_string()));
-
-    std::fs::write(&output, &image.data)
-        .with_context(|| format!("Failed to write image to: {}", output))?;
-
-    if !quiet {
-        eprintln!(
-            "{} {} ({}x{}, {})",
-            "Saved to:".dimmed(),
-            file_hyperlink(&output),
-            image.width,
-            image.height,
-            image.format
-        );
-        if let Some(revised) = &image.revised_prompt {
-            eprintln!("{} {}", "Revised prompt:".dimmed(), revised.dimmed());
-        }
-    }
-
-    Ok(())
+    generate_and_save(
+        provider.as_ref(),
+        prompt,
+        args,
+        node.node_defaults.as_ref(),
+        quiet,
+    )
+    .await
 }
 
 async fn run_interactive(args: ImageArgs, config: Config, quiet: bool) -> Result<()> {
@@ -100,6 +80,16 @@ async fn run_interactive(args: ImageArgs, config: Config, quiet: bool) -> Result
 
     let (_, chat_node) = config.get_node(&chat_node_id).unwrap();
     let chat_provider = create_provider_from_node(&chat_node_id, chat_node)?;
+
+    // The interview conversation uses the chat node — honor its per-node
+    // chat defaults (e.g. chat.temperature) for every stream below.
+    let interview_options = {
+        let mut opts = ChatOptions::default();
+        if let Some(defaults) = &chat_node.node_defaults {
+            merge_chat_defaults(&mut opts, defaults);
+        }
+        opts
+    };
 
     let version = env!("CARGO_PKG_VERSION");
     eprintln!(
@@ -127,7 +117,9 @@ async fn run_interactive(args: ImageArgs, config: Config, quiet: bool) -> Result
     eprintln!();
     {
         let spinner = Spinner::start("Thinking...");
-        let mut stream = chat_provider.chat_stream(&history, None).await?;
+        let mut stream = chat_provider
+            .chat_stream(&history, Some(&interview_options))
+            .await?;
         spinner.stop();
 
         let mut assembled = String::new();
@@ -221,7 +213,9 @@ async fn run_interactive(args: ImageArgs, config: Config, quiet: bool) -> Result
         history.push(Message::user(input));
 
         // Stream AI response
-        let mut stream = chat_provider.chat_stream(&history, None).await?;
+        let mut stream = chat_provider
+            .chat_stream(&history, Some(&interview_options))
+            .await?;
         let mut assembled = String::new();
         let mut think_filter = ThinkFilter::new();
         while let Some(event) = stream.next().await {
@@ -267,7 +261,9 @@ async fn run_interactive(args: ImageArgs, config: Config, quiet: bool) -> Result
                 ));
 
                 let spinner = Spinner::start("Thinking...");
-                let mut stream = chat_provider.chat_stream(&history, None).await?;
+                let mut stream = chat_provider
+                    .chat_stream(&history, Some(&interview_options))
+                    .await?;
                 spinner.stop();
 
                 let mut followup = String::new();
@@ -325,40 +321,14 @@ async fn generate_image(
         );
     }
 
-    let options = build_image_options(args);
-
-    let image = if quiet {
-        provider.generate_image(prompt, Some(&options)).await?
-    } else {
-        let spinner = Spinner::start("Generating image...");
-        let result = provider.generate_image(prompt, Some(&options)).await;
-        spinner.stop();
-        result?
-    };
-
-    let output = args
-        .output
-        .clone()
-        .unwrap_or_else(|| auto_filename(&image.format.to_string()));
-
-    std::fs::write(&output, &image.data)
-        .with_context(|| format!("Failed to write image to: {}", output))?;
-
-    if !quiet {
-        eprintln!(
-            "{} {} ({}x{}, {})",
-            "Saved to:".dimmed(),
-            file_hyperlink(&output),
-            image.width,
-            image.height,
-            image.format
-        );
-        if let Some(revised) = &image.revised_prompt {
-            eprintln!("{} {}", "Revised prompt:".dimmed(), revised.dimmed());
-        }
-    }
-
-    Ok(())
+    generate_and_save(
+        provider.as_ref(),
+        prompt,
+        args,
+        node.node_defaults.as_ref(),
+        quiet,
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -380,12 +350,155 @@ fn resolve_image_node(node_override: Option<&str>, config: &Config) -> Result<St
     }
 }
 
-fn build_image_options(args: &ImageArgs) -> ImageOptions {
-    ImageOptions {
+/// Generate image(s) with the given provider and prompt, then write each
+/// variant to disk and print metadata (unless `quiet`).
+async fn generate_and_save(
+    provider: &dyn Provider,
+    prompt: &str,
+    args: &ImageArgs,
+    node_defaults: Option<&BTreeMap<String, String>>,
+    quiet: bool,
+) -> Result<()> {
+    let mut options = build_image_options(args)?;
+    // An explicit `-o filename` extension counts as user intent for the output
+    // format. Priority: `--format` flag (already set above) > extension > node
+    // default. Only applies when the user gave a concrete `-o` path; auto-
+    // generated filenames follow the actual response format instead.
+    if options.output_format.is_none() {
+        if let Some(fmt) = args.output.as_deref().and_then(format_from_extension) {
+            options.output_format = Some(fmt);
+        }
+    }
+    // Fill unset fields from per-node defaults; explicit flags already won.
+    if let Some(defaults) = node_defaults {
+        merge_image_defaults(&mut options, defaults);
+    }
+
+    let images = if quiet {
+        provider.generate_images(prompt, Some(&options)).await?
+    } else {
+        let spinner = Spinner::start("Generating image...");
+        let result = provider.generate_images(prompt, Some(&options)).await;
+        spinner.stop();
+        result?
+    };
+
+    if images.is_empty() {
+        anyhow::bail!("Provider returned no images");
+    }
+
+    let base_output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| auto_filename(&images[0].format.to_string()));
+
+    for (i, image) in images.iter().enumerate() {
+        let output = variant_path(&base_output, i);
+        std::fs::write(&output, &image.data)
+            .with_context(|| format!("Failed to write image to: {}", output))?;
+
+        if !quiet {
+            eprintln!(
+                "{} {} ({}x{}, {})",
+                "Saved to:".dimmed(),
+                file_hyperlink(&output),
+                image.width,
+                image.height,
+                image.format
+            );
+            if let Some(revised) = &image.revised_prompt {
+                eprintln!("{} {}", "Revised prompt:".dimmed(), revised.dimmed());
+            }
+        }
+    }
+
+    if !quiet {
+        if let Some(usage) = images.iter().find_map(|img| img.usage.as_ref()) {
+            eprintln!(
+                "{} {} prompt + {} completion = {} total",
+                "Tokens:".dimmed(),
+                usage.prompt_tokens.to_string().dimmed(),
+                usage.completion_tokens.to_string().dimmed(),
+                usage.total_tokens.to_string().dimmed(),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Build [`ImageOptions`] from CLI flags, parsing enum flags via their
+/// `FromStr` impls so invalid values surface actionable errors.
+pub(crate) fn build_image_options(args: &ImageArgs) -> Result<ImageOptions> {
+    let output_format = args
+        .format
+        .as_deref()
+        .map(str::parse::<ImageFormat>)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let background = args
+        .background
+        .as_deref()
+        .map(str::parse::<Background>)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let moderation = args
+        .moderation
+        .as_deref()
+        .map(str::parse::<Moderation>)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let input_fidelity = args
+        .fidelity
+        .as_deref()
+        .map(str::parse::<InputFidelity>)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    let options = ImageOptions {
         size: args.size.as_deref().and_then(parse_size),
         quality: args.quality.clone(),
         style: args.style.clone(),
+        output_format,
+        compression: args.compression,
+        n: args.variants,
+        background,
+        moderation,
+        input_fidelity,
+        reference_images: args
+            .reference
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect(),
+        mask: args.mask.as_ref().map(std::path::PathBuf::from),
+    };
+
+    options.validate()?;
+
+    Ok(options)
+}
+
+/// Compute the output path for the `index`-th image variant (0-based).
+/// `index == 0` returns `path` unchanged; subsequent variants get a
+/// `-2`, `-3`, ... suffix inserted before the last extension (or appended if
+/// there is none).
+pub(crate) fn variant_path(path: &str, index: usize) -> String {
+    if index == 0 {
+        return path.to_string();
     }
+    let suffix = format!("-{}", index + 1);
+
+    let (dir, file_name) = match path.rfind('/') {
+        Some(pos) => (&path[..=pos], &path[pos + 1..]),
+        None => ("", path),
+    };
+
+    let new_file_name = match file_name.rfind('.') {
+        Some(pos) if pos > 0 => format!("{}{}{}", &file_name[..pos], suffix, &file_name[pos..]),
+        _ => format!("{}{}", file_name, suffix),
+    };
+
+    format!("{}{}", dir, new_file_name)
 }
 
 fn parse_size(s: &str) -> Option<(u32, u32)> {
@@ -396,6 +509,20 @@ fn parse_size(s: &str) -> Option<(u32, u32)> {
         }
     }
     None
+}
+
+/// Infer an [`ImageFormat`] from an output path's file extension.
+///
+/// Returns `None` for unknown extensions or paths with no extension. `jpg`
+/// and `jpeg` both map to [`ImageFormat::Jpeg`]. Matching is case-insensitive.
+pub(crate) fn format_from_extension(path: &str) -> Option<ImageFormat> {
+    let (_, ext) = path.rsplit_once('.')?;
+    match ext.to_lowercase().as_str() {
+        "png" => Some(ImageFormat::Png),
+        "jpg" | "jpeg" => Some(ImageFormat::Jpeg),
+        "webp" => Some(ImageFormat::Webp),
+        _ => None,
+    }
 }
 
 fn auto_filename(format_str: &str) -> String {
@@ -508,5 +635,236 @@ mod tests {
     fn test_extract_suggested_prompt_short_quotes() {
         // Short quotes should be ignored
         assert_eq!(extract_suggested_prompt("Use \"vivid\" style"), None);
+    }
+
+    // --- Task 1.7: variant_path ---
+
+    #[test]
+    fn test_variant_path_first_index_unchanged() {
+        assert_eq!(variant_path("out.png", 0), "out.png");
+        assert_eq!(variant_path("a/b.out.png", 0), "a/b.out.png");
+    }
+
+    #[test]
+    fn test_variant_path_suffixes_before_extension() {
+        assert_eq!(variant_path("out.png", 1), "out-2.png");
+        assert_eq!(variant_path("out.png", 2), "out-3.png");
+    }
+
+    #[test]
+    fn test_variant_path_preserves_directory_and_last_extension_only() {
+        assert_eq!(variant_path("a/b.out.png", 1), "a/b.out-2.png");
+    }
+
+    #[test]
+    fn test_variant_path_no_extension_appends_suffix() {
+        assert_eq!(variant_path("noext", 1), "noext-2");
+        assert_eq!(variant_path("dir/sub/noext", 1), "dir/sub/noext-2");
+    }
+
+    // --- Task 1.7: build_image_options ---
+
+    #[test]
+    fn test_build_image_options_defaults() {
+        let args = ImageArgs::default();
+        let opts = build_image_options(&args).unwrap();
+        assert_eq!(opts.size, None);
+        assert_eq!(opts.output_format, None);
+        assert_eq!(opts.compression, None);
+        assert_eq!(opts.n, None);
+        assert_eq!(opts.background, None);
+        assert_eq!(opts.moderation, None);
+        assert_eq!(opts.input_fidelity, None);
+        assert!(opts.reference_images.is_empty());
+        assert_eq!(opts.mask, None);
+    }
+
+    #[test]
+    fn test_build_image_options_maps_all_flags() {
+        let args = ImageArgs {
+            size: Some("1024x1024".to_string()),
+            quality: Some("hd".to_string()),
+            format: Some("webp".to_string()),
+            compression: Some(80),
+            variants: Some(3),
+            background: Some("opaque".to_string()),
+            moderation: Some("low".to_string()),
+            fidelity: Some("high".to_string()),
+            reference: vec!["ref1.png".to_string(), "ref2.png".to_string()],
+            mask: Some("mask.png".to_string()),
+            ..Default::default()
+        };
+        let opts = build_image_options(&args).unwrap();
+        assert_eq!(opts.size, Some((1024, 1024)));
+        assert_eq!(opts.quality.as_deref(), Some("hd"));
+        assert_eq!(opts.output_format, Some(ailloy::types::ImageFormat::Webp));
+        assert_eq!(opts.compression, Some(80));
+        assert_eq!(opts.n, Some(3));
+        assert_eq!(opts.background, Some(ailloy::types::Background::Opaque));
+        assert_eq!(opts.moderation, Some(ailloy::types::Moderation::Low));
+        assert_eq!(
+            opts.input_fidelity,
+            Some(ailloy::types::InputFidelity::High)
+        );
+        assert_eq!(
+            opts.reference_images,
+            vec![
+                std::path::PathBuf::from("ref1.png"),
+                std::path::PathBuf::from("ref2.png"),
+            ]
+        );
+        assert_eq!(opts.mask, Some(std::path::PathBuf::from("mask.png")));
+    }
+
+    #[test]
+    fn test_build_image_options_invalid_format_is_actionable() {
+        let args = ImageArgs {
+            format: Some("bmp".to_string()),
+            ..Default::default()
+        };
+        let err = build_image_options(&args).unwrap_err().to_string();
+        assert!(err.contains("bmp"));
+        assert!(err.contains("png"));
+    }
+
+    #[test]
+    fn test_build_image_options_invalid_background_is_actionable() {
+        let args = ImageArgs {
+            background: Some("invisible".to_string()),
+            ..Default::default()
+        };
+        let err = build_image_options(&args).unwrap_err().to_string();
+        assert!(err.contains("invisible"));
+    }
+
+    // --- Task 6.2: CLI honors per-node default parameters ---
+
+    #[test]
+    fn test_node_defaults_fill_unset_image_options() {
+        // No CLI flags → build_image_options yields all-None, then node
+        // defaults populate the unset fields.
+        let opts_from_flags = build_image_options(&ImageArgs::default()).unwrap();
+        let mut opts = opts_from_flags;
+        let defaults = BTreeMap::from([
+            ("image.format".to_string(), "jpeg".to_string()),
+            ("image.compression".to_string(), "80".to_string()),
+            ("image.quality".to_string(), "low".to_string()),
+        ]);
+        merge_image_defaults(&mut opts, &defaults);
+        assert_eq!(opts.output_format, Some(ImageFormat::Jpeg));
+        assert_eq!(opts.compression, Some(80));
+        assert_eq!(opts.quality.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn test_explicit_image_flags_win_over_node_defaults() {
+        // Explicit flags are already Some; merging node defaults must not
+        // clobber them.
+        let args = ImageArgs {
+            format: Some("webp".to_string()),
+            compression: Some(50),
+            quality: Some("hd".to_string()),
+            ..Default::default()
+        };
+        let mut opts = build_image_options(&args).unwrap();
+        let defaults = BTreeMap::from([
+            ("image.format".to_string(), "jpeg".to_string()),
+            ("image.compression".to_string(), "80".to_string()),
+            ("image.quality".to_string(), "low".to_string()),
+        ]);
+        merge_image_defaults(&mut opts, &defaults);
+        assert_eq!(opts.output_format, Some(ImageFormat::Webp));
+        assert_eq!(opts.compression, Some(50));
+        assert_eq!(opts.quality.as_deref(), Some("hd"));
+    }
+
+    // --- Task 6.2: -o extension drives image output format ---
+
+    #[test]
+    fn test_format_from_extension() {
+        assert_eq!(format_from_extension("frog.png"), Some(ImageFormat::Png));
+        assert_eq!(format_from_extension("frog.jpg"), Some(ImageFormat::Jpeg));
+        assert_eq!(format_from_extension("frog.jpeg"), Some(ImageFormat::Jpeg));
+        assert_eq!(format_from_extension("frog.webp"), Some(ImageFormat::Webp));
+        // Case-insensitive and directory-aware.
+        assert_eq!(
+            format_from_extension("a/b/FROG.PNG"),
+            Some(ImageFormat::Png)
+        );
+        // Unknown extension and no extension both yield None.
+        assert_eq!(format_from_extension("frog.bmp"), None);
+        assert_eq!(format_from_extension("frog"), None);
+        assert_eq!(format_from_extension(""), None);
+    }
+
+    /// Mirror the format-resolution seam in `generate_and_save`:
+    /// `--format` flag > `-o` extension > node default.
+    fn resolve_output_format(
+        args: &ImageArgs,
+        defaults: &BTreeMap<String, String>,
+    ) -> Option<ImageFormat> {
+        let mut opts = build_image_options(args).unwrap();
+        if opts.output_format.is_none() {
+            if let Some(fmt) = args.output.as_deref().and_then(format_from_extension) {
+                opts.output_format = Some(fmt);
+            }
+        }
+        merge_image_defaults(&mut opts, defaults);
+        opts.output_format
+    }
+
+    #[test]
+    fn test_output_format_priority_flag_beats_extension_beats_node_default() {
+        let defaults = BTreeMap::from([("image.format".to_string(), "jpeg".to_string())]);
+
+        // Flag wins over both extension and node default.
+        let args = ImageArgs {
+            format: Some("webp".to_string()),
+            output: Some("frog.png".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_output_format(&args, &defaults),
+            Some(ImageFormat::Webp)
+        );
+
+        // No flag: `-o` extension wins over the node default (jpeg).
+        let args = ImageArgs {
+            output: Some("frog.png".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_output_format(&args, &defaults),
+            Some(ImageFormat::Png)
+        );
+
+        // No flag, no recognizable extension: node default applies.
+        let args = ImageArgs {
+            output: Some("frog.gif".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_output_format(&args, &defaults),
+            Some(ImageFormat::Jpeg)
+        );
+
+        // No output path at all (auto-filename): node default applies.
+        let args = ImageArgs::default();
+        assert_eq!(
+            resolve_output_format(&args, &defaults),
+            Some(ImageFormat::Jpeg)
+        );
+    }
+
+    #[test]
+    fn test_build_image_options_validate_rejects_bad_combo() {
+        // compression without output_format triggers ImageOptions::validate()
+        let args = ImageArgs {
+            compression: Some(50),
+            ..Default::default()
+        };
+        let err = build_image_options(&args).unwrap_err().to_string();
+        assert!(err.contains("compression"));
+        assert!(err.contains("output_format"));
     }
 }

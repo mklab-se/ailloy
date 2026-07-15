@@ -31,6 +31,9 @@ pub enum Commands {
     /// Generate an image from a text description
     Image(ImageArgs),
 
+    /// Generate a video from a text description
+    Video(VideoArgs),
+
     /// Generate embeddings from text
     Embed(EmbedArgs),
 
@@ -267,6 +270,10 @@ pub struct ChatArgs {
     /// Output only the raw model response (no newline, no metadata, no color)
     #[arg(long)]
     pub raw: bool,
+
+    /// Attach a file (image, pdf, or text) — repeatable
+    #[arg(long = "attach", value_name = "FILE")]
+    pub attach: Vec<String>,
 }
 
 impl ChatArgs {
@@ -280,7 +287,7 @@ impl ChatArgs {
 // Image args
 // ---------------------------------------------------------------------------
 
-#[derive(clap::Args)]
+#[derive(clap::Args, Default)]
 pub struct ImageArgs {
     /// Image description / prompt
     pub message: Option<String>,
@@ -308,6 +315,73 @@ pub struct ImageArgs {
     /// Image style (e.g. natural, vivid)
     #[arg(long)]
     pub style: Option<String>,
+
+    /// Output image format (png, jpeg, webp)
+    #[arg(long)]
+    pub format: Option<String>,
+
+    /// Compression level 0-100 (only with --format jpeg or webp)
+    #[arg(long)]
+    pub compression: Option<u8>,
+
+    /// Number of image variants to generate, 1-10
+    #[arg(long)]
+    pub variants: Option<u8>,
+
+    /// Background transparency (transparent, opaque, auto)
+    #[arg(long)]
+    pub background: Option<String>,
+
+    /// Content moderation strictness (auto, low)
+    #[arg(long)]
+    pub moderation: Option<String>,
+
+    /// How closely edits should preserve details from reference images (high, low)
+    #[arg(long)]
+    pub fidelity: Option<String>,
+
+    /// Reference image to edit/compose from (repeatable); using this switches
+    /// to the edits endpoint and drives the generation from these images
+    #[arg(long = "ref", value_name = "FILE")]
+    pub reference: Vec<String>,
+
+    /// Mask image for inpainting (requires at least one --ref image)
+    #[arg(long, value_name = "FILE")]
+    pub mask: Option<String>,
+
+    /// Raw output (no banner, no metadata)
+    #[arg(long)]
+    pub raw: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Video args
+// ---------------------------------------------------------------------------
+
+#[derive(clap::Args, Default)]
+pub struct VideoArgs {
+    /// Video description / prompt
+    pub message: Option<String>,
+
+    /// Node to use for video generation (overrides default)
+    #[arg(short, long)]
+    pub node: Option<String>,
+
+    /// Output file path (auto-generated if omitted)
+    #[arg(short, long)]
+    pub output: Option<String>,
+
+    /// Video size, WxH (e.g. 720x1280 or 1280x720; model-dependent)
+    #[arg(long)]
+    pub size: Option<String>,
+
+    /// Clip duration in seconds (typically 4, 8, or 12 — model-dependent)
+    #[arg(long)]
+    pub seconds: Option<u32>,
+
+    /// Number of video variants (1-5; each is a separate video creation)
+    #[arg(long)]
+    pub variants: Option<u8>,
 
     /// Raw output (no banner, no metadata)
     #[arg(long)]
@@ -424,6 +498,7 @@ pub struct CompletionArgs {
 pub const KNOWN_SUBCOMMANDS: &[&str] = &[
     "chat",
     "image",
+    "video",
     "embed",
     "eval",
     "ai",

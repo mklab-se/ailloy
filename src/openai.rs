@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::client::Provider;
+use crate::openai_images::{
+    ImageFlavor, build_edits_form, build_generations_body, parse_images_response, wants_edits,
+};
 use crate::types::{
     ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageFormat, ImageOptions,
     ImageResponse, Message, StreamEvent, Usage,
@@ -28,7 +31,10 @@ pub struct OpenAiClient {
 #[derive(Serialize)]
 struct ChatRequest<'a> {
     model: &'a str,
-    messages: &'a [Message],
+    /// OpenAI Chat Completions message array, built via
+    /// [`crate::types::to_openai_wire`] (plain-string content for text-only
+    /// messages, typed content blocks for attachments).
+    messages: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -109,16 +115,16 @@ fn is_gpt_image_model(model: &str) -> bool {
     model.starts_with("gpt-image")
 }
 
-// Images API response types
-#[derive(Deserialize)]
-struct ImageGenResponse {
-    data: Vec<ImageData>,
-}
-
-#[derive(Deserialize)]
-struct ImageData {
-    b64_json: Option<String>,
-    revised_prompt: Option<String>,
+/// Pick the image request shape for a dedicated image model.
+///
+/// Only meaningful when `is_dedicated_image_model(name)` is true; any
+/// non-gpt-image dedicated model is treated as DALL·E.
+fn flavor_for(name: &str) -> ImageFlavor {
+    if is_gpt_image_model(name) {
+        ImageFlavor::GptImage
+    } else {
+        ImageFlavor::DallE
+    }
 }
 
 // Responses API response types (for chat models with image_generation tool)
@@ -233,51 +239,52 @@ impl OpenAiClient {
         self.endpoint.trim_end_matches('/').to_string()
     }
 
-    /// Generate an image using the Images API (`/v1/images/generations`).
+    fn images_generations_url(&self) -> String {
+        format!("{}/v1/images/generations", self.base_url())
+    }
+
+    fn images_edits_url(&self) -> String {
+        format!("{}/v1/images/edits", self.base_url())
+    }
+
+    /// Generate one or more images using the Images API
+    /// (`/v1/images/generations` or, with reference images, `/v1/images/edits`).
     /// For dedicated image models: dall-e-*, gpt-image-*.
-    async fn generate_image_via_images_api(
+    async fn generate_images_via_images_api(
         &self,
         prompt: &str,
         options: Option<&ImageOptions>,
-    ) -> Result<ImageResponse> {
-        let url = format!("{}/v1/images/generations", self.base_url());
-        debug!(url = %url, model = %self.model, "Sending image generation request (Images API)");
+    ) -> Result<Vec<ImageResponse>> {
+        let flavor = flavor_for(&self.model);
 
-        let size = options
-            .and_then(|o| o.size)
-            .map(|(w, h)| format!("{}x{}", w, h));
+        let response = if wants_edits(options) {
+            // `wants_edits` only returns true when `options` is `Some` with
+            // non-empty `reference_images`.
+            let opts = options.expect("wants_edits(true) implies options is Some");
+            let url = self.images_edits_url();
+            debug!(url = %url, model = %self.model, "Sending image edit request (Images API)");
 
-        let mut body = serde_json::json!({
-            "model": &self.model,
-            "prompt": prompt,
-            "n": 1,
-        });
-        if let Some(size) = &size {
-            body["size"] = serde_json::json!(size);
-        }
-        if let Some(quality) = options.and_then(|o| o.quality.as_deref()) {
-            body["quality"] = serde_json::json!(quality);
-        }
-
-        if is_gpt_image_model(&self.model) {
-            // gpt-image models: no response_format/style, use output_format instead
-            body["output_format"] = serde_json::json!("png");
+            let form = build_edits_form(Some(&self.model), prompt, opts).await?;
+            self.client
+                .post(&url)
+                .bearer_auth(&self.api_key)
+                .multipart(form)
+                .send()
+                .await
+                .context("Failed to send image edit request")?
         } else {
-            // DALL-E models: use response_format and style
-            body["response_format"] = serde_json::json!("b64_json");
-            if let Some(style) = options.and_then(|o| o.style.as_deref()) {
-                body["style"] = serde_json::json!(style);
-            }
-        }
+            let url = self.images_generations_url();
+            debug!(url = %url, model = %self.model, "Sending image generation request (Images API)");
 
-        let response = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .await
-            .context("Failed to send image generation request")?;
+            let body = build_generations_body(Some(&self.model), prompt, options, flavor)?;
+            self.client
+                .post(&url)
+                .bearer_auth(&self.api_key)
+                .json(&body)
+                .send()
+                .await
+                .context("Failed to send image generation request")?
+        };
 
         let status = response.status();
         if !status.is_success() {
@@ -292,36 +299,12 @@ impl OpenAiClient {
             );
         }
 
-        let api_response: ImageGenResponse = response
-            .json()
+        let body = response
+            .text()
             .await
-            .context("Failed to parse image generation response")?;
+            .context("Failed to read image generation response")?;
 
-        let image_data = api_response
-            .data
-            .first()
-            .context("No image data in response")?;
-
-        let b64 = image_data
-            .b64_json
-            .as_ref()
-            .context("No base64 image data in response")?;
-
-        let data = base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .context("Failed to decode base64 image data")?;
-
-        let (width, height) = crate::types::image_dimensions(&data)
-            .or_else(|| options.and_then(|o| o.size))
-            .unwrap_or((1024, 1024));
-
-        Ok(ImageResponse {
-            data,
-            width,
-            height,
-            format: ImageFormat::Png,
-            revised_prompt: image_data.revised_prompt.clone(),
-        })
+        parse_images_response(&body, options.and_then(|o| o.size))
     }
 
     /// Generate an image using the Responses API (`/v1/responses`).
@@ -404,6 +387,7 @@ impl OpenAiClient {
             height,
             format: ImageFormat::Png,
             revised_prompt,
+            usage: None,
         })
     }
 }
@@ -422,11 +406,12 @@ impl Provider for OpenAiClient {
         let url = format!("{}/v1/chat/completions", self.base_url());
         debug!(url = %url, model = %self.model, "Sending chat request");
 
+        let wire_messages = crate::types::to_openai_wire(messages);
         let mut temperature = options.and_then(|o| o.temperature);
         let response = loop {
             let request = ChatRequest {
                 model: &self.model,
-                messages,
+                messages: wire_messages.clone(),
                 max_completion_tokens: options.and_then(|o| o.max_tokens),
                 temperature,
                 stream: false,
@@ -495,7 +480,7 @@ impl Provider for OpenAiClient {
 
         let request = ChatRequest {
             model: &self.model,
-            messages,
+            messages: crate::types::to_openai_wire(messages),
             max_completion_tokens: options.and_then(|o| o.max_tokens),
             temperature: options.and_then(|o| o.temperature),
             stream: true,
@@ -618,15 +603,29 @@ impl Provider for OpenAiClient {
         Ok(Box::pin(stream))
     }
 
-    async fn generate_image(
+    async fn generate_images(
         &self,
         prompt: &str,
         options: Option<&ImageOptions>,
-    ) -> Result<ImageResponse> {
+    ) -> Result<Vec<ImageResponse>> {
         if is_dedicated_image_model(&self.model) {
-            self.generate_image_via_images_api(prompt, options).await
+            self.generate_images_via_images_api(prompt, options).await
         } else {
-            self.generate_image_via_responses_api(prompt, options).await
+            if wants_edits(options) {
+                anyhow::bail!(
+                    "reference images require a dedicated image model (gpt-image-*); '{}' is a chat model. Configure a gpt-image-* node for image edits.",
+                    self.model
+                );
+            }
+            if options.and_then(|o| o.n).is_some_and(|n| n > 1) {
+                anyhow::bail!(
+                    "use a dedicated image model (gpt-image-*) for multiple variants — chat models return a single image."
+                );
+            }
+            let image = self
+                .generate_image_via_responses_api(prompt, options)
+                .await?;
+            Ok(vec![image])
         }
     }
 
@@ -710,5 +709,72 @@ mod tests {
         assert_eq!(response.data.len(), 2);
         assert_eq!(response.data[0].embedding, vec![0.1, 0.2, 0.3]);
         assert_eq!(response.model, "text-embedding-3-small");
+    }
+
+    #[test]
+    fn flavor_for_selects_gpt_image() {
+        assert!(matches!(flavor_for("gpt-image-1"), ImageFlavor::GptImage));
+    }
+
+    #[test]
+    fn flavor_for_selects_dalle() {
+        assert!(matches!(flavor_for("dall-e-3"), ImageFlavor::DallE));
+        assert!(matches!(flavor_for("dall-e-2"), ImageFlavor::DallE));
+    }
+
+    #[test]
+    fn images_urls_are_v1() {
+        let c = OpenAiClient::new("key", "gpt-image-1", None);
+        assert_eq!(
+            c.images_generations_url(),
+            "https://api.openai.com/v1/images/generations"
+        );
+        assert_eq!(
+            c.images_edits_url(),
+            "https://api.openai.com/v1/images/edits"
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_model_n_greater_than_one_errors() {
+        let client = OpenAiClient::new("key", "gpt-4o", None);
+        let opts = ImageOptions::builder().n(2).build();
+        let err = <OpenAiClient as Provider>::generate_images(&client, "a cat", Some(&opts))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("gpt-image"), "error was: {err}");
+        assert!(
+            err.contains("multiple variants") && err.contains("single image"),
+            "error was: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_model_n_one_is_allowed_to_reach_responses_api() {
+        // n = Some(1) must not trip the "multiple variants" guard; the
+        // subsequent network call is expected to fail in a unit test
+        // (no live endpoint), so we just assert we get past the guard.
+        let client = OpenAiClient::new("key", "gpt-4o", Some("http://127.0.0.1:0".to_string()));
+        let opts = ImageOptions::builder().n(1).build();
+        let err = <OpenAiClient as Provider>::generate_images(&client, "a cat", Some(&opts))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(!err.contains("multiple variants"), "error was: {err}");
+    }
+
+    #[tokio::test]
+    async fn chat_model_reference_images_errors() {
+        let client = OpenAiClient::new("key", "gpt-4o", None);
+        let opts = ImageOptions::builder()
+            .reference_image(std::path::PathBuf::from("ref.png"))
+            .build();
+        let err = <OpenAiClient as Provider>::generate_images(&client, "add a hat", Some(&opts))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("gpt-image"), "error was: {err}");
+        assert!(err.contains("dedicated image model"), "error was: {err}");
     }
 }

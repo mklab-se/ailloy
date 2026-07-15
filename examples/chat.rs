@@ -44,5 +44,19 @@ async fn main() -> anyhow::Result<()> {
             usage.prompt_tokens, usage.completion_tokens
         );
     }
+
+    // Attachments: only runs if an image/pdf/text path is passed as the first
+    // CLI argument, so this example stays safe to run with no arguments.
+    //
+    //   cargo run --example chat -- path/to/screenshot.png
+    if let Some(path) = std::env::args().nth(1) {
+        let msg = Message::user_with_attachments(
+            "What's in this file?",
+            &[std::path::PathBuf::from(path)],
+        )?;
+        let response = client.chat(&[msg]).await?;
+        println!("attachment response: {}", response.content);
+    }
+
     Ok(())
 }

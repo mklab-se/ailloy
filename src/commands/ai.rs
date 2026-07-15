@@ -8,7 +8,7 @@ use crate::cli::{AiCommands, AiConfigCommands, NodeCommands};
 
 pub async fn run(command: Option<AiCommands>) -> Result<()> {
     match command {
-        None => config_tui::print_ai_status("ailloy", &["chat", "image"]),
+        None => config_tui::print_ai_status("ailloy", &["chat", "image", "video"]),
         Some(AiCommands::Config { command }) => run_config(command).await,
         Some(AiCommands::Test { message, all }) => {
             if all {
@@ -19,7 +19,9 @@ pub async fn run(command: Option<AiCommands>) -> Result<()> {
         }
         Some(AiCommands::Enable) => config_tui::enable_ai("ailloy"),
         Some(AiCommands::Disable) => config_tui::disable_ai("ailloy"),
-        Some(AiCommands::Status) => config_tui::print_ai_status("ailloy", &["chat", "image"]),
+        Some(AiCommands::Status) => {
+            config_tui::print_ai_status("ailloy", &["chat", "image", "video"])
+        }
         Some(AiCommands::Skill { emit, reference }) => {
             crate::commands::skill::run(emit, reference);
             Ok(())
@@ -31,8 +33,11 @@ async fn run_config(command: Option<AiConfigCommands>) -> Result<()> {
     match command {
         None => {
             let mut config = Config::load_global()?;
-            config_tui::run_interactive_config(&mut config, &["chat", "image", "embedding"])
-                .await?;
+            config_tui::run_interactive_config(
+                &mut config,
+                &["chat", "image", "video", "embedding"],
+            )
+            .await?;
             Ok(())
         }
         Some(AiConfigCommands::AddNode) => {
@@ -44,7 +49,7 @@ async fn run_config(command: Option<AiConfigCommands>) -> Result<()> {
         }
         Some(AiConfigCommands::EditNode { id }) => {
             let mut config = Config::load_global()?;
-            config_tui::edit_node_interactive(&mut config, &id)
+            config_tui::edit_node_interactive(&mut config, &id).await
         }
         Some(AiConfigCommands::DeleteNode { id }) => run_delete_node(&id),
         Some(AiConfigCommands::SetKey { id }) => run_set_key(&id),
@@ -133,7 +138,7 @@ pub async fn run_legacy_nodes(cmd: NodeCommands) -> Result<()> {
         }
         NodeCommands::Edit { id } => {
             let mut config = Config::load_global()?;
-            config_tui::edit_node_interactive(&mut config, &id)
+            config_tui::edit_node_interactive(&mut config, &id).await
         }
         NodeCommands::Remove { id } => run_delete_node(&id),
         NodeCommands::Default {

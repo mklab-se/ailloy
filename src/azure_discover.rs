@@ -215,6 +215,30 @@ pub async fn list_deployments(
     Ok(deployments)
 }
 
+/// Pre-select capabilities for a discovered deployment based on its model
+/// name, so the `ai config` wizard doesn't default every deployment to Chat.
+///
+/// Matching is case-insensitive by prefix/substring: `gpt-image*`/`dall-e*`
+/// deployments get [`Capability::Image`], `sora*` deployments get
+/// [`Capability::Video`], embedding models (`*embedding*`) get
+/// [`Capability::Embedding`], and everything else defaults to
+/// [`Capability::Chat`]. The wizard still lets the user override the
+/// pre-selection.
+pub fn capabilities_for_deployment(model_name: &str) -> Vec<crate::config::Capability> {
+    use crate::config::Capability;
+
+    let normalized = model_name.to_ascii_lowercase();
+    if normalized.starts_with("gpt-image") || normalized.starts_with("dall-e") {
+        vec![Capability::Image]
+    } else if normalized.starts_with("sora") {
+        vec![Capability::Video]
+    } else if normalized.contains("embedding") {
+        vec![Capability::Embedding]
+    } else {
+        vec![Capability::Chat]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,5 +407,56 @@ mod tests {
             resource_group: None,
         };
         assert_eq!(acc.endpoint(), None);
+    }
+
+    // --- Task 1.7: capabilities_for_deployment ---
+
+    #[test]
+    fn test_capabilities_for_image_models() {
+        assert_eq!(
+            capabilities_for_deployment("gpt-image-2"),
+            vec![crate::config::Capability::Image]
+        );
+        assert_eq!(
+            capabilities_for_deployment("dall-e-3"),
+            vec![crate::config::Capability::Image]
+        );
+        assert_eq!(
+            capabilities_for_deployment("GPT-Image-1"),
+            vec![crate::config::Capability::Image],
+            "matching should be case-insensitive"
+        );
+    }
+
+    #[test]
+    fn test_capabilities_for_video_models() {
+        assert_eq!(
+            capabilities_for_deployment("sora-2"),
+            vec![crate::config::Capability::Video]
+        );
+    }
+
+    #[test]
+    fn test_capabilities_for_embedding_models() {
+        assert_eq!(
+            capabilities_for_deployment("text-embedding-3-large"),
+            vec![crate::config::Capability::Embedding]
+        );
+        assert_eq!(
+            capabilities_for_deployment("my-embedding-deployment"),
+            vec![crate::config::Capability::Embedding]
+        );
+    }
+
+    #[test]
+    fn test_capabilities_default_to_chat() {
+        assert_eq!(
+            capabilities_for_deployment("gpt-5.4"),
+            vec![crate::config::Capability::Chat]
+        );
+        assert_eq!(
+            capabilities_for_deployment("claude-sonnet-5"),
+            vec![crate::config::Capability::Chat]
+        );
     }
 }

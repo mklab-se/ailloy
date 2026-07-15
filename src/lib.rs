@@ -36,10 +36,15 @@ pub mod foundry;
 pub mod local_agent;
 pub mod ollama;
 pub mod openai;
+mod openai_images;
+pub mod params;
 pub mod retirement;
 pub mod terminal;
+#[cfg(feature = "config-tui")]
+pub(crate) mod tui;
 pub mod types;
 pub mod vertex;
+mod video_jobs;
 
 // Re-export commonly used types at the crate root.
 pub use client::{Client, Provider};
@@ -47,6 +52,8 @@ pub use config::{AiNode, Auth, Capability, EmbeddingMetadata};
 pub use conversation::{ChatHistory, Conversation, InMemoryHistory};
 pub use error::ClientError;
 pub use types::{
-    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageFormat, ImageOptions,
-    ImageResponse, Message, ResponseFormat, Role, StreamEvent, Task, Usage,
+    Background, ChatOptions, ChatResponse, ChatStream, ContentPart, EmbedOptions, EmbedResponse,
+    ImageFormat, ImageOptions, ImageResponse, InputFidelity, Message, MessageContent, Moderation,
+    ResponseFormat, Role, StreamEvent, Task, Usage, VideoJob, VideoJobStatus, VideoOptions,
+    VideoProgress, VideoResponse,
 };

@@ -17,6 +17,7 @@ const RETIREMENTS: &[(&str, &str, &str)] = &[
     ("o1", "2026-07-15", "gpt-5.5"),
     ("o3-mini", "2026-08-02", "gpt-5.4-mini"),
     ("o4-mini", "2026-10-16", "gpt-5.4-mini"),
+    ("dall-e-3", "2026-03-04", "gpt-image-2"),
     // Anthropic (first-party and on Foundry)
     ("claude-opus-4-1", "2026-08-05", "claude-opus-4-8"),
     ("claude-3-7-sonnet", "2026-02-19", "claude-sonnet-5"),
@@ -56,6 +57,13 @@ mod tests {
         );
         assert!(retirement_warning("claude-opus-4-1").is_some());
         assert!(retirement_warning("o3-mini").is_some());
+    }
+
+    #[test]
+    fn warns_for_retired_dall_e_3() {
+        let warning = retirement_warning("dall-e-3").unwrap();
+        assert!(warning.contains("2026-03-04"));
+        assert!(warning.contains("gpt-image-2"));
     }
 
     #[test]

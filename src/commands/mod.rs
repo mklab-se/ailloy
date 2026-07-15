@@ -7,3 +7,4 @@ pub mod eval;
 pub mod image;
 pub mod skill;
 pub(crate) mod util;
+pub mod video;

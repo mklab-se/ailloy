@@ -68,7 +68,11 @@ impl ProviderKind {
         matches!(
             (self, task),
             (_, "chat")
-                | (Self::OpenAi | Self::AzureOpenAi | Self::VertexAi, "image")
+                | (
+                    Self::OpenAi | Self::AzureOpenAi | Self::VertexAi | Self::MicrosoftFoundry,
+                    "image"
+                )
+                | (Self::AzureOpenAi | Self::MicrosoftFoundry, "video")
                 | (
                     Self::OpenAi
                         | Self::AzureOpenAi
@@ -91,6 +95,9 @@ impl ProviderKind {
         if self.supports_task("image") {
             caps.push(Capability::Image);
         }
+        if self.supports_task("video") {
+            caps.push(Capability::Video);
+        }
         if self.supports_task("embedding") {
             caps.push(Capability::Embedding);
         }
@@ -109,6 +116,7 @@ pub enum Capability {
     Chat,
     Image,
     Embedding,
+    Video,
 }
 
 impl Capability {
@@ -118,6 +126,7 @@ impl Capability {
             Self::Chat => "chat",
             Self::Image => "image",
             Self::Embedding => "embedding",
+            Self::Video => "video",
         }
     }
 
@@ -127,6 +136,7 @@ impl Capability {
             Self::Chat => "Chat",
             Self::Image => "Image Generation",
             Self::Embedding => "Embedding",
+            Self::Video => "Video Generation",
         }
     }
 }
@@ -144,8 +154,9 @@ impl std::str::FromStr for Capability {
             "chat" => Ok(Self::Chat),
             "image" => Ok(Self::Image),
             "embedding" => Ok(Self::Embedding),
+            "video" => Ok(Self::Video),
             _ => Err(format!(
-                "Unknown capability '{}'. Valid: chat, image, embedding",
+                "Unknown capability '{}'. Valid: chat, image, embedding, video",
                 s
             )),
         }
@@ -336,6 +347,26 @@ impl AiNode {
         self.capabilities.contains(cap)
     }
 
+    /// Look up a stored per-node default parameter value by its namespaced
+    /// key (e.g. `"image.quality"`, `"chat.temperature"`).
+    ///
+    /// Special case: `default_for("embedding.dimensions")` falls back to the
+    /// legacy un-namespaced `"dimensions"` key when the namespaced one is
+    /// absent, so older configs keep working.
+    pub fn default_for(&self, key: &str) -> Option<&str> {
+        let defaults = self.node_defaults.as_ref()?;
+        defaults
+            .get(key)
+            .or_else(|| {
+                if key == "embedding.dimensions" {
+                    defaults.get("dimensions")
+                } else {
+                    None
+                }
+            })
+            .map(String::as_str)
+    }
+
     /// Returns embedding metadata for this node.
     ///
     /// Dimensions are resolved in order: explicit `defaults.dimensions` in the
@@ -479,6 +510,7 @@ pub const ALL_CAPABILITIES: &[(&str, &str)] = &[
     ("chat", "Chat"),
     ("image", "Image Generation"),
     ("embedding", "Embedding"),
+    ("video", "Video Generation"),
 ];
 
 /// Ordered list of task keys with human-readable labels (backward-compatible alias).
@@ -881,6 +913,55 @@ mod tests {
     }
 
     #[test]
+    fn default_for_reads_namespaced_key() {
+        let mut node = sample_node(ProviderKind::OpenAi, "gpt-image-2", vec![Capability::Image]);
+        node.node_defaults = Some(BTreeMap::from([
+            ("image.quality".to_string(), "high".to_string()),
+            ("image.size".to_string(), "1024x1024".to_string()),
+        ]));
+        assert_eq!(node.default_for("image.quality"), Some("high"));
+        assert_eq!(node.default_for("image.size"), Some("1024x1024"));
+        assert_eq!(node.default_for("image.format"), None);
+    }
+
+    #[test]
+    fn default_for_none_when_no_defaults() {
+        let node = sample_node(ProviderKind::OpenAi, "gpt-5.4-mini", vec![Capability::Chat]);
+        assert_eq!(node.default_for("chat.temperature"), None);
+    }
+
+    #[test]
+    fn default_for_embedding_dimensions_legacy_alias() {
+        // Only the legacy un-namespaced key is present.
+        let mut node = sample_node(
+            ProviderKind::OpenAi,
+            "text-embedding-3-small",
+            vec![Capability::Embedding],
+        );
+        node.node_defaults = Some(BTreeMap::from([(
+            "dimensions".to_string(),
+            "256".to_string(),
+        )]));
+        assert_eq!(node.default_for("embedding.dimensions"), Some("256"));
+        // The legacy alias only applies to embedding.dimensions.
+        assert_eq!(node.default_for("chat.max_tokens"), None);
+    }
+
+    #[test]
+    fn default_for_embedding_dimensions_namespaced_wins_over_legacy() {
+        let mut node = sample_node(
+            ProviderKind::OpenAi,
+            "text-embedding-3-small",
+            vec![Capability::Embedding],
+        );
+        node.node_defaults = Some(BTreeMap::from([
+            ("embedding.dimensions".to_string(), "512".to_string()),
+            ("dimensions".to_string(), "256".to_string()),
+        ]));
+        assert_eq!(node.default_for("embedding.dimensions"), Some("512"));
+    }
+
+    #[test]
     fn test_config_roundtrip() {
         let config = Config {
             extends: None,
@@ -1128,7 +1209,18 @@ mod tests {
             "embedding".parse::<Capability>().unwrap(),
             Capability::Embedding
         );
+        assert_eq!("video".parse::<Capability>().unwrap(), Capability::Video);
         assert!("invalid".parse::<Capability>().is_err());
+    }
+
+    #[test]
+    fn test_capability_video_serde_roundtrip() {
+        let json = serde_json::to_string(&Capability::Video).unwrap();
+        assert_eq!(json, "\"video\"");
+        let parsed: Capability = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, Capability::Video);
+        assert_eq!(Capability::Video.config_key(), "video");
+        assert_eq!(Capability::Video.label(), "Video Generation");
     }
 
     #[test]
@@ -1291,10 +1383,30 @@ mod tests {
         assert!(ProviderKind::OpenAi.supports_task("image"));
         assert!(!ProviderKind::Anthropic.supports_task("image"));
         assert!(ProviderKind::AzureOpenAi.supports_task("image"));
-        assert!(!ProviderKind::MicrosoftFoundry.supports_task("image"));
+        assert!(ProviderKind::MicrosoftFoundry.supports_task("image"));
         assert!(ProviderKind::VertexAi.supports_task("image"));
         assert!(!ProviderKind::Ollama.supports_task("image"));
         assert!(!ProviderKind::LocalAgent.supports_task("image"));
+    }
+
+    #[test]
+    fn foundry_supports_image() {
+        assert!(ProviderKind::MicrosoftFoundry.supports_task("image"));
+    }
+
+    #[test]
+    fn azure_and_foundry_support_video() {
+        assert!(ProviderKind::AzureOpenAi.supports_task("video"));
+        assert!(ProviderKind::MicrosoftFoundry.supports_task("video"));
+    }
+
+    #[test]
+    fn others_do_not_support_video() {
+        assert!(!ProviderKind::OpenAi.supports_task("video"));
+        assert!(!ProviderKind::Anthropic.supports_task("video"));
+        assert!(!ProviderKind::VertexAi.supports_task("video"));
+        assert!(!ProviderKind::Ollama.supports_task("video"));
+        assert!(!ProviderKind::LocalAgent.supports_task("video"));
     }
 
     #[test]

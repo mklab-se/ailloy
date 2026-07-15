@@ -17,11 +17,11 @@
 //! println!("{}", response.content);
 //! ```
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::types::{
     ChatOptions, ChatResponse, EmbedOptions, EmbedResponse, ImageOptions, ImageResponse, Message,
-    StreamEvent, Task,
+    StreamEvent, Task, VideoJob, VideoOptions, VideoResponse,
 };
 
 /// A synchronous client wrapping the async [`crate::Client`].
@@ -103,13 +103,35 @@ impl Client {
     }
 
     /// Generate an image with options.
+    #[deprecated(
+        since = "2.0.0",
+        note = "use generate_images_with; image models can return multiple variants"
+    )]
     pub fn generate_image_with(
         &self,
         prompt: &str,
         options: &ImageOptions,
     ) -> Result<ImageResponse> {
         self.runtime
-            .block_on(self.inner.generate_image_with(prompt, options))
+            .block_on(self.inner.generate_images_with(prompt, options))?
+            .into_iter()
+            .next()
+            .context("Provider returned no images")
+    }
+
+    /// Generate one or more images from a text prompt.
+    pub fn generate_images(&self, prompt: &str) -> Result<Vec<ImageResponse>> {
+        self.runtime.block_on(self.inner.generate_images(prompt))
+    }
+
+    /// Generate one or more images with options.
+    pub fn generate_images_with(
+        &self,
+        prompt: &str,
+        options: &ImageOptions,
+    ) -> Result<Vec<ImageResponse>> {
+        self.runtime
+            .block_on(self.inner.generate_images_with(prompt, options))
     }
 
     /// Generate embeddings for multiple texts.
@@ -125,6 +147,47 @@ impl Client {
     /// Embed a single text, returning the vector directly.
     pub fn embed_one(&self, text: &str) -> Result<Vec<f32>> {
         self.runtime.block_on(self.inner.embed_one(text))
+    }
+
+    /// Generate a video from a text prompt (no options).
+    pub fn generate_video(&self, prompt: &str) -> Result<Vec<VideoResponse>> {
+        self.runtime.block_on(self.inner.generate_video(prompt))
+    }
+
+    /// Generate a video with options.
+    pub fn generate_video_with(
+        &self,
+        prompt: &str,
+        options: &VideoOptions,
+    ) -> Result<Vec<VideoResponse>> {
+        self.runtime
+            .block_on(self.inner.generate_video_with(prompt, options))
+    }
+
+    /// Create an asynchronous video generation job.
+    pub fn create_video_job(
+        &self,
+        prompt: &str,
+        options: Option<&VideoOptions>,
+    ) -> Result<VideoJob> {
+        self.runtime
+            .block_on(self.inner.create_video_job(prompt, options))
+    }
+
+    /// Fetch the current state of a video generation job.
+    pub fn get_video_job(&self, id: &str) -> Result<VideoJob> {
+        self.runtime.block_on(self.inner.get_video_job(id))
+    }
+
+    /// Download a completed video generation by generation ID.
+    pub fn download_video(&self, generation_id: &str) -> Result<VideoResponse> {
+        self.runtime
+            .block_on(self.inner.download_video(generation_id))
+    }
+
+    /// Delete a video generation job and its artifacts.
+    pub fn delete_video_job(&self, id: &str) -> Result<()> {
+        self.runtime.block_on(self.inner.delete_video_job(id))
     }
 
     /// Get the provider name.
