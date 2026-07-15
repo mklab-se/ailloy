@@ -612,6 +612,159 @@ impl EmbedOptionsBuilder {
     }
 }
 
+/// Options for video generation.
+#[derive(Debug, Clone, Default)]
+pub struct VideoOptions {
+    pub size: Option<(u32, u32)>,
+    /// Clip duration in seconds, 1–20.
+    pub seconds: Option<u32>,
+    /// Number of video variants to generate, 1–5.
+    pub variants: Option<u8>,
+}
+
+impl VideoOptions {
+    pub fn builder() -> VideoOptionsBuilder {
+        VideoOptionsBuilder::default()
+    }
+
+    /// Validate the parameter ranges, returning an actionable error
+    /// describing what to change if the options are out of range.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if let Some(seconds) = self.seconds {
+            if !(1..=20).contains(&seconds) {
+                anyhow::bail!(
+                    "Invalid video duration seconds={}: must be between 1 and 20.",
+                    seconds
+                );
+            }
+        }
+
+        if let Some(variants) = self.variants {
+            if !(1..=5).contains(&variants) {
+                anyhow::bail!(
+                    "Invalid video variants={}: must be between 1 and 5.",
+                    variants
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Builder for [`VideoOptions`].
+#[derive(Debug, Default)]
+pub struct VideoOptionsBuilder {
+    size: Option<(u32, u32)>,
+    seconds: Option<u32>,
+    variants: Option<u8>,
+}
+
+impl VideoOptionsBuilder {
+    pub fn size(mut self, width: u32, height: u32) -> Self {
+        self.size = Some((width, height));
+        self
+    }
+
+    pub fn seconds(mut self, seconds: u32) -> Self {
+        self.seconds = Some(seconds);
+        self
+    }
+
+    pub fn variants(mut self, variants: u8) -> Self {
+        self.variants = Some(variants);
+        self
+    }
+
+    pub fn build(self) -> VideoOptions {
+        VideoOptions {
+            size: self.size,
+            seconds: self.seconds,
+            variants: self.variants,
+        }
+    }
+}
+
+/// Lifecycle status of an asynchronous video generation job.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VideoJobStatus {
+    Queued,
+    Preprocessing,
+    Running,
+    Processing,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+impl VideoJobStatus {
+    /// True once the job has reached a terminal state (no further polling
+    /// will change the outcome).
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            VideoJobStatus::Succeeded | VideoJobStatus::Failed | VideoJobStatus::Cancelled
+        )
+    }
+}
+
+impl std::fmt::Display for VideoJobStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            VideoJobStatus::Queued => "queued",
+            VideoJobStatus::Preprocessing => "preprocessing",
+            VideoJobStatus::Running => "running",
+            VideoJobStatus::Processing => "processing",
+            VideoJobStatus::Succeeded => "succeeded",
+            VideoJobStatus::Failed => "failed",
+            VideoJobStatus::Cancelled => "cancelled",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl std::str::FromStr for VideoJobStatus {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "queued" => Ok(Self::Queued),
+            "preprocessing" => Ok(Self::Preprocessing),
+            "running" => Ok(Self::Running),
+            "processing" => Ok(Self::Processing),
+            "succeeded" => Ok(Self::Succeeded),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err(format!(
+                "Unknown video job status '{}'. Valid: queued, preprocessing, running, processing, succeeded, failed, cancelled",
+                s
+            )),
+        }
+    }
+}
+
+/// State of an asynchronous video generation job, as returned by a job
+/// status poll.
+#[derive(Debug, Clone)]
+pub struct VideoJob {
+    pub id: String,
+    pub status: VideoJobStatus,
+    pub generation_ids: Vec<String>,
+    pub failure_reason: Option<String>,
+}
+
+/// Response from a completed video generation request.
+#[derive(Debug, Clone)]
+pub struct VideoResponse {
+    pub data: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub duration_seconds: u32,
+}
+
+/// Callback invoked with the latest job state while polling a video
+/// generation job.
+pub type VideoProgress<'a> = &'a (dyn Fn(&VideoJob) + Send + Sync);
+
 /// Task types for provider routing.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Task {
@@ -1096,6 +1249,210 @@ mod tests {
             ..Default::default()
         };
         assert!(opts.validate().is_ok());
+    }
+
+    // --- Task 2.1: video generation types ---
+
+    #[test]
+    fn test_video_options_builder_roundtrip() {
+        let opts = VideoOptions::builder()
+            .size(1280, 720)
+            .seconds(10)
+            .variants(2)
+            .build();
+        assert_eq!(opts.size, Some((1280, 720)));
+        assert_eq!(opts.seconds, Some(10));
+        assert_eq!(opts.variants, Some(2));
+    }
+
+    #[test]
+    fn test_video_options_default() {
+        let opts = VideoOptions::default();
+        assert!(opts.size.is_none());
+        assert!(opts.seconds.is_none());
+        assert!(opts.variants.is_none());
+        assert!(opts.validate().is_ok());
+    }
+
+    #[test]
+    fn test_video_options_validate_seconds_in_range_ok() {
+        for seconds in [1, 20] {
+            let opts = VideoOptions {
+                seconds: Some(seconds),
+                ..Default::default()
+            };
+            assert!(opts.validate().is_ok(), "seconds={seconds} should be valid");
+        }
+    }
+
+    #[test]
+    fn test_video_options_validate_seconds_too_low_err() {
+        let opts = VideoOptions {
+            seconds: Some(0),
+            ..Default::default()
+        };
+        let err = opts.validate().unwrap_err().to_string();
+        assert!(err.contains("seconds"));
+        assert!(err.contains('1'));
+        assert!(err.contains("20"));
+    }
+
+    #[test]
+    fn test_video_options_validate_seconds_too_high_err() {
+        let opts = VideoOptions {
+            seconds: Some(21),
+            ..Default::default()
+        };
+        let err = opts.validate().unwrap_err().to_string();
+        assert!(err.contains("seconds"));
+        assert!(err.contains("20"));
+    }
+
+    #[test]
+    fn test_video_options_validate_variants_in_range_ok() {
+        for variants in 1..=5u8 {
+            let opts = VideoOptions {
+                variants: Some(variants),
+                ..Default::default()
+            };
+            assert!(
+                opts.validate().is_ok(),
+                "variants={variants} should be valid"
+            );
+        }
+    }
+
+    #[test]
+    fn test_video_options_validate_variants_too_low_err() {
+        let opts = VideoOptions {
+            variants: Some(0),
+            ..Default::default()
+        };
+        let err = opts.validate().unwrap_err().to_string();
+        assert!(err.contains("variants"));
+        assert!(err.contains('1'));
+        assert!(err.contains('5'));
+    }
+
+    #[test]
+    fn test_video_options_validate_variants_too_high_err() {
+        let opts = VideoOptions {
+            variants: Some(6),
+            ..Default::default()
+        };
+        let err = opts.validate().unwrap_err().to_string();
+        assert!(err.contains("variants"));
+        assert!(err.contains('5'));
+    }
+
+    #[test]
+    fn test_video_job_status_from_str_all_variants() {
+        assert_eq!(
+            "queued".parse::<VideoJobStatus>().unwrap(),
+            VideoJobStatus::Queued
+        );
+        assert_eq!(
+            "preprocessing".parse::<VideoJobStatus>().unwrap(),
+            VideoJobStatus::Preprocessing
+        );
+        assert_eq!(
+            "running".parse::<VideoJobStatus>().unwrap(),
+            VideoJobStatus::Running
+        );
+        assert_eq!(
+            "processing".parse::<VideoJobStatus>().unwrap(),
+            VideoJobStatus::Processing
+        );
+        assert_eq!(
+            "succeeded".parse::<VideoJobStatus>().unwrap(),
+            VideoJobStatus::Succeeded
+        );
+        assert_eq!(
+            "failed".parse::<VideoJobStatus>().unwrap(),
+            VideoJobStatus::Failed
+        );
+        assert_eq!(
+            "cancelled".parse::<VideoJobStatus>().unwrap(),
+            VideoJobStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn test_video_job_status_from_str_invalid() {
+        let err = "unknown".parse::<VideoJobStatus>().unwrap_err();
+        assert!(err.contains("unknown"));
+        assert!(err.contains("queued"));
+        assert!(err.contains("preprocessing"));
+        assert!(err.contains("running"));
+        assert!(err.contains("processing"));
+        assert!(err.contains("succeeded"));
+        assert!(err.contains("failed"));
+        assert!(err.contains("cancelled"));
+    }
+
+    #[test]
+    fn test_video_job_status_is_terminal() {
+        assert!(!VideoJobStatus::Queued.is_terminal());
+        assert!(!VideoJobStatus::Preprocessing.is_terminal());
+        assert!(!VideoJobStatus::Running.is_terminal());
+        assert!(!VideoJobStatus::Processing.is_terminal());
+        assert!(VideoJobStatus::Succeeded.is_terminal());
+        assert!(VideoJobStatus::Failed.is_terminal());
+        assert!(VideoJobStatus::Cancelled.is_terminal());
+    }
+
+    #[test]
+    fn test_video_job_status_display() {
+        assert_eq!(VideoJobStatus::Queued.to_string(), "queued");
+        assert_eq!(VideoJobStatus::Preprocessing.to_string(), "preprocessing");
+        assert_eq!(VideoJobStatus::Running.to_string(), "running");
+        assert_eq!(VideoJobStatus::Processing.to_string(), "processing");
+        assert_eq!(VideoJobStatus::Succeeded.to_string(), "succeeded");
+        assert_eq!(VideoJobStatus::Failed.to_string(), "failed");
+        assert_eq!(VideoJobStatus::Cancelled.to_string(), "cancelled");
+    }
+
+    #[test]
+    fn test_video_job_construction() {
+        let job = VideoJob {
+            id: "job-123".to_string(),
+            status: VideoJobStatus::Running,
+            generation_ids: vec!["gen-1".to_string()],
+            failure_reason: None,
+        };
+        assert_eq!(job.id, "job-123");
+        assert_eq!(job.status, VideoJobStatus::Running);
+        assert_eq!(job.generation_ids, vec!["gen-1".to_string()]);
+        assert!(job.failure_reason.is_none());
+    }
+
+    #[test]
+    fn test_video_response_construction() {
+        let resp = VideoResponse {
+            data: vec![1, 2, 3],
+            width: 1280,
+            height: 720,
+            duration_seconds: 8,
+        };
+        assert_eq!(resp.data, vec![1, 2, 3]);
+        assert_eq!(resp.width, 1280);
+        assert_eq!(resp.height, 720);
+        assert_eq!(resp.duration_seconds, 8);
+    }
+
+    #[test]
+    fn test_video_progress_callback_type() {
+        let seen = std::sync::Mutex::new(Vec::new());
+        let cb = |job: &VideoJob| seen.lock().unwrap().push(job.status.clone());
+        let progress: VideoProgress = &cb;
+        let job = VideoJob {
+            id: "job-1".to_string(),
+            status: VideoJobStatus::Queued,
+            generation_ids: vec![],
+            failure_reason: None,
+        };
+        progress(&job);
+        assert_eq!(seen.lock().unwrap().len(), 1);
     }
 }
 

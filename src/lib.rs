@@ -50,5 +50,5 @@ pub use error::ClientError;
 pub use types::{
     Background, ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageFormat,
     ImageOptions, ImageResponse, InputFidelity, Message, Moderation, ResponseFormat, Role,
-    StreamEvent, Task, Usage,
+    StreamEvent, Task, Usage, VideoJob, VideoJobStatus, VideoOptions, VideoProgress, VideoResponse,
 };
