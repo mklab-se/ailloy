@@ -77,6 +77,11 @@ pub struct App {
     pub app_name: String,
     /// Index of the selected node in [`App::node_ids`] order.
     pub selected: usize,
+    /// Index of the selected row within the detail pane's parameter list.
+    /// Only meaningful while [`Focus::Detail`] has focus. Reset to `0` whenever
+    /// the node selection changes; clamped to the selected node's parameter
+    /// count.
+    pub detail_selected: usize,
     /// Which pane has focus.
     pub focus: Focus,
     /// Current interaction mode.
@@ -94,6 +99,7 @@ impl App {
             config,
             app_name: app_name.to_string(),
             selected: 0,
+            detail_selected: 0,
             focus: Focus::NodeList,
             mode: Mode::Browse,
             dirty: false,
@@ -115,6 +121,32 @@ impl App {
         self.node_ids().get(self.selected).cloned()
     }
 
+    /// The number of tunable parameters shown in the detail pane for the
+    /// currently selected node (via [`crate::params::params_for`]). Zero when
+    /// no node is selected.
+    pub fn selected_params_len(&self) -> usize {
+        match self.selected_node_id() {
+            Some(id) => match self.config.nodes.get(&id) {
+                Some(node) => crate::params::params_for(&node.provider, &node.capabilities).len(),
+                None => 0,
+            },
+            None => 0,
+        }
+    }
+
+    /// Clamp [`App::detail_selected`] into the valid range for the selected
+    /// node's parameter list, so it never points past the last row (or stays
+    /// non-zero for a node with no parameters).
+    fn clamp_detail_selected(&mut self) {
+        let len = self.selected_params_len();
+        let max = len.saturating_sub(1);
+        if len == 0 {
+            self.detail_selected = 0;
+        } else if self.detail_selected > max {
+            self.detail_selected = max;
+        }
+    }
+
     /// Pure reducer: apply a key event and return an [`Effect`] for the event
     /// loop to execute, if any.
     ///
@@ -133,12 +165,37 @@ impl App {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => Some(Effect::Quit),
             KeyCode::Up | KeyCode::Char('k') => {
-                self.selected = self.selected.saturating_sub(1);
+                match self.focus {
+                    // In the detail pane, Up/Down scroll the parameter list.
+                    Focus::Detail => {
+                        self.detail_selected = self.detail_selected.saturating_sub(1);
+                    }
+                    // In the node list, Up/Down change the selected node and
+                    // reset the detail cursor to the top.
+                    Focus::NodeList => {
+                        let before = self.selected;
+                        self.selected = self.selected.saturating_sub(1);
+                        if self.selected != before {
+                            self.detail_selected = 0;
+                        }
+                    }
+                }
                 None
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if node_count > 0 && self.selected < node_count - 1 {
-                    self.selected += 1;
+                match self.focus {
+                    Focus::Detail => {
+                        let max = self.selected_params_len().saturating_sub(1);
+                        if self.detail_selected < max {
+                            self.detail_selected += 1;
+                        }
+                    }
+                    Focus::NodeList => {
+                        if node_count > 0 && self.selected < node_count - 1 {
+                            self.selected += 1;
+                            self.detail_selected = 0;
+                        }
+                    }
                 }
                 None
             }
@@ -147,6 +204,9 @@ impl App {
                     Focus::NodeList => Focus::Detail,
                     Focus::Detail => Focus::NodeList,
                 };
+                if self.focus == Focus::Detail {
+                    self.clamp_detail_selected();
+                }
                 None
             }
             // All other keys are extended in later tasks.
@@ -158,7 +218,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AiNode, Config, ProviderKind};
+    use crate::config::{AiNode, Capability, Config, ProviderKind};
     use crossterm::event::{KeyEvent, KeyModifiers};
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -233,5 +293,72 @@ mod tests {
         assert_eq!(app.selected_node_id().as_deref(), Some("openai/node-0"));
         app.handle_key(key(KeyCode::Down));
         assert_eq!(app.selected_node_id().as_deref(), Some("openai/node-1"));
+    }
+
+    /// A node with chat + image capabilities so it exposes several params.
+    fn config_with_capable_nodes() -> Config {
+        let mut config = Config::default();
+        for i in 0..2 {
+            let mut node = AiNode::new(ProviderKind::OpenAi);
+            node.capabilities = vec![Capability::Chat, Capability::Image];
+            config.nodes.insert(format!("openai/node-{i}"), node);
+        }
+        config
+    }
+
+    #[test]
+    fn detail_focus_up_down_scrolls_param_list() {
+        let mut app = App::new(config_with_capable_nodes(), "ailloy");
+        let param_count = app.selected_params_len();
+        assert!(param_count > 1, "test needs a node with multiple params");
+        app.focus = Focus::Detail;
+        assert_eq!(app.detail_selected, 0);
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.detail_selected, 1);
+        // Up clamps at zero.
+        app.handle_key(key(KeyCode::Up));
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.detail_selected, 0);
+    }
+
+    #[test]
+    fn detail_selected_clamps_to_last_param() {
+        let mut app = App::new(config_with_capable_nodes(), "ailloy");
+        let param_count = app.selected_params_len();
+        app.focus = Focus::Detail;
+        // Press Down far more than there are params.
+        for _ in 0..(param_count + 5) {
+            app.handle_key(key(KeyCode::Down));
+        }
+        assert_eq!(app.detail_selected, param_count - 1);
+    }
+
+    #[test]
+    fn detail_selected_resets_when_node_selection_changes() {
+        let mut app = App::new(config_with_capable_nodes(), "ailloy");
+        app.focus = Focus::Detail;
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.detail_selected, 1);
+        // Move back to the node list and change the selected node.
+        app.focus = Focus::NodeList;
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.selected, 1);
+        assert_eq!(app.detail_selected, 0, "changing node resets detail cursor");
+    }
+
+    #[test]
+    fn tab_into_detail_clamps_stale_cursor() {
+        let mut app = App::new(config_with_capable_nodes(), "ailloy");
+        // Simulate a stale cursor beyond the param range.
+        app.detail_selected = 999;
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.focus, Focus::Detail);
+        assert_eq!(app.detail_selected, app.selected_params_len() - 1);
+    }
+
+    #[test]
+    fn selected_params_len_zero_for_empty_config() {
+        let app = App::new(Config::default(), "ailloy");
+        assert_eq!(app.selected_params_len(), 0);
     }
 }
