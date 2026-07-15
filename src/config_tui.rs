@@ -766,21 +766,31 @@ pub fn reset_config() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// RAII guard for raw mode + alternate screen.
-struct RawModeGuard;
+struct RawModeGuard {
+    /// Whether the alternate screen was actually entered, so Drop only leaves
+    /// it (and re-shows the cursor) when setup got that far.
+    alt_screen: bool,
+}
 
 impl RawModeGuard {
     fn enter() -> Result<Self> {
         terminal::enable_raw_mode()?;
+        // Construct the guard immediately so raw mode is disabled on any
+        // failure below (or a panic), not just after full setup.
+        let mut guard = Self { alt_screen: false };
         let mut stdout = std::io::stdout();
         execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide)?;
-        Ok(Self)
+        guard.alt_screen = true;
+        Ok(guard)
     }
 }
 
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
-        let mut stdout = std::io::stdout();
-        let _ = execute!(stdout, cursor::Show, terminal::LeaveAlternateScreen);
+        if self.alt_screen {
+            let mut stdout = std::io::stdout();
+            let _ = execute!(stdout, cursor::Show, terminal::LeaveAlternateScreen);
+        }
         let _ = terminal::disable_raw_mode();
     }
 }

@@ -32,24 +32,41 @@ const TICK: Duration = Duration::from_millis(100);
 /// terminal usable.
 struct TerminalGuard {
     terminal: Terminal<CrosstermBackend<Stdout>>,
+    _restore: RestoreGuard,
+}
+
+/// Inner restore guard, constructed the moment raw mode is enabled so that a
+/// failure in any later setup step (alternate screen, backend init) still
+/// restores the terminal on unwind. Tracks whether the alternate screen was
+/// actually entered.
+struct RestoreGuard {
+    alt_screen: bool,
+}
+
+impl Drop for RestoreGuard {
+    fn drop(&mut self) {
+        if self.alt_screen {
+            let _ = execute!(stdout(), LeaveAlternateScreen, crossterm::cursor::Show);
+        }
+        let _ = disable_raw_mode();
+    }
 }
 
 impl TerminalGuard {
     fn enter() -> Result<Self> {
         enable_raw_mode().context("failed to enable terminal raw mode")?;
+        // From here on, `restore` guarantees raw mode is disabled on any
+        // early return or panic.
+        let mut restore = RestoreGuard { alt_screen: false };
         let mut out = stdout();
         execute!(out, EnterAlternateScreen).context("failed to enter alternate screen")?;
+        restore.alt_screen = true;
         let terminal = Terminal::new(CrosstermBackend::new(out))
             .context("failed to initialize the terminal backend")?;
-        Ok(TerminalGuard { terminal })
-    }
-}
-
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
-        let _ = self.terminal.show_cursor();
+        Ok(TerminalGuard {
+            terminal,
+            _restore: restore,
+        })
     }
 }
 
