@@ -83,6 +83,13 @@ pub trait Provider: Send + Sync {
     }
 
     /// Fetch the current state of a video generation job.
+    ///
+    /// `id` is the [`VideoJob::id`] returned by [`create_video_job`]. On
+    /// Azure/Foundry a multi-variant job id is the constituent video ids
+    /// joined with `+`; this call fans out across them and aggregates the
+    /// result (all completed → Succeeded; any failed → Failed).
+    ///
+    /// [`create_video_job`]: Provider::create_video_job
     async fn get_video_job(&self, _id: &str) -> Result<VideoJob> {
         Err(ClientError::Unsupported("video generation".to_string()).into())
     }
@@ -726,6 +733,10 @@ impl Client {
     }
 
     /// Fetch the current state of a video generation job.
+    ///
+    /// `id` is the [`VideoJob::id`] from [`create_video_job`](Self::create_video_job).
+    /// On Azure/Foundry a multi-variant job id is the constituent video ids
+    /// joined with `+`; this call fans out across them and aggregates status.
     pub async fn get_video_job(&self, id: &str) -> Result<VideoJob> {
         self.provider.get_video_job(id).await
     }

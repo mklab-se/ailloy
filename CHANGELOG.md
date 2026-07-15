@@ -37,11 +37,17 @@ version bump — see `MIGRATION.md` for the upgrade path from 1.x.
   `name.png`, `name-2.png`, `name-3.png`, ...
 - **Video generation (sora-2)** — `Capability::Video` / `Task::VideoGeneration`
   (config key `video`), implemented for Azure OpenAI and Microsoft Foundry
-  nodes with a Sora deployment via the jobs API (`.../video/generations/jobs`,
-  polling with 2s→10s backoff, 15-minute overall timeout, 24h artifact
-  retention). New `Provider`/`Client`/`blocking::Client` methods:
-  `generate_video`, `generate_video_with`, `generate_video_with_progress`,
-  `create_video_job`, `get_video_job`, `download_video`, `delete_video_job`
+  nodes with a Sora deployment via the OpenAI-style **Videos API**
+  (`POST/GET/DELETE {base}/openai/v1/videos[/{id}][/content]`; no
+  `?api-version` on the v1 surface, appended only for dated nodes). Sizes are
+  model-dependent (e.g. `720x1280`, `1280x720`); `seconds` is commonly 4, 8,
+  or 12; `--variants` is implemented as N parallel video creations (the API
+  has no multi-variant field), so a multi-variant `VideoJob.id` is the
+  per-video ids joined with `+`. Polling uses 2s→10s backoff and a 15-minute
+  overall timeout; video/content artifacts expire ~24h after completion. New
+  `Provider`/`Client`/`blocking::Client` methods: `generate_video`,
+  `generate_video_with`, `generate_video_with_progress`, `create_video_job`,
+  `get_video_job`, `download_video`, `delete_video_job`
 - **`ailloy video` command** — `ailloy video "prompt" [-o clip.mp4] [--size WxH]
   [--seconds N] [--variants N] [--node ID] [--raw]`, with a spinner and
   per-transition status line (queued → preprocessing → running/processing →

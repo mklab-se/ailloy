@@ -230,10 +230,14 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-Video generation is job-based: `Client::create_video_job`, `get_video_job`,
-`download_video`, and `delete_video_job` are available for manual control, and
-`generate_video_with_progress` takes a callback invoked on every job-status
-transition. From the CLI:
+Under the hood this drives the OpenAI-style Videos API
+(`POST/GET/DELETE {base}/openai/v1/videos`). Sizes are model-dependent (e.g.
+`720x1280`, `1280x720`) and clip duration is commonly 4, 8, or 12 seconds.
+`--variants` is implemented as N parallel video creations. The generation
+manual-control methods `Client::create_video_job`, `get_video_job`,
+`download_video`, and `delete_video_job` are available, and
+`generate_video_with_progress` takes a callback invoked on every status
+transition. Video artifacts expire ~24h after completion. From the CLI:
 
 ```bash
 ailloy video "A drone shot over a coastal cliff at sunrise"
@@ -340,7 +344,7 @@ Options: `--criteria/-c` or `--criteria-file`, input as an argument, `--file`, o
 
 **LM Studio** uses the OpenAI-compatible API (`http://localhost:1234` by default). **Local Agent** delegates to CLI tools installed on your system: `claude`, `codex`, or `copilot`.
 
-**Azure OpenAI and Microsoft Foundry** default to the unified `/openai/v1/` endpoint surface — no dated `api-version` needed, and the `model` field is your deployment name. Nodes that set an explicit `api_version` in config keep using the legacy dated endpoints. Video (Sora) job endpoints append `?api-version=preview` on the v1 surface.
+**Azure OpenAI and Microsoft Foundry** default to the unified `/openai/v1/` endpoint surface — no dated `api-version` needed, and the `model` field is your deployment name. Nodes that set an explicit `api_version` in config keep using the legacy dated endpoints. Video (Sora) uses the OpenAI-style `/openai/v1/videos` endpoints, following the same rule — no `?api-version` on the v1 surface, appended only for dated nodes.
 
 Chat, image, and video attachments/mapping also vary by provider — see the provider support table in `MIGRATION.md` for exactly which providers accept image/PDF/text attachments.
 

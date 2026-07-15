@@ -99,7 +99,14 @@ let image = images.into_iter().next().context("no image returned")?;
 
 Currently only Azure OpenAI and Microsoft Foundry nodes with a Sora
 deployment support video generation; other providers return
-`ClientError::Unsupported`.
+`ClientError::Unsupported`. Under the hood this uses the OpenAI-style Videos
+API (`POST/GET/DELETE {base}/openai/v1/videos`), following the same
+v1-vs-dated endpoint rule as chat/images (no `?api-version` on the v1 surface,
+appended only for dated nodes). Sizes are model-dependent (e.g. `720x1280`,
+`1280x720`) and clip duration is commonly 4, 8, or 12 seconds. The Videos API
+has no multi-variant field, so `--variants` is implemented as N parallel video
+creations and a multi-variant `VideoJob.id` is the per-video ids joined with
+`+`. Video/content artifacts expire ~24h after completion.
 
 ## 4. Node-level default parameters
 

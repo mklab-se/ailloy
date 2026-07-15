@@ -78,15 +78,18 @@ Sora deployment support this.
 |------|-------------|
 | `-n, --node <ID>` | Node to use for video generation |
 | `-o, --output <FILE>` | Output file path (default: `ailloy-video-<timestamp>.mp4`) |
-| `--size <WxH>` | Video size (e.g. 1280x720) |
-| `--seconds <1-20>` | Clip duration in seconds |
-| `--variants <1-5>` | Number of video variants to generate |
+| `--size <WxH>` | Video size, e.g. 720x1280 or 1280x720 (model-dependent) |
+| `--seconds <N>` | Clip duration in seconds (typically 4, 8, or 12 -- model-dependent) |
+| `--variants <1-5>` | Number of video variants (each is a separate video creation) |
 | `--raw` | Print only the output path(s), no banner or metadata |
 
-Video generation is asynchronous: the CLI creates a job, polls until it
-completes (or fails), and prints a status line each time the job status
-changes (queued -> preprocessing -> running/processing -> succeeded). With
-`--variants`, results are written as `name.mp4`, `name-2.mp4`, `name-3.mp4`, ...
+Video generation drives the OpenAI-style Videos API
+(`POST/GET/DELETE {base}/openai/v1/videos`) and is asynchronous: the CLI
+creates the video(s), polls until they complete (or fail), and prints a status
+line each time the status changes (queued -> in_progress -> completed). The
+Videos API has no multi-variant field, so `--variants` issues N separate video
+creations; results are written as `name.mp4`, `name-2.mp4`, `name-3.mp4`, ...
+Video artifacts expire ~24h after completion.
 
 ```bash
 ailloy video "A drone shot over a coastal cliff at sunrise"

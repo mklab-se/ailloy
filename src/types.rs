@@ -908,9 +908,13 @@ impl EmbedOptionsBuilder {
 #[derive(Debug, Clone, Default)]
 pub struct VideoOptions {
     pub size: Option<(u32, u32)>,
-    /// Clip duration in seconds, 1–20.
+    /// Clip duration in seconds. The Videos API accepts a model-dependent set
+    /// (commonly 4, 8, or 12); this crate only sanity-checks a 1–20 range and
+    /// lets the API reject unsupported values.
     pub seconds: Option<u32>,
-    /// Number of video variants to generate, 1–5.
+    /// Number of video variants to generate, 1–5. The Videos API has no
+    /// multi-variant field, so this is implemented as N separate video
+    /// creations.
     pub variants: Option<u8>,
 }
 
@@ -1021,13 +1025,15 @@ impl std::str::FromStr for VideoJobStatus {
         match s {
             "queued" => Ok(Self::Queued),
             "preprocessing" => Ok(Self::Preprocessing),
-            "running" => Ok(Self::Running),
+            // Videos API wire string for an in-flight generation.
+            "running" | "in_progress" => Ok(Self::Running),
             "processing" => Ok(Self::Processing),
-            "succeeded" => Ok(Self::Succeeded),
+            // Videos API wire string for a finished generation.
+            "succeeded" | "completed" => Ok(Self::Succeeded),
             "failed" => Ok(Self::Failed),
             "cancelled" => Ok(Self::Cancelled),
             _ => Err(format!(
-                "Unknown video job status '{}'. Valid: queued, preprocessing, running, processing, succeeded, failed, cancelled",
+                "Unknown video job status '{}'. Valid: queued, preprocessing, running, in_progress, processing, succeeded, completed, failed, cancelled",
                 s
             )),
         }
@@ -1036,6 +1042,14 @@ impl std::str::FromStr for VideoJobStatus {
 
 /// State of an asynchronous video generation job, as returned by a job
 /// status poll.
+///
+/// On Azure OpenAI / Microsoft Foundry, which drive the OpenAI-style Videos
+/// API, a single-variant job's `id` is a plain OpenAI video id (`video_…`).
+/// When more than one variant is requested, there is no server-side job that
+/// groups them, so `id` is the individual video ids **joined with `+`** (e.g.
+/// `video_a+video_b`) and `generation_ids` holds the same ids as a list. The
+/// low-level `get_video_job` / `delete_video_job` calls accept that composite
+/// id and fan out across the constituent videos.
 #[derive(Debug, Clone)]
 pub struct VideoJob {
     pub id: String,
@@ -1897,6 +1911,19 @@ mod tests {
         assert_eq!(
             "cancelled".parse::<VideoJobStatus>().unwrap(),
             VideoJobStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn test_video_job_status_from_str_videos_api_wire_strings() {
+        // OpenAI-style /videos surface uses "in_progress" and "completed".
+        assert_eq!(
+            "in_progress".parse::<VideoJobStatus>().unwrap(),
+            VideoJobStatus::Running
+        );
+        assert_eq!(
+            "completed".parse::<VideoJobStatus>().unwrap(),
+            VideoJobStatus::Succeeded
         );
     }
 

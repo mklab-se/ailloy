@@ -371,15 +371,15 @@ pub struct VideoArgs {
     #[arg(short, long)]
     pub output: Option<String>,
 
-    /// Video size (e.g. 1280x720)
+    /// Video size, WxH (e.g. 720x1280 or 1280x720; model-dependent)
     #[arg(long)]
     pub size: Option<String>,
 
-    /// Clip duration in seconds, 1-20
+    /// Clip duration in seconds (typically 4, 8, or 12 — model-dependent)
     #[arg(long)]
     pub seconds: Option<u32>,
 
-    /// Number of video variants to generate, 1-5
+    /// Number of video variants (1-5; each is a separate video creation)
     #[arg(long)]
     pub variants: Option<u8>,
 

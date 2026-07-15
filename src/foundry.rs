@@ -844,12 +844,12 @@ mod v1_surface_tests {
         );
         let api = c.video_api(("Authorization", "Bearer test".to_string()));
         assert_eq!(
-            api.jobs_url(),
-            "https://acct.services.ai.azure.com/openai/v1/video/generations/jobs?api-version=preview"
+            api.videos_url(),
+            "https://acct.services.ai.azure.com/openai/v1/videos"
         );
         assert_eq!(
-            api.job_url("job-1"),
-            "https://acct.services.ai.azure.com/openai/v1/video/generations/jobs/job-1?api-version=preview"
+            api.video_url("video_1"),
+            "https://acct.services.ai.azure.com/openai/v1/videos/video_1"
         );
 
         let c = FoundryClient::with_api_version(
@@ -860,8 +860,8 @@ mod v1_surface_tests {
         );
         let api = c.video_api(("Authorization", "Bearer test".to_string()));
         assert_eq!(
-            api.jobs_url(),
-            "https://acct.services.ai.azure.com/openai/v1/video/generations/jobs?api-version=2025-04-01-preview"
+            api.videos_url(),
+            "https://acct.services.ai.azure.com/openai/v1/videos?api-version=2025-04-01-preview"
         );
     }
 }
