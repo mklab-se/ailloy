@@ -48,7 +48,17 @@ Generate an image from a text description.
 | `--size <WxH>` | Image size (e.g. 1024x1024) |
 | `--quality <Q>` | Image quality (hd, standard) |
 | `--style <S>` | Image style (natural, vivid) |
+| `--format <F>` | Output image format (png, jpeg, webp) |
+| `--compression <0-100>` | Compression level (only with `--format` jpeg or webp) |
+| `--variants <1-10>` | Number of image variants to generate |
+| `--background <B>` | Background transparency (transparent, opaque, auto) |
+| `--moderation <M>` | Content moderation strictness (auto, low) |
+| `--fidelity <F>` | How closely edits preserve details from reference images (high, low) |
+| `--ref <FILE>` | Reference image to edit/compose from (repeatable); switches to the image-edits endpoint |
+| `--mask <FILE>` | Mask image for inpainting (requires at least one `--ref` image) |
 | `--raw` | No banner, no metadata |
+
+With `--variants`, results are written as `name.png`, `name-2.png`, `name-3.png`, ...
 
 ### Embed
 
