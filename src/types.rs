@@ -14,33 +14,259 @@ pub enum Role {
     Assistant,
 }
 
+/// Base64 (STANDARD) ⇄ `Vec<u8>` serde helper for binary attachment data.
+///
+/// Used via `#[serde(with = "base64_bytes")]` on [`ContentPart`] byte fields so
+/// that image/file bytes travel as a base64 string in JSON/YAML.
+mod base64_bytes {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&STANDARD.encode(bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        STANDARD
+            .decode(s.as_bytes())
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// A single content part within a multi-part [`MessageContent`].
+///
+/// Serializes to a `type`-tagged object (`{"type":"text","text":"…"}`,
+/// `{"type":"image","data":"<base64>","media_type":"image/png"}`, etc.).
+/// Binary `data` fields are base64-encoded on the wire.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ContentPart {
+    /// A run of plain text.
+    Text { text: String },
+    /// An inline image (png/jpeg/gif/webp) with its media type.
+    Image {
+        #[serde(with = "base64_bytes")]
+        data: Vec<u8>,
+        media_type: String,
+    },
+    /// An inline file attachment (pdf, text documents, …) with media type and
+    /// original filename.
+    File {
+        #[serde(with = "base64_bytes")]
+        data: Vec<u8>,
+        media_type: String,
+        filename: String,
+    },
+}
+
+/// The content of a [`Message`]: either plain text or an ordered list of
+/// [`ContentPart`]s (text interleaved with image/file attachments).
+///
+/// The representation is `#[serde(untagged)]`, so a text-only message
+/// serializes to (and deserializes from) exactly the bare-string form used in
+/// ailloy 1.x — `"content": "hello"`. Multi-part content serializes to a JSON
+/// array of tagged part objects.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum MessageContent {
+    /// Plain text (wire-compatible with the 1.x `String` content field).
+    Text(String),
+    /// An ordered list of content parts (text + attachments).
+    Parts(Vec<ContentPart>),
+}
+
+impl MessageContent {
+    /// The textual content: for `Text`, a clone of the string; for `Parts`,
+    /// the text parts joined with `"\n"` (attachments contribute nothing).
+    pub fn text(&self) -> String {
+        match self {
+            MessageContent::Text(s) => s.clone(),
+            MessageContent::Parts(parts) => parts
+                .iter()
+                .filter_map(|p| match p {
+                    ContentPart::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+
+    /// Borrow the text directly, but only when this is plain `Text`; returns
+    /// `None` for multi-part content.
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            MessageContent::Text(s) => Some(s.as_str()),
+            MessageContent::Parts(_) => None,
+        }
+    }
+
+    /// True if this content carries any non-text part (image or file).
+    pub fn has_attachments(&self) -> bool {
+        match self {
+            MessageContent::Text(_) => false,
+            MessageContent::Parts(parts) => {
+                parts.iter().any(|p| !matches!(p, ContentPart::Text { .. }))
+            }
+        }
+    }
+}
+
+impl From<String> for MessageContent {
+    fn from(s: String) -> Self {
+        MessageContent::Text(s)
+    }
+}
+
+impl From<&str> for MessageContent {
+    fn from(s: &str) -> Self {
+        MessageContent::Text(s.to_string())
+    }
+}
+
+impl From<&String> for MessageContent {
+    fn from(s: &String) -> Self {
+        MessageContent::Text(s.clone())
+    }
+}
+
+impl From<Vec<ContentPart>> for MessageContent {
+    fn from(parts: Vec<ContentPart>) -> Self {
+        MessageContent::Parts(parts)
+    }
+}
+
+impl std::fmt::Display for MessageContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.text())
+    }
+}
+
 /// A single message in a conversation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
-    pub content: String,
+    pub content: MessageContent,
 }
 
 impl Message {
-    pub fn system(content: impl Into<String>) -> Self {
+    pub fn system(content: impl Into<MessageContent>) -> Self {
         Self {
             role: Role::System,
             content: content.into(),
         }
     }
 
-    pub fn user(content: impl Into<String>) -> Self {
+    pub fn user(content: impl Into<MessageContent>) -> Self {
         Self {
             role: Role::User,
             content: content.into(),
         }
     }
 
-    pub fn assistant(content: impl Into<String>) -> Self {
+    pub fn assistant(content: impl Into<MessageContent>) -> Self {
         Self {
             role: Role::Assistant,
             content: content.into(),
         }
+    }
+
+    /// Build a user message whose content is a text prompt followed by one
+    /// attachment part per file, in argument order.
+    ///
+    /// Attachment media types are inferred from the file extension:
+    /// - Images (`Image` parts): `png`→image/png, `jpg`/`jpeg`→image/jpeg,
+    ///   `gif`→image/gif, `webp`→image/webp
+    /// - `pdf` → `File` part with media type `application/pdf`
+    /// - Text documents (`File` parts): `txt`→text/plain, `md`→text/markdown,
+    ///   `csv`→text/csv, `json`→application/json, `yaml`/`yml`→application/yaml,
+    ///   `xml`→application/xml, `html`→text/html
+    ///
+    /// Any other extension yields an actionable error listing supported types.
+    /// A missing/unreadable file yields an actionable error naming the path.
+    ///
+    /// Note: file reads are synchronous ([`std::fs::read`]); call from a
+    /// blocking context or a spawned blocking task if that matters.
+    pub fn user_with_attachments(
+        text: impl Into<String>,
+        files: &[std::path::PathBuf],
+    ) -> anyhow::Result<Message> {
+        use anyhow::Context as _;
+
+        // Which kind of part an extension maps to, resolved before reading so
+        // that an unsupported extension fails deterministically even if the
+        // file is absent.
+        enum Kind {
+            Image(&'static str),
+            File(&'static str),
+        }
+
+        let mut parts = vec![ContentPart::Text { text: text.into() }];
+
+        for path in files {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+
+            let kind = match ext.as_str() {
+                "png" => Kind::Image("image/png"),
+                "jpg" | "jpeg" => Kind::Image("image/jpeg"),
+                "gif" => Kind::Image("image/gif"),
+                "webp" => Kind::Image("image/webp"),
+                "pdf" => Kind::File("application/pdf"),
+                "txt" => Kind::File("text/plain"),
+                "md" => Kind::File("text/markdown"),
+                "csv" => Kind::File("text/csv"),
+                "json" => Kind::File("application/json"),
+                "yaml" | "yml" => Kind::File("application/yaml"),
+                "xml" => Kind::File("application/xml"),
+                "html" => Kind::File("text/html"),
+                other => anyhow::bail!(
+                    "unsupported attachment type '{}' for '{}' — supported: images (png, jpg, jpeg, gif, webp), pdf, and text files (txt, md, csv, json, yaml, yml, xml, html)",
+                    if other.is_empty() {
+                        "(no extension)"
+                    } else {
+                        other
+                    },
+                    path.display()
+                ),
+            };
+
+            let data = std::fs::read(path).with_context(|| {
+                format!(
+                    "Failed to read attachment '{}' — check the path exists and is readable.",
+                    path.display()
+                )
+            })?;
+
+            let filename = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("attachment")
+                .to_string();
+
+            let part = match kind {
+                Kind::Image(media_type) => ContentPart::Image {
+                    data,
+                    media_type: media_type.to_string(),
+                },
+                Kind::File(media_type) => ContentPart::File {
+                    data,
+                    media_type: media_type.to_string(),
+                    filename,
+                },
+            };
+            parts.push(part);
+        }
+
+        Ok(Message {
+            role: Role::User,
+            content: MessageContent::Parts(parts),
+        })
     }
 }
 
@@ -807,7 +1033,8 @@ mod tests {
     fn test_message_constructors() {
         let msg = Message::user("hello");
         assert_eq!(msg.role, Role::User);
-        assert_eq!(msg.content, "hello");
+        assert_eq!(msg.content.text(), "hello");
+        assert_eq!(msg.content.as_text(), Some("hello"));
 
         let msg = Message::system("you are helpful");
         assert_eq!(msg.role, Role::System);
@@ -830,7 +1057,154 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: Message = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.role, Role::System);
-        assert_eq!(parsed.content, "test");
+        assert_eq!(parsed.content.text(), "test");
+    }
+
+    // --- Task 3.1: MessageContent enum + attachment parts ---
+
+    #[test]
+    fn text_only_serializes_byte_identical_to_1x_shape() {
+        // A text-only message must produce exactly the 1.x wire shape:
+        // content is a bare string, not a tagged object or array.
+        let msg = Message::user("hello world");
+        let json = serde_json::to_string(&msg).unwrap();
+        assert_eq!(json, r#"{"role":"user","content":"hello world"}"#);
+    }
+
+    #[test]
+    fn plain_string_content_deserializes_to_text() {
+        // 1.x on-disk/history JSON with a bare-string content must still load.
+        let msg: Message = serde_json::from_str(r#"{"role":"user","content":"hi"}"#).unwrap();
+        assert_eq!(msg.role, Role::User);
+        assert!(matches!(msg.content, MessageContent::Text(ref s) if s == "hi"));
+        assert_eq!(msg.content.text(), "hi");
+    }
+
+    #[test]
+    fn message_content_json_roundtrip_text() {
+        let c = MessageContent::from("plain");
+        let json = serde_json::to_string(&c).unwrap();
+        assert_eq!(json, r#""plain""#);
+        let back: MessageContent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, c);
+    }
+
+    #[test]
+    fn message_content_yaml_roundtrip_text() {
+        let msg = Message::assistant("yaml me");
+        let yaml = serde_yaml::to_string(&msg).unwrap();
+        // content renders as a bare scalar, not a mapping/sequence.
+        assert!(yaml.contains("content: yaml me"), "yaml was: {yaml}");
+        let back: Message = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(back.content.text(), "yaml me");
+    }
+
+    #[test]
+    fn parts_roundtrip_with_base64_data() {
+        let parts = vec![
+            ContentPart::Text {
+                text: "look at this".to_string(),
+            },
+            ContentPart::Image {
+                data: vec![0xDE, 0xAD, 0xBE, 0xEF],
+                media_type: "image/png".to_string(),
+            },
+            ContentPart::File {
+                data: b"col1,col2\n1,2\n".to_vec(),
+                media_type: "text/csv".to_string(),
+                filename: "data.csv".to_string(),
+            },
+        ];
+        let content = MessageContent::from(parts.clone());
+        let json = serde_json::to_string(&content).unwrap();
+        // Image bytes must appear as base64 (DEADBEEF => 3q2+7w==), not raw.
+        assert!(json.contains("3q2+7w=="), "json was: {json}");
+        assert!(json.contains(r#""type":"image""#));
+        let back: MessageContent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, content);
+
+        // YAML round-trip too (history/config can be YAML).
+        let yaml = serde_yaml::to_string(&content).unwrap();
+        let back_yaml: MessageContent = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(back_yaml, content);
+    }
+
+    #[test]
+    fn text_helpers_on_parts() {
+        let content = MessageContent::from(vec![
+            ContentPart::Text {
+                text: "line one".to_string(),
+            },
+            ContentPart::Image {
+                data: vec![1, 2, 3],
+                media_type: "image/png".to_string(),
+            },
+            ContentPart::Text {
+                text: "line two".to_string(),
+            },
+        ]);
+        assert_eq!(content.text(), "line one\nline two");
+        assert_eq!(content.as_text(), None);
+        assert!(content.has_attachments());
+
+        let text = MessageContent::from("just text");
+        assert_eq!(text.text(), "just text");
+        assert_eq!(text.as_text(), Some("just text"));
+        assert!(!text.has_attachments());
+        assert_eq!(format!("{text}"), "just text");
+    }
+
+    #[test]
+    fn user_with_attachments_png_and_pdf() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("pic.png");
+        // Minimal fake PNG bytes (content isn't validated here).
+        std::fs::write(&png, [0x89, b'P', b'N', b'G', 1, 2, 3]).unwrap();
+        let pdf = dir.path().join("doc.pdf");
+        std::fs::write(&pdf, b"%PDF-1.4 fake").unwrap();
+
+        let msg =
+            Message::user_with_attachments("describe these", &[png.clone(), pdf.clone()]).unwrap();
+        assert_eq!(msg.role, Role::User);
+        assert!(msg.content.has_attachments());
+        assert_eq!(msg.content.text(), "describe these");
+
+        let MessageContent::Parts(parts) = &msg.content else {
+            panic!("expected Parts");
+        };
+        assert_eq!(parts.len(), 3);
+        assert!(matches!(&parts[0], ContentPart::Text { text } if text == "describe these"));
+        assert!(
+            matches!(&parts[1], ContentPart::Image { media_type, .. } if media_type == "image/png")
+        );
+        assert!(matches!(
+            &parts[2],
+            ContentPart::File { media_type, filename, .. }
+                if media_type == "application/pdf" && filename == "doc.pdf"
+        ));
+    }
+
+    #[test]
+    fn user_with_attachments_unknown_extension_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("blob.bin");
+        std::fs::write(&bin, [0u8; 4]).unwrap();
+        let err = Message::user_with_attachments("x", &[bin])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unsupported attachment type"), "err: {err}");
+        assert!(err.contains("bin"), "err: {err}");
+        assert!(err.contains("supported"), "err: {err}");
+    }
+
+    #[test]
+    fn user_with_attachments_missing_file_errors() {
+        let missing = std::path::PathBuf::from("/nonexistent/definitely/missing.png");
+        let err = Message::user_with_attachments("x", std::slice::from_ref(&missing))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Failed to read attachment"), "err: {err}");
+        assert!(err.contains("missing.png"), "err: {err}");
     }
 
     #[test]

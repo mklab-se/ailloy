@@ -31,6 +31,9 @@ pub struct OpenAiClient {
 #[derive(Serialize)]
 struct ChatRequest<'a> {
     model: &'a str,
+    // TODO(Task 3.2): Message serializes text-only content to the plain-string
+    // wire shape (unchanged from 1.x); multi-part MessageContent::Parts still
+    // needs translation to the OpenAI content-array format here.
     messages: &'a [Message],
     #[serde(skip_serializing_if = "Option::is_none")]
     max_completion_tokens: Option<u32>,

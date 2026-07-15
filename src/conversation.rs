@@ -4,7 +4,7 @@ use anyhow::Result;
 use futures_util::StreamExt;
 
 use crate::client::Client;
-use crate::types::{ChatResponse, ChatStream, Message, Role, StreamEvent};
+use crate::types::{ChatResponse, ChatStream, Message, StreamEvent};
 
 /// Trait for conversation history storage.
 pub trait ChatHistory: Send + Sync {
@@ -96,7 +96,7 @@ impl Conversation {
     /// Send a message and get a response. Both the user message and assistant
     /// response are appended to history.
     pub async fn send(&mut self, message: impl Into<String>) -> Result<ChatResponse> {
-        let user_msg = Message::user(message);
+        let user_msg = Message::user(message.into());
         self.history.push(user_msg);
 
         let messages = self.build_messages();
@@ -111,7 +111,7 @@ impl Conversation {
     /// to history immediately. The assistant response is assembled and appended
     /// when the stream completes (via the `Done` event).
     pub async fn send_stream(&mut self, message: impl Into<String>) -> Result<ChatStream> {
-        let user_msg = Message::user(message);
+        let user_msg = Message::user(message.into());
         self.history.push(user_msg);
 
         let messages = self.build_messages();
@@ -158,10 +158,7 @@ impl Conversation {
     fn build_messages(&self) -> Vec<Message> {
         let mut messages = Vec::new();
         if let Some(system) = &self.system_prompt {
-            messages.push(Message {
-                role: Role::System,
-                content: system.clone(),
-            });
+            messages.push(Message::system(system));
         }
         messages.extend(self.history.messages());
         messages
@@ -184,7 +181,7 @@ mod tests {
 
         let msgs = history.messages();
         assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0].content, "hello");
+        assert_eq!(msgs[0].content.text(), "hello");
 
         history.clear();
         assert!(history.is_empty());

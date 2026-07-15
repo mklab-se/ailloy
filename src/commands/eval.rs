@@ -228,7 +228,7 @@ mod tests {
     fn judge_prompt_contains_all_parts() {
         let msgs = judge_messages("must be swedish", "hej världen", Some("greeting test"));
         assert_eq!(msgs.len(), 2);
-        let user = &msgs[1].content;
+        let user = msgs[1].content.text();
         assert!(user.contains("must be swedish"));
         assert!(user.contains("hej världen"));
         assert!(user.contains("greeting test"));

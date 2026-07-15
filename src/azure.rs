@@ -44,6 +44,9 @@ pub struct AzureOpenAiClient {
 struct ChatRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<&'a str>,
+    // TODO(Task 3.2): text-only Message content serializes to the 1.x
+    // plain-string shape; multi-part MessageContent::Parts still needs
+    // translation to the Azure OpenAI content-array format here.
     messages: &'a [Message],
     #[serde(skip_serializing_if = "Option::is_none")]
     max_completion_tokens: Option<u32>,

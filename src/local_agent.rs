@@ -41,7 +41,7 @@ impl LocalAgentClient {
     fn build_prompt(messages: &[Message]) -> String {
         messages
             .iter()
-            .map(|m| m.content.as_str())
+            .map(|m| m.content.text())
             .collect::<Vec<_>>()
             .join("\n")
     }

@@ -23,6 +23,9 @@ pub struct OllamaClient {
 #[derive(Serialize)]
 struct ChatRequest<'a> {
     model: &'a str,
+    // TODO(Task 3.2): text-only Message content serializes to the 1.x
+    // plain-string shape; multi-part MessageContent::Parts still needs
+    // translation to the Ollama content/images format here.
     messages: &'a [Message],
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

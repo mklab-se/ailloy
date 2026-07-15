@@ -227,7 +227,7 @@ impl VertexAiClient {
                     system = Some(GeminiContent {
                         role: "user".to_string(),
                         parts: vec![GeminiPart {
-                            text: Some(msg.content.clone()),
+                            text: Some(msg.content.text()),
                             inline_data: None,
                         }],
                     });
@@ -236,7 +236,7 @@ impl VertexAiClient {
                     contents.push(GeminiContent {
                         role: "user".to_string(),
                         parts: vec![GeminiPart {
-                            text: Some(msg.content.clone()),
+                            text: Some(msg.content.text()),
                             inline_data: None,
                         }],
                     });
@@ -245,7 +245,7 @@ impl VertexAiClient {
                     contents.push(GeminiContent {
                         role: "model".to_string(),
                         parts: vec![GeminiPart {
-                            text: Some(msg.content.clone()),
+                            text: Some(msg.content.text()),
                             inline_data: None,
                         }],
                     });

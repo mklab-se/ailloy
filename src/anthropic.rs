@@ -27,7 +27,7 @@ pub struct AnthropicClient {
 #[derive(Serialize)]
 struct MessagesRequest<'a> {
     model: &'a str,
-    messages: Vec<AnthropicMessage<'a>>,
+    messages: Vec<AnthropicMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<&'a str>,
     max_tokens: u32,
@@ -37,9 +37,11 @@ struct MessagesRequest<'a> {
 }
 
 #[derive(Serialize, Clone)]
-struct AnthropicMessage<'a> {
-    role: &'a str,
-    content: &'a str,
+struct AnthropicMessage {
+    role: &'static str,
+    // TODO(Task 3.2): only the flattened text of the message is sent; image /
+    // file parts must be translated to Anthropic content blocks here.
+    content: String,
 }
 
 // Response types
@@ -151,27 +153,25 @@ impl AnthropicClient {
         &self.model
     }
 
-    fn convert_messages<'a>(
-        messages: &'a [Message],
-    ) -> (Option<&'a str>, Vec<AnthropicMessage<'a>>) {
+    fn convert_messages(messages: &[Message]) -> (Option<String>, Vec<AnthropicMessage>) {
         let mut system_prompt = None;
         let mut converted = Vec::new();
 
         for msg in messages {
             match msg.role {
                 Role::System => {
-                    system_prompt = Some(msg.content.as_str());
+                    system_prompt = Some(msg.content.text());
                 }
                 Role::User => {
                     converted.push(AnthropicMessage {
                         role: "user",
-                        content: &msg.content,
+                        content: msg.content.text(),
                     });
                 }
                 Role::Assistant => {
                     converted.push(AnthropicMessage {
                         role: "assistant",
-                        content: &msg.content,
+                        content: msg.content.text(),
                     });
                 }
             }
@@ -198,10 +198,14 @@ impl Provider for AnthropicClient {
         let (system, converted) = Self::convert_messages(messages);
         // Anthropic structured output: prompted JSON is the reliable
         // lowest-common-denominator (works on every Claude model).
-        let system_with_format = options
-            .and_then(|o| o.response_format.as_ref())
-            .map(|f| format!("{}{}", system.unwrap_or_default(), f.nudge_text()));
-        let system = system_with_format.as_deref().or(system);
+        let system_with_format = options.and_then(|o| o.response_format.as_ref()).map(|f| {
+            format!(
+                "{}{}",
+                system.as_deref().unwrap_or_default(),
+                f.nudge_text()
+            )
+        });
+        let system = system_with_format.as_deref().or(system.as_deref());
         let max_tokens = options
             .and_then(|o| o.max_tokens)
             .unwrap_or(DEFAULT_MAX_TOKENS);
@@ -285,7 +289,7 @@ impl Provider for AnthropicClient {
         let request = MessagesRequest {
             model: &self.model,
             messages: converted,
-            system,
+            system: system.as_deref(),
             max_tokens,
             temperature: options.and_then(|o| o.temperature),
             stream: true,
