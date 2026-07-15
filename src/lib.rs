@@ -40,6 +40,8 @@ mod openai_images;
 pub mod params;
 pub mod retirement;
 pub mod terminal;
+#[cfg(feature = "config-tui")]
+pub(crate) mod tui;
 pub mod types;
 pub mod vertex;
 mod video_jobs;

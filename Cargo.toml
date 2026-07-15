@@ -28,7 +28,7 @@ cli = [
     "tokio/rt-multi-thread",
     "tokio/macros",
 ]
-config-tui = ["dep:inquire", "dep:colored", "dep:crossterm"]
+config-tui = ["dep:inquire", "dep:colored", "dep:crossterm", "dep:ratatui"]
 
 [dependencies]
 # Core (always included)
@@ -52,6 +52,7 @@ clap_complete = { version = "4.5", optional = true }
 inquire = { version = "0.7", optional = true }
 colored = { version = "2.1", optional = true }
 crossterm = { version = "0.28", optional = true }
+ratatui = { version = "0.29", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 semver = { version = "1.0", optional = true }
 

@@ -1398,6 +1398,22 @@ pub async fn run_interactive_config(
     config: &mut Config,
     capability_columns: &[&str],
 ) -> Result<bool> {
+    use std::io::IsTerminal;
+
+    // The legacy inquire/crossterm loop below is retained for one release as an
+    // escape hatch (`AILLOY_TUI_LEGACY`) and is removed in Task 5.4. Keeping it
+    // runtime-reachable avoids dead-code churn on its helper functions.
+    if std::env::var_os("AILLOY_TUI_LEGACY").is_none() {
+        if std::io::stdout().is_terminal() {
+            // Full-screen ratatui dashboard (loads/saves the global config).
+            crate::tui::run("ailloy").await?;
+        } else {
+            // No interactive terminal available: print status and exit.
+            print_ai_status("ailloy", capability_columns)?;
+        }
+        return Ok(false);
+    }
+
     set_tui_mode(true);
     let mut modified = false;
     let mut selected: usize = 0;
