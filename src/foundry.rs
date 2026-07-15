@@ -13,8 +13,12 @@ use tracing::debug;
 
 use crate::azure::AzureAuth;
 use crate::client::Provider;
+use crate::openai_images::{
+    ImageFlavor, build_edits_form, build_generations_body, parse_images_response, wants_edits,
+};
 use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, Message, StreamEvent, Usage,
+    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageOptions,
+    ImageResponse, Message, StreamEvent, Usage,
 };
 
 /// Client for Microsoft Foundry (AI Services).
@@ -130,6 +134,20 @@ struct StreamDelta {
     content: Option<String>,
 }
 
+/// Pick the image request shape for a model/deployment name.
+///
+/// Mirrors `azure::flavor_for`: Foundry only ever exposes DALL·E or
+/// gpt-image style deployments; anything not explicitly named `dall-e*` is
+/// treated as a gpt-image deployment (including custom deployment names
+/// that don't echo the underlying model).
+fn flavor_for(name: &str) -> ImageFlavor {
+    if name.starts_with("dall-e") {
+        ImageFlavor::DallE
+    } else {
+        ImageFlavor::AzureGptImage
+    }
+}
+
 impl FoundryClient {
     /// Create a new Microsoft Foundry client on the unified `/openai/v1/`
     /// surface (recommended). Use [`FoundryClient::with_api_version`] for the
@@ -185,6 +203,41 @@ impl FoundryClient {
                 self.base_url()
             ),
         }
+    }
+
+    /// Image generation URL. Unlike `chat_url`/`embed_url`, the legacy dated
+    /// surface for images uses the `/openai/deployments/{model}/...` path
+    /// (like Azure OpenAI), not `/models/...` — Foundry's image API is
+    /// exposed through the Azure OpenAI-compatible surface, with the model
+    /// field doubling as the deployment name.
+    fn image_url(&self) -> String {
+        match &self.api_version {
+            None => format!("{}/openai/v1/images/generations", self.base_url()),
+            Some(version) => format!(
+                "{}/openai/deployments/{}/images/generations?api-version={version}",
+                self.base_url(),
+                self.model
+            ),
+        }
+    }
+
+    /// Image edits URL; see [`FoundryClient::image_url`] for the v1-vs-dated
+    /// path rule.
+    fn edits_url(&self) -> String {
+        match &self.api_version {
+            None => format!("{}/openai/v1/images/edits", self.base_url()),
+            Some(version) => format!(
+                "{}/openai/deployments/{}/images/edits?api-version={version}",
+                self.base_url(),
+                self.model
+            ),
+        }
+    }
+
+    /// Model value for v1 request bodies (`None` on dated endpoints, where
+    /// the deployment is part of the URL). Mirrors `AzureOpenAiClient::body_model`.
+    fn body_model(&self) -> Option<&str> {
+        self.api_version.is_none().then_some(self.model.as_str())
     }
 
     async fn get_auth_header(&self) -> Result<(&'static str, String)> {
@@ -459,6 +512,57 @@ impl Provider for FoundryClient {
         Ok(Box::pin(stream))
     }
 
+    async fn generate_images(
+        &self,
+        prompt: &str,
+        options: Option<&ImageOptions>,
+    ) -> Result<Vec<ImageResponse>> {
+        let (header_name, header_value) = self.get_auth_header().await?;
+        let flavor = flavor_for(&self.model);
+
+        let response = if wants_edits(options) {
+            // `wants_edits` only returns true when `options` is `Some` with
+            // non-empty `reference_images`.
+            let opts = options.expect("wants_edits(true) implies options is Some");
+            let url = self.edits_url();
+            debug!(url = %url, "Sending image edit request to Microsoft Foundry");
+
+            let form = build_edits_form(self.body_model(), prompt, opts).await?;
+            self.client
+                .post(&url)
+                .header(header_name, &header_value)
+                .multipart(form)
+                .send()
+                .await
+                .context("Failed to send image edit request to Microsoft Foundry")?
+        } else {
+            let url = self.image_url();
+            debug!(url = %url, "Sending image generation request to Microsoft Foundry");
+
+            let body = build_generations_body(self.body_model(), prompt, options, flavor)?;
+            self.client
+                .post(&url)
+                .header(header_name, &header_value)
+                .json(&body)
+                .send()
+                .await
+                .context("Failed to send image generation request to Microsoft Foundry")?
+        };
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
+        }
+
+        let body = response
+            .text()
+            .await
+            .context("Failed to read Microsoft Foundry image response")?;
+
+        parse_images_response(&body, options.and_then(|o| o.size))
+    }
+
     async fn embed(&self, texts: &[&str], options: Option<&EmbedOptions>) -> Result<EmbedResponse> {
         let url = self.embed_url();
         debug!(url = %url, model = %self.model, count = texts.len(), "Sending embedding request to Microsoft Foundry");
@@ -536,6 +640,19 @@ mod v1_surface_tests {
             c.embed_url(),
             "https://acct.services.ai.azure.com/openai/v1/embeddings"
         );
+        assert_eq!(
+            c.image_url(),
+            "https://acct.services.ai.azure.com/openai/v1/images/generations"
+        );
+        assert_eq!(
+            c.edits_url(),
+            "https://acct.services.ai.azure.com/openai/v1/images/edits"
+        );
+        assert_eq!(
+            c.body_model(),
+            Some("claude-sonnet-5"),
+            "v1 bodies carry the model as deployment name"
+        );
     }
 
     #[test]
@@ -550,5 +667,73 @@ mod v1_surface_tests {
             c.chat_url(),
             "https://acct.services.ai.azure.com/models/chat/completions?api-version=2024-05-01-preview"
         );
+    }
+
+    #[test]
+    fn dated_api_version_uses_legacy_deployments_path_for_images() {
+        // Unlike chat/embed (which use /models/... on the dated surface),
+        // the legacy image endpoints follow the Azure OpenAI-style
+        // /openai/deployments/{model}/... path.
+        let c = FoundryClient::with_api_version(
+            "https://acct.services.ai.azure.com",
+            "gpt-image-1-deployment",
+            "2024-05-01-preview",
+            AzureAuth::AzureCli,
+        );
+        assert_eq!(
+            c.image_url(),
+            "https://acct.services.ai.azure.com/openai/deployments/gpt-image-1-deployment/images/generations?api-version=2024-05-01-preview"
+        );
+        assert_eq!(
+            c.edits_url(),
+            "https://acct.services.ai.azure.com/openai/deployments/gpt-image-1-deployment/images/edits?api-version=2024-05-01-preview"
+        );
+        assert_eq!(c.body_model(), None, "legacy bodies must not carry model");
+    }
+
+    #[test]
+    fn flavor_for_selects_dalle_for_dalle_deployments() {
+        assert!(matches!(flavor_for("dall-e-3"), ImageFlavor::DallE));
+        assert!(matches!(flavor_for("dall-e-2"), ImageFlavor::DallE));
+    }
+
+    #[test]
+    fn flavor_for_selects_azure_gpt_image_for_everything_else() {
+        assert!(matches!(
+            flavor_for("gpt-image-1"),
+            ImageFlavor::AzureGptImage
+        ));
+        assert!(matches!(
+            flavor_for("my-custom-deployment"),
+            ImageFlavor::AzureGptImage
+        ));
+    }
+
+    #[test]
+    fn wants_edits_routes_to_edits_url_when_reference_images_present() {
+        use crate::types::ImageOptions;
+
+        let c = FoundryClient::new(
+            "https://acct.services.ai.azure.com",
+            "gpt-image-1",
+            AzureAuth::AzureCli,
+        );
+        let opts = ImageOptions::builder()
+            .reference_image(std::path::PathBuf::from("ref.png"))
+            .build();
+        assert!(wants_edits(Some(&opts)));
+        // The routing decision itself just picks which URL function to call;
+        // confirm both resolve to the expected distinct endpoints.
+        assert!(c.edits_url().ends_with("/images/edits"));
+        assert!(c.image_url().ends_with("/images/generations"));
+        assert_ne!(c.edits_url(), c.image_url());
+    }
+
+    #[test]
+    fn no_reference_images_routes_to_generations_url() {
+        use crate::types::ImageOptions;
+
+        assert!(!wants_edits(None));
+        assert!(!wants_edits(Some(&ImageOptions::default())));
     }
 }
