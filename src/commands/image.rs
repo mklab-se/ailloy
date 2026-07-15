@@ -360,6 +360,15 @@ async fn generate_and_save(
     quiet: bool,
 ) -> Result<()> {
     let mut options = build_image_options(args)?;
+    // An explicit `-o filename` extension counts as user intent for the output
+    // format. Priority: `--format` flag (already set above) > extension > node
+    // default. Only applies when the user gave a concrete `-o` path; auto-
+    // generated filenames follow the actual response format instead.
+    if options.output_format.is_none() {
+        if let Some(fmt) = args.output.as_deref().and_then(format_from_extension) {
+            options.output_format = Some(fmt);
+        }
+    }
     // Fill unset fields from per-node defaults; explicit flags already won.
     if let Some(defaults) = node_defaults {
         merge_image_defaults(&mut options, defaults);
@@ -500,6 +509,20 @@ fn parse_size(s: &str) -> Option<(u32, u32)> {
         }
     }
     None
+}
+
+/// Infer an [`ImageFormat`] from an output path's file extension.
+///
+/// Returns `None` for unknown extensions or paths with no extension. `jpg`
+/// and `jpeg` both map to [`ImageFormat::Jpeg`]. Matching is case-insensitive.
+pub(crate) fn format_from_extension(path: &str) -> Option<ImageFormat> {
+    let (_, ext) = path.rsplit_once('.')?;
+    match ext.to_lowercase().as_str() {
+        "png" => Some(ImageFormat::Png),
+        "jpg" | "jpeg" => Some(ImageFormat::Jpeg),
+        "webp" => Some(ImageFormat::Webp),
+        _ => None,
+    }
 }
 
 fn auto_filename(format_str: &str) -> String {
@@ -753,6 +776,84 @@ mod tests {
         assert_eq!(opts.output_format, Some(ImageFormat::Webp));
         assert_eq!(opts.compression, Some(50));
         assert_eq!(opts.quality.as_deref(), Some("hd"));
+    }
+
+    // --- Task 6.2: -o extension drives image output format ---
+
+    #[test]
+    fn test_format_from_extension() {
+        assert_eq!(format_from_extension("frog.png"), Some(ImageFormat::Png));
+        assert_eq!(format_from_extension("frog.jpg"), Some(ImageFormat::Jpeg));
+        assert_eq!(format_from_extension("frog.jpeg"), Some(ImageFormat::Jpeg));
+        assert_eq!(format_from_extension("frog.webp"), Some(ImageFormat::Webp));
+        // Case-insensitive and directory-aware.
+        assert_eq!(
+            format_from_extension("a/b/FROG.PNG"),
+            Some(ImageFormat::Png)
+        );
+        // Unknown extension and no extension both yield None.
+        assert_eq!(format_from_extension("frog.bmp"), None);
+        assert_eq!(format_from_extension("frog"), None);
+        assert_eq!(format_from_extension(""), None);
+    }
+
+    /// Mirror the format-resolution seam in `generate_and_save`:
+    /// `--format` flag > `-o` extension > node default.
+    fn resolve_output_format(
+        args: &ImageArgs,
+        defaults: &BTreeMap<String, String>,
+    ) -> Option<ImageFormat> {
+        let mut opts = build_image_options(args).unwrap();
+        if opts.output_format.is_none() {
+            if let Some(fmt) = args.output.as_deref().and_then(format_from_extension) {
+                opts.output_format = Some(fmt);
+            }
+        }
+        merge_image_defaults(&mut opts, defaults);
+        opts.output_format
+    }
+
+    #[test]
+    fn test_output_format_priority_flag_beats_extension_beats_node_default() {
+        let defaults = BTreeMap::from([("image.format".to_string(), "jpeg".to_string())]);
+
+        // Flag wins over both extension and node default.
+        let args = ImageArgs {
+            format: Some("webp".to_string()),
+            output: Some("frog.png".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_output_format(&args, &defaults),
+            Some(ImageFormat::Webp)
+        );
+
+        // No flag: `-o` extension wins over the node default (jpeg).
+        let args = ImageArgs {
+            output: Some("frog.png".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_output_format(&args, &defaults),
+            Some(ImageFormat::Png)
+        );
+
+        // No flag, no recognizable extension: node default applies.
+        let args = ImageArgs {
+            output: Some("frog.gif".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_output_format(&args, &defaults),
+            Some(ImageFormat::Jpeg)
+        );
+
+        // No output path at all (auto-filename): node default applies.
+        let args = ImageArgs::default();
+        assert_eq!(
+            resolve_output_format(&args, &defaults),
+            Some(ImageFormat::Jpeg)
+        );
     }
 
     #[test]

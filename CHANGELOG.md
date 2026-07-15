@@ -98,6 +98,11 @@ version bump — see `MIGRATION.md` for the upgrade path from 1.x.
 - **`inquire` is now a `cli`-only dependency** — it backs `ai config set-key`'s
   key prompt only; the `config-tui` feature no longer pulls it in (dashboard
   interaction is all ratatui/crossterm)
+- **Strict JSON schemas are auto-patched with `additionalProperties: false`**
+  as required by OpenAI-family APIs (Azure/Foundry/OpenAI strict `json_schema`
+  mode) — every object node in a `--schema` document gets it inserted
+  automatically, so users no longer have to hand-add it; explicit values are
+  preserved
 
 ### Breaking
 
@@ -124,6 +129,10 @@ version bump — see `MIGRATION.md` for the upgrade path from 1.x.
 
 ### Fixed
 
+- **`ailloy image ... -o file.png`** now honors the `-o` filename extension as
+  the output format (priority: `--format` flag > `-o` extension > node
+  default), so `-o frog.png` no longer saves JPEG bytes when a node defaults to
+  `image.format: jpeg`
 - **`ailloy ai status` (subcommand form)** now includes the `video` capability
   in its printed status, matching the bare `ailloy ai` output
 - **`ailloy chat --attach ... -o file.svg`** now routes attachments through

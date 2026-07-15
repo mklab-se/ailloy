@@ -421,10 +421,22 @@ impl ResponseFormat {
                 name,
                 schema,
                 strict,
-            } => serde_json::json!({
-                "type": "json_schema",
-                "json_schema": {"name": name, "schema": schema, "strict": strict}
-            }),
+            } => {
+                // OpenAI-family strict mode requires `additionalProperties: false`
+                // on every object node. Auto-patch a clone so callers don't have
+                // to hand-edit their schemas (the original `self` stays intact).
+                let schema = if *strict {
+                    let mut patched = schema.clone();
+                    patch_strict_additional_properties(&mut patched);
+                    patched
+                } else {
+                    schema.clone()
+                };
+                serde_json::json!({
+                    "type": "json_schema",
+                    "json_schema": {"name": name, "schema": schema, "strict": strict}
+                })
+            }
         }
     }
 
@@ -449,6 +461,61 @@ impl ResponseFormat {
                 serde_json::to_string_pretty(schema).unwrap_or_default()
             ),
         }
+    }
+}
+
+/// Recursively insert `"additionalProperties": false` on every object schema
+/// node that lacks it, as required by OpenAI-family strict `json_schema` mode.
+///
+/// A node is treated as an object schema when its `"type"` is `"object"` or it
+/// carries a `"properties"` key. An existing `additionalProperties` (whether
+/// `true` or a schema value) is never overwritten. Recurses into `properties`
+/// values, `items` (single schema or tuple array), `$defs`/`definitions`
+/// values, and `anyOf`/`allOf`/`oneOf` arrays. Operates in place on a clone.
+fn patch_strict_additional_properties(value: &mut serde_json::Value) {
+    let serde_json::Value::Object(map) = value else {
+        return;
+    };
+
+    let is_object_schema = map.get("type").and_then(|t| t.as_str()) == Some("object")
+        || map.contains_key("properties");
+    if is_object_schema && !map.contains_key("additionalProperties") {
+        map.insert(
+            "additionalProperties".to_string(),
+            serde_json::Value::Bool(false),
+        );
+    }
+
+    if let Some(props) = map.get_mut("properties").and_then(|p| p.as_object_mut()) {
+        for v in props.values_mut() {
+            patch_strict_additional_properties(v);
+        }
+    }
+
+    for key in ["$defs", "definitions"] {
+        if let Some(defs) = map.get_mut(key).and_then(|d| d.as_object_mut()) {
+            for v in defs.values_mut() {
+                patch_strict_additional_properties(v);
+            }
+        }
+    }
+
+    for key in ["anyOf", "allOf", "oneOf"] {
+        if let Some(arr) = map.get_mut(key).and_then(|a| a.as_array_mut()) {
+            for v in arr.iter_mut() {
+                patch_strict_additional_properties(v);
+            }
+        }
+    }
+
+    match map.get_mut("items") {
+        Some(serde_json::Value::Array(arr)) => {
+            for v in arr.iter_mut() {
+                patch_strict_additional_properties(v);
+            }
+        }
+        Some(other) => patch_strict_additional_properties(other),
+        None => {}
     }
 }
 
@@ -2097,6 +2164,136 @@ mod response_format_tests {
                 .nudge_text()
                 .contains("JSON object")
         );
+    }
+
+    // --- Task 6.2: strict schemas auto-patched with additionalProperties ---
+
+    #[test]
+    fn strict_schema_patches_top_level_object() {
+        let f = ResponseFormat::JsonSchema {
+            name: "v".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"pass": {"type": "boolean"}}
+            }),
+            strict: true,
+        };
+        let v = f.to_openai_value();
+        let schema = &v["json_schema"]["schema"];
+        assert_eq!(schema["additionalProperties"], false);
+    }
+
+    #[test]
+    fn strict_schema_patches_nested_properties_items_and_defs() {
+        let f = ResponseFormat::JsonSchema {
+            name: "v".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "child": {
+                        "type": "object",
+                        "properties": {"x": {"type": "string"}}
+                    },
+                    "list": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {"y": {"type": "number"}}
+                        }
+                    },
+                    "ref": {"$ref": "#/$defs/Thing"}
+                },
+                "$defs": {
+                    "Thing": {
+                        "type": "object",
+                        "properties": {"z": {"type": "boolean"}}
+                    }
+                }
+            }),
+            strict: true,
+        };
+        let v = f.to_openai_value();
+        let s = &v["json_schema"]["schema"];
+        assert_eq!(s["additionalProperties"], false);
+        assert_eq!(s["properties"]["child"]["additionalProperties"], false);
+        assert_eq!(
+            s["properties"]["list"]["items"]["additionalProperties"],
+            false
+        );
+        assert_eq!(s["$defs"]["Thing"]["additionalProperties"], false);
+    }
+
+    #[test]
+    fn strict_schema_preserves_explicit_additional_properties() {
+        let f = ResponseFormat::JsonSchema {
+            name: "v".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {"pass": {"type": "boolean"}}
+            }),
+            strict: true,
+        };
+        let v = f.to_openai_value();
+        // Existing explicit value (true) must be preserved, not clobbered.
+        assert_eq!(v["json_schema"]["schema"]["additionalProperties"], true);
+    }
+
+    #[test]
+    fn strict_schema_leaves_non_object_untouched() {
+        let f = ResponseFormat::JsonSchema {
+            name: "v".into(),
+            schema: serde_json::json!({"type": "string"}),
+            strict: true,
+        };
+        let v = f.to_openai_value();
+        assert!(
+            v["json_schema"]["schema"]
+                .get("additionalProperties")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn strict_schema_patch_does_not_mutate_original() {
+        // to_openai_value takes &self and clones, so the source stays intact.
+        let f = ResponseFormat::JsonSchema {
+            name: "v".into(),
+            schema: serde_json::json!({"type": "object", "properties": {}}),
+            strict: true,
+        };
+        let _ = f.to_openai_value();
+        if let ResponseFormat::JsonSchema { schema, .. } = &f {
+            assert!(schema.get("additionalProperties").is_none());
+        } else {
+            panic!("expected JsonSchema");
+        }
+    }
+
+    #[test]
+    fn non_strict_schema_is_not_patched() {
+        let f = ResponseFormat::JsonSchema {
+            name: "v".into(),
+            schema: serde_json::json!({"type": "object", "properties": {}}),
+            strict: false,
+        };
+        let v = f.to_openai_value();
+        assert!(
+            v["json_schema"]["schema"]
+                .get("additionalProperties")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn ollama_value_not_patched_for_strict_schema() {
+        let f = ResponseFormat::JsonSchema {
+            name: "v".into(),
+            schema: serde_json::json!({"type": "object", "properties": {}}),
+            strict: true,
+        };
+        let v = f.to_ollama_value();
+        assert!(v.get("additionalProperties").is_none());
     }
 
     #[test]

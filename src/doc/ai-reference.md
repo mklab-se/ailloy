@@ -36,6 +36,10 @@ Reads from stdin when piped. Running `ailloy "message"` is shorthand for `ailloy
 yaml, yml, xml, html); the media type is inferred from the extension. In `-i`/`--interactive`
 mode, `--attach` files are attached to the first user message only.
 
+`--schema` documents are auto-patched with `additionalProperties: false` on every object node
+(as required by OpenAI-family strict mode), so you don't need to hand-add it; explicit values you
+set are preserved.
+
 ### Image
 
 ```

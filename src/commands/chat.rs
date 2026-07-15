@@ -235,6 +235,11 @@ async fn run_image_generation(
     }
 
     let mut options = ImageOptions::default();
+    // The `-o filename` extension counts as user intent for the output format;
+    // it takes precedence over the node default (applied on the next line).
+    if let Some(fmt) = super::image::format_from_extension(output) {
+        options.output_format = Some(fmt);
+    }
     if let Some(defaults) = &node.node_defaults {
         merge_image_defaults(&mut options, defaults);
     }
