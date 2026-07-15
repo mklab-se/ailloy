@@ -143,9 +143,9 @@ ailloy eval "$output" -c "written in professional English" --threshold 0.8 --jso
 ```
 ailloy ai                     # Show AI status
 ailloy ai status              # Show AI status (same as above)
-ailloy ai config              # Interactive configuration wizard
-ailloy ai config add-node     # Add a new AI node
-ailloy ai config edit-node ID # Edit an existing node
+ailloy ai config              # Interactive configuration dashboard (TUI)
+ailloy ai config add-node     # Add a new AI node (single add-node form)
+ailloy ai config edit-node ID # Edit an existing node (single edit form)
 ailloy ai config delete-node ID  # Delete a node
 ailloy ai config list-nodes   # List all configured nodes
 ailloy ai config show-node ID # Show node details
@@ -166,6 +166,38 @@ ailloy ai skill               # Show skill setup guide
 ailloy ai skill --emit        # Output skill markdown
 ailloy ai skill --reference   # Output this reference
 ```
+
+#### Configuration dashboard
+
+`ailloy ai config` opens a full-screen ratatui dashboard (on a TTY; without one
+it prints status and exits). It edits the **global** config and saves changes
+immediately. A two-pane layout shows the node table on the left and the selected
+node's connection, capabilities, and per-node parameter defaults on the right.
+
+Keys (Browse):
+
+| Key | Action |
+|-----|--------|
+| `↑`/`↓`, `j` | Move selection / scroll the detail pane |
+| `Tab` | Toggle focus between the node list and detail pane |
+| `Enter` | Edit the highlighted per-node default (detail pane) |
+| `a` | Add a node (opens the add-node form) |
+| `e` | Edit the selected node |
+| `x` | Delete the selected node (asks to confirm) |
+| `d` | Set the selected node as the default for one of its capabilities |
+| `k` | Store an API key in the OS keychain for the selected node |
+| `t` | Run a one-line chat connectivity test against the selected node |
+| `q`/`Esc` | Quit |
+
+The add/edit form starts with a provider selector, then provider-specific fields
+(model, endpoint, deployment, api_version, project/location, or agent binary), an
+auth selector (`env`/`api_key`/`keychain`/`azure_cli`/`gcloud_cli` as applicable),
+an optional alias, and capability toggles. In the form: `↑`/`↓` move between
+fields, `←`/`→` change a selector, `Space` toggles a capability, `Ctrl+S` (or the
+`[ Save ]` action) commits, and `Esc` cancels. For Azure OpenAI and Microsoft
+Foundry, a `[ Discover via az CLI ]` action lists your subscriptions, resources,
+and deployments via the Azure CLI (after a one-time consent prompt) and prefills
+the form. A connectivity test blocks the UI briefly while it runs.
 
 ### Global Flags
 

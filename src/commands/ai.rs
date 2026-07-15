@@ -49,7 +49,7 @@ async fn run_config(command: Option<AiConfigCommands>) -> Result<()> {
         }
         Some(AiConfigCommands::EditNode { id }) => {
             let mut config = Config::load_global()?;
-            config_tui::edit_node_interactive(&mut config, &id)
+            config_tui::edit_node_interactive(&mut config, &id).await
         }
         Some(AiConfigCommands::DeleteNode { id }) => run_delete_node(&id),
         Some(AiConfigCommands::SetKey { id }) => run_set_key(&id),
@@ -138,7 +138,7 @@ pub async fn run_legacy_nodes(cmd: NodeCommands) -> Result<()> {
         }
         NodeCommands::Edit { id } => {
             let mut config = Config::load_global()?;
-            config_tui::edit_node_interactive(&mut config, &id)
+            config_tui::edit_node_interactive(&mut config, &id).await
         }
         NodeCommands::Remove { id } => run_delete_node(&id),
         NodeCommands::Default {

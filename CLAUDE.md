@@ -27,9 +27,19 @@ src/
                       #   (AiNode::new, ensure_node, upsert_node, set_default_for),
                       #   keychain helpers (keychain_secret, set_keychain_secret,
                       #   delete_keychain_secret — gated on "keychain" feature)
-  config_tui.rs       # Shared interactive config TUI (requires "config-tui" feature) —
-                      #   consent prompts, interactive wizard, node setup, enable/disable,
-                      #   status display, test chat, reset, Azure/Foundry discovery flows
+  config_tui.rs       # Shared config entry points (requires "config-tui" feature) —
+                      #   consent helpers, enable/disable/is_ai_active, status/node
+                      #   printing, test chat, reset; add_node_interactive/
+                      #   edit_node_interactive/run_interactive_config are thin wrappers
+                      #   over the ratatui dashboard in src/tui/ (inquire flows removed)
+  tui/                # Full-screen ratatui config dashboard (requires "config-tui") —
+                      #   mod (event loop, TerminalGuard, Effect executor: Save/RunTest/
+                      #   StoreKeychain/Discover/Quit; run_single_form; az-CLI discovery
+                      #   + connectivity test run inline), app (App/Mode/Effect reducer),
+                      #   forms (Editor + NodeForm: per-provider fields, auth, capability
+                      #   toggles, to_node/from_node), ui (table/detail/form/popups),
+                      #   actions (upsert_node/delete_node/set_capability_default/
+                      #   set_node_default)
   azure_discover.rs   # Azure CLI wrappers (requires "config-tui" feature) —
                       #   list subscriptions, resources, deployments via `az` CLI
   types.rs            # Message, Role, ChatResponse, ChatOptions (incl. response_format),
@@ -83,7 +93,7 @@ examples/
 - `default = ["cli", "keychain"]` — CLI binary, all CLI dependencies, and OS keychain support
 - `cli` — enables `config-tui`, clap, tracing-subscriber, semver, and tokio runtime features
 - `keychain` — OS keychain storage for API keys via the `keyring` crate (service `ailloy`, account = node ID); without it, `Auth::Keychain` nodes fail with an actionable error
-- `config-tui` — enables interactive config wizards, table-based TUI, status display, enable/disable (inquire, colored, crossterm); consumer projects use this without pulling in clap
+- `config-tui` — enables the ratatui config dashboard, status display, enable/disable (colored, crossterm, ratatui); consumer projects use this without pulling in clap. `inquire` is now a `cli`-only dependency (used by `ai config set-key`), not part of `config-tui`
 - Library users (pure): `ailloy = { version = "1.0", default-features = false }`
 - Library users (with TUI): `ailloy = { version = "1.0", default-features = false, features = ["config-tui"] }`
 - Library users needing keychain auth: add `"keychain"` to `features`
@@ -102,11 +112,11 @@ examples/
 - **Structured output**: `ChatOptions.response_format` (`ResponseFormat::JsonObject` / `JsonSchema`, builder `.json()` / `.json_schema(name, schema)`); native on OpenAI-family/Ollama (`response_format`/`format`) and Vertex (`response_mime_type`/`response_schema`), prompted JSON on Anthropic
 - **Sampling guard**: all HTTP providers retry once without `temperature` when the model rejects sampling params (`is_sampling_rejection` in types.rs) — covers gpt-5.x/o-series, newest Claude, Gemini 3
 - **Model retirements**: static prefix table in `retirement.rs`; `ailloy ai status` warns on configured models with scheduled/past retirement dates and suggests replacements
-- **Interactive config TUI**: `ailloy ai config` shows a crossterm-based table of nodes with capability columns; form-based editor for adding/editing nodes; `ProviderKind::supports_task()` drives capability filtering; TUI logic lives in `config_tui.rs` (library level, gated on `config-tui` feature) so consumer projects can reuse it
-- **Discovery**: `discover.rs` library provides `discover_env_keys()`, `discover_local()`, `discover_ollama()` returning data only; Azure/Foundry discovery is in `azure_discover.rs` (library level, gated on `config-tui`), integrated into the `ai config` wizard's add-node flow
+- **Interactive config TUI**: `ailloy ai config` opens a full-screen ratatui dashboard (`src/tui/`) — a two-pane node table + detail view with keys `a`/`e`/`x`/`d`/`k`/`t` (add/edit/delete/set-default/keychain/test); a provider-selector form with dynamic per-provider fields and capability toggles (`ProviderKind::supported_capabilities()` constrains them). All state lives in `app::App` with a pure reducer returning `Effect`s executed by the event loop in `tui::mod`. `config_tui.rs` keeps the stable non-UI API (status/print/consent/test) plus thin wrappers over the dashboard
+- **Discovery**: `discover.rs` library provides `discover_env_keys()`, `discover_local()`, `discover_ollama()` returning data only; Azure/Foundry discovery is in `azure_discover.rs` (library level, gated on `config-tui`), driven inline by the dashboard's add-node `[ Discover via az CLI ]` action behind a consent modal
 - **Local config**: `.ailloy.yaml` in current or parent directories, merged with global config (nodes/defaults merge, consents are global-only)
 - **CLI tool consent**: `consents` map in config tracks user permission for external tools (`azure-cli`, `gcloud-cli`); security decisions use global config only (not overridable by local `.ailloy.yaml`)
-- **Azure auto-discovery**: `azure_discover.rs` wraps `az` CLI for subscription/resource/deployment listing; discovers both `kind=='OpenAI'` and `kind=='AIServices'` resources; `ailloy ai config` wizard uses it when user consents
+- **Azure auto-discovery**: `azure_discover.rs` wraps `az` CLI for subscription/resource/deployment listing; discovers both `kind=='OpenAI'` and `kind=='AIServices'` resources; the `ailloy ai config` dashboard uses it when the user consents
 - **Blocking wrapper**: `blocking::Client` with internal `tokio::runtime::Builder::new_current_thread()` — mirrors async Client API
 - **Conversation**: `Conversation` struct with pluggable `ChatHistory` trait and `InMemoryHistory` default
 - CLI built with `clap` derive macros + `clap_complete` for shell completions

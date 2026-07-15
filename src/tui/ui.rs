@@ -15,7 +15,7 @@ use crate::config::{AiNode, Auth, Capability, Config};
 use crate::params::{ParamDef, ParamKind, params_for};
 use crate::retirement::retirement_warning;
 use crate::tui::app::{App, Focus, Mode};
-use crate::tui::forms::Editor;
+use crate::tui::forms::{Editor, FieldKind, NodeForm};
 
 /// The four capability columns shown in the node table, in display order.
 const CAPABILITY_COLUMNS: &[Capability] = &[
@@ -96,10 +96,335 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
     draw_footer(frame, footer_area);
 
-    // Overlay the default editor popup on top of the Browse view.
-    if let Mode::EditDefault { editor, .. } = &app.mode {
-        draw_edit_popup(frame, app, editor, area);
+    // Overlay the active mode's popup on top of the Browse view.
+    match &app.mode {
+        Mode::EditDefault { editor, .. } => draw_edit_popup(frame, app, editor, area),
+        Mode::AddNode(form) => draw_form_popup(frame, form, false, area),
+        Mode::EditNode { form, .. } => draw_form_popup(frame, form, true, area),
+        Mode::Confirm { message, .. } => draw_message_popup(frame, "Confirm (y/n)", message),
+        Mode::SetDefaultFor {
+            node_id,
+            caps,
+            selected,
+        } => draw_set_default_popup(frame, node_id, caps, *selected, area),
+        Mode::Keychain { node_id, editor } => draw_keychain_popup(frame, node_id, editor, area),
+        Mode::Test { node_id, result } => {
+            let body = result.as_deref().unwrap_or("testing…");
+            draw_message_popup(frame, &format!("Test: {node_id}"), body);
+        }
+        Mode::Browse => {}
     }
+}
+
+/// Render the add/edit-node form as a centered panel.
+fn draw_form_popup(frame: &mut Frame, form: &NodeForm, editing: bool, area: Rect) {
+    let title = if editing {
+        format!(" edit node ({}) ", form.provider)
+    } else {
+        " add node ".to_string()
+    };
+    let height = (form.fields.len() as u16).saturating_add(6);
+    let popup = centered_rect(76, height, area);
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(popup);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+    let body_area = chunks[0];
+    let error_area = chunks[1];
+    let footer_area = chunks[2];
+
+    let dim = Style::default().fg(Color::DarkGray);
+    let active_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let mut lines: Vec<Line> = Vec::new();
+    let mut cursor: Option<(u16, u16)> = None;
+
+    for (idx, field) in form.fields.iter().enumerate() {
+        let active = idx == form.active;
+        let bullet = if active { "▸ " } else { "  " };
+        let label_style = if active { active_style } else { dim };
+
+        match &field.kind {
+            FieldKind::Text {
+                value,
+                cursor: cpos,
+            } => {
+                let mut spans = vec![
+                    Span::styled(bullet, label_style),
+                    Span::styled(format!("{}: ", field.label), label_style),
+                ];
+                if active {
+                    // Cursor sits after the label prefix + char offset.
+                    let prefix = 2 + field.label.chars().count() + 2;
+                    let col = body_area.x + prefix as u16 + value[..*cpos].chars().count() as u16;
+                    let y = body_area.y + lines.len() as u16;
+                    cursor = Some((col, y));
+                    spans.push(Span::raw(value.clone()));
+                } else if value.is_empty() {
+                    spans.push(Span::styled("(empty)", dim));
+                } else {
+                    spans.push(Span::raw(value.clone()));
+                }
+                lines.push(Line::from(spans));
+            }
+            FieldKind::Select { options, selected } => {
+                let value = options.get(*selected).map(String::as_str).unwrap_or("");
+                lines.push(Line::from(vec![
+                    Span::styled(bullet, label_style),
+                    Span::styled(format!("{}: ", field.label), label_style),
+                    Span::styled(
+                        format!("‹ {value} ›"),
+                        if active {
+                            active_style
+                        } else {
+                            Style::default()
+                        },
+                    ),
+                ]));
+            }
+            FieldKind::Toggles {
+                options,
+                checked,
+                cursor: tcursor,
+            } => {
+                let mut spans = vec![
+                    Span::styled(bullet, label_style),
+                    Span::styled(format!("{}: ", field.label), label_style),
+                ];
+                for (i, cap) in options.iter().enumerate() {
+                    let mark = if checked.get(i).copied().unwrap_or(false) {
+                        "[x]"
+                    } else {
+                        "[ ]"
+                    };
+                    let hl = active && i == *tcursor;
+                    let style = if hl {
+                        active_style
+                    } else if checked.get(i).copied().unwrap_or(false) {
+                        Style::default().fg(Color::Green)
+                    } else {
+                        dim
+                    };
+                    spans.push(Span::styled(format!("{mark} {} ", cap.label()), style));
+                }
+                lines.push(Line::from(spans));
+            }
+            FieldKind::Action => {
+                let style = if active { active_style } else { dim };
+                lines.push(Line::from(Span::styled(
+                    format!("{bullet}{}", field.label),
+                    style,
+                )));
+            }
+        }
+    }
+
+    frame.render_widget(Paragraph::new(lines), body_area);
+
+    if let Some(err) = &form.error {
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                format!("⚠ {err}"),
+                Style::default().fg(Color::Red),
+            )),
+            error_area,
+        );
+    }
+
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            "↑/↓ field · ←/→ change · Space toggle · Ctrl+S save · Esc cancel",
+            dim,
+        )),
+        footer_area,
+    );
+
+    if let Some((col, y)) = cursor {
+        frame.set_cursor_position((col, y));
+    }
+}
+
+/// Render the capability picker for setting a node's default.
+fn draw_set_default_popup(
+    frame: &mut Frame,
+    node_id: &str,
+    caps: &[Capability],
+    selected: usize,
+    area: Rect,
+) {
+    let height = (caps.len() as u16).saturating_add(4);
+    let popup = centered_rect(56, height, area);
+    let block = Block::default()
+        .title(format!(" default for {node_id} "))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(popup);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    let lines: Vec<Line> = caps
+        .iter()
+        .enumerate()
+        .map(|(idx, cap)| {
+            if idx == selected {
+                Line::styled(
+                    format!("▸ {}", cap.label()),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Line::from(format!("  {}", cap.label()))
+            }
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), chunks[0]);
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            "Enter set default · Esc cancel",
+            Style::default().fg(Color::DarkGray),
+        )),
+        chunks[1],
+    );
+}
+
+/// Render the keychain-secret input popup.
+fn draw_keychain_popup(frame: &mut Frame, node_id: &str, editor: &Editor, area: Rect) {
+    let popup = centered_rect(60, 7, area);
+    let block = Block::default()
+        .title(format!(" API key for {node_id} "))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(popup);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    // Mask the secret with asterisks.
+    let masked: String = "*".repeat(editor.value.chars().count());
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("› ", Style::default().fg(Color::DarkGray)),
+            Span::raw(masked),
+        ])),
+        chunks[0],
+    );
+    let second = match &editor.error {
+        Some(err) => Line::styled(err.clone(), Style::default().fg(Color::Red)),
+        None => Line::styled(
+            "stored in the OS keychain; node switches to keychain auth",
+            Style::default().fg(Color::DarkGray),
+        ),
+    };
+    frame.render_widget(Paragraph::new(second), chunks[1]);
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            "Enter store · Esc cancel",
+            Style::default().fg(Color::DarkGray),
+        )),
+        chunks[2],
+    );
+    let col = inner.x + 2 + editor.value.chars().count() as u16;
+    frame.set_cursor_position((col, chunks[0].y));
+}
+
+/// Render a simple titled message popup (used for confirms, discovery status,
+/// and test results). Public within the crate so the event loop can draw it
+/// while blocking on az-CLI / connectivity work.
+pub(crate) fn draw_message_popup(frame: &mut Frame, title: &str, message: &str) {
+    let area = frame.area();
+    let popup = centered_rect(70, 9, area);
+    let block = Block::default()
+        .title(format!(" {title} "))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(popup);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(block, popup);
+    frame.render_widget(
+        Paragraph::new(message.to_string()).wrap(ratatui::widgets::Wrap { trim: true }),
+        inner,
+    );
+}
+
+/// Render a scrollable pick list popup (used by discovery flows).
+pub(crate) fn draw_picker_popup(frame: &mut Frame, title: &str, items: &[String], selected: usize) {
+    let area = frame.area();
+    let height = (items.len() as u16).saturating_add(4).min(area.height);
+    let popup = centered_rect(80, height, area);
+    let block = Block::default()
+        .title(format!(" {title} "))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(popup);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    // Simple viewport: keep the selected row visible.
+    let rows = chunks[0].height as usize;
+    let start = selected.saturating_sub(rows.saturating_sub(1));
+    let lines: Vec<Line> = items
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(rows)
+        .map(|(idx, item)| {
+            if idx == selected {
+                Line::styled(
+                    format!("▸ {item}"),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Line::from(format!("  {item}"))
+            }
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), chunks[0]);
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            "↑/↓ move · Enter select · Esc cancel",
+            Style::default().fg(Color::DarkGray),
+        )),
+        chunks[1],
+    );
 }
 
 /// A rectangle centered in `area` with the given fixed width/height (clamped to
@@ -758,5 +1083,59 @@ mod tests {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let text = buffer_to_string(&terminal);
         assert!(text.contains("No nodes configured"));
+    }
+
+    // --- Task 5.4: new-mode overlays -----------------------------------
+
+    #[test]
+    fn draw_renders_add_node_form_with_provider_field() {
+        let mut app = App::new(Config::default(), "ailloy");
+        app.mode = Mode::AddNode(crate::tui::forms::NodeForm::new());
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = buffer_to_string(&terminal);
+        assert!(text.contains("add node"), "form title renders");
+        assert!(text.contains("provider"), "provider field renders");
+        assert!(text.contains("openai"), "default provider value renders");
+        assert!(text.contains("Save"), "the Save action renders");
+    }
+
+    #[test]
+    fn draw_renders_confirm_modal_message() {
+        let mut config = Config::default();
+        config.nodes.insert(
+            "openai/x".into(),
+            node_with_caps(ProviderKind::OpenAi, vec![]),
+        );
+        let mut app = App::new(config, "ailloy");
+        app.mode = Mode::Confirm {
+            action: crate::tui::app::ConfirmAction::DeleteNode {
+                id: "openai/x".into(),
+            },
+            message: "Delete node 'openai/x'? (y/n)".into(),
+        };
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = buffer_to_string(&terminal);
+        assert!(text.contains("Delete node"), "confirm message renders");
+    }
+
+    #[test]
+    fn draw_picker_and_message_popups_do_not_panic() {
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| draw_message_popup(frame, "Discovering", "Listing subscriptions…"))
+            .unwrap();
+        assert!(buffer_to_string(&terminal).contains("Discovering"));
+
+        let items = vec!["one".to_string(), "two".to_string()];
+        terminal
+            .draw(|frame| draw_picker_popup(frame, "Pick", &items, 1))
+            .unwrap();
+        let text = buffer_to_string(&terminal);
+        assert!(text.contains("Pick") && text.contains("two"));
     }
 }

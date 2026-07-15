@@ -5,7 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.0] - 2026-07-07
+## [Unreleased]
+
+### Changed
+
+- **`ailloy ai config` is now a full-screen ratatui dashboard** replacing the
+  legacy `inquire`-based wizard. Browse nodes in a two-pane table/detail view and
+  add (`a`), edit (`e`), delete (`x`), set a capability default (`d`), store a
+  keychain key (`k`), or test connectivity (`t`) directly. The add/edit form is a
+  provider selector with dynamic per-provider fields, an auth selector, and
+  capability toggles; Azure OpenAI / Microsoft Foundry offer az-CLI discovery
+  (subscription → resource → deployment) behind a consent prompt.
+- **Breaking:** `config_tui::add_node_interactive` and `edit_node_interactive`
+  now run the ratatui single-form session; `edit_node_interactive` is now
+  `async`. The `inquire`-based interactive prompts and the crossterm table UI
+  have been removed from `config_tui`.
 
 ### Added
 

@@ -23,12 +23,13 @@ cli = [
     "config-tui",
     "dep:clap",
     "dep:clap_complete",
+    "dep:inquire",
     "dep:tracing-subscriber",
     "dep:semver",
     "tokio/rt-multi-thread",
     "tokio/macros",
 ]
-config-tui = ["dep:inquire", "dep:colored", "dep:crossterm", "dep:ratatui"]
+config-tui = ["dep:colored", "dep:crossterm", "dep:ratatui"]
 
 [dependencies]
 # Core (always included)

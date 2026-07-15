@@ -5,12 +5,12 @@
 //! loop in [`super::mod`] to execute (side effects like saving or quitting live
 //! there, not here — keeping this unit-testable without a terminal).
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::config::Config;
+use crate::config::{Capability, Config, ProviderKind};
 use crate::params::{self, ParamDef, ParamKind, params_for};
 use crate::tui::actions;
-use crate::tui::forms::{Editor, NodeForm};
+use crate::tui::forms::{Editor, FieldKey, FieldKind, FormField, NodeForm};
 
 /// The synthetic leading choice in an Enum default editor that clears the key.
 pub(crate) const UNSET_CHOICE: &str = "(unset)";
@@ -25,8 +25,6 @@ pub enum Focus {
 }
 
 /// What the confirmation prompt will do if accepted.
-// Variants constructed by the delete flow in Task 5.3.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfirmAction {
     /// Delete the node with this ID.
@@ -35,9 +33,7 @@ pub enum ConfirmAction {
 
 /// The current interaction mode — a small state machine layered over
 /// [`Focus`]. Browse is the resting state; the others are transient editors
-/// and prompts (mostly wired up in later tasks).
-// Non-Browse variants are constructed by the edit flows in Tasks 5.3/5.4.
-#[allow(dead_code)]
+/// and prompts.
 pub enum Mode {
     /// Normal navigation.
     Browse,
@@ -52,8 +48,14 @@ pub enum Mode {
     AddNode(NodeForm),
     /// Editing an existing node via a form.
     EditNode { id: String, form: NodeForm },
-    /// Choosing which node becomes the default for a capability.
-    SetDefaultFor { cap_idx: usize },
+    /// Choosing which capability of a node to make the default for.
+    SetDefaultFor {
+        node_id: String,
+        caps: Vec<Capability>,
+        selected: usize,
+    },
+    /// Entering an API key to store in the OS keychain for a node.
+    Keychain { node_id: String, editor: Editor },
     /// Showing the result of a connectivity test.
     Test {
         node_id: String,
@@ -62,14 +64,17 @@ pub enum Mode {
 }
 
 /// A side effect the event loop must perform after a key is handled.
-// Save/RunTest are returned by the edit and test flows in Tasks 5.3/5.4.
-#[allow(dead_code)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
     /// Persist the config to disk.
     Save,
     /// Run a connectivity test against the given node ID.
     RunTest(String),
+    /// Store a secret in the OS keychain for a node and switch it to keychain
+    /// auth (guarded by the `keychain` feature in the event loop).
+    StoreKeychain { node_id: String, secret: String },
+    /// Run Azure/Foundry discovery for the given provider, prefilling the form.
+    Discover(ProviderKind),
     /// Exit the TUI.
     Quit,
 }
@@ -95,6 +100,9 @@ pub struct App {
     pub dirty: bool,
     /// A transient status/help line shown at the bottom.
     pub status_line: Option<String>,
+    /// The ID of the node most recently saved via a form (for single-form
+    /// sessions to report back what was added/edited).
+    pub last_saved_node: Option<String>,
 }
 
 impl App {
@@ -109,6 +117,7 @@ impl App {
             mode: Mode::Browse,
             dirty: false,
             status_line: None,
+            last_saved_node: None,
         }
     }
 
@@ -161,8 +170,11 @@ impl App {
         match self.mode {
             Mode::Browse => self.handle_browse_key(key),
             Mode::EditDefault { .. } => self.handle_edit_default_key(key),
-            // Other modes are wired up in later tasks; ignore input for now.
-            _ => None,
+            Mode::AddNode(_) | Mode::EditNode { .. } => self.handle_form_key(key),
+            Mode::Confirm { .. } => self.handle_confirm_key(key),
+            Mode::SetDefaultFor { .. } => self.handle_set_default_key(key),
+            Mode::Keychain { .. } => self.handle_keychain_key(key),
+            Mode::Test { .. } => self.handle_test_key(key),
         }
     }
 
@@ -170,7 +182,7 @@ impl App {
         let node_count = self.config.nodes.len();
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => Some(Effect::Quit),
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Up => {
                 match self.focus {
                     // In the detail pane, Up/Down scroll the parameter list.
                     Focus::Detail => {
@@ -222,8 +234,433 @@ impl App {
                 }
                 None
             }
-            // All other keys are extended in later tasks.
+            // --- Node lifecycle keys ------------------------------------
+            KeyCode::Char('a') => {
+                self.mode = Mode::AddNode(NodeForm::new());
+                None
+            }
+            KeyCode::Char('e') => {
+                if let Some(id) = self.selected_node_id() {
+                    if let Some(node) = self.config.nodes.get(&id) {
+                        let form = NodeForm::from_node(&id, node);
+                        self.mode = Mode::EditNode { id, form };
+                    }
+                }
+                None
+            }
+            KeyCode::Char('x') => {
+                if let Some(id) = self.selected_node_id() {
+                    let message = format!("Delete node '{id}'? (y/n)");
+                    self.mode = Mode::Confirm {
+                        action: ConfirmAction::DeleteNode { id },
+                        message,
+                    };
+                }
+                None
+            }
+            KeyCode::Char('d') => {
+                if let Some(id) = self.selected_node_id() {
+                    let caps = self
+                        .config
+                        .nodes
+                        .get(&id)
+                        .map(|n| n.capabilities.clone())
+                        .unwrap_or_default();
+                    if caps.is_empty() {
+                        self.status_line = Some(format!(
+                            "node '{id}' has no capabilities to set a default for"
+                        ));
+                    } else {
+                        self.mode = Mode::SetDefaultFor {
+                            node_id: id,
+                            caps,
+                            selected: 0,
+                        };
+                    }
+                }
+                None
+            }
+            KeyCode::Char('k') => {
+                if let Some(id) = self.selected_node_id() {
+                    self.mode = Mode::Keychain {
+                        node_id: id,
+                        editor: Editor::text(""),
+                    };
+                }
+                None
+            }
+            KeyCode::Char('t') => self.selected_node_id().map(Effect::RunTest),
+            // All other keys are a no-op in Browse.
             _ => None,
+        }
+    }
+
+    /// Set [`App::selected`] to point at `id` if it exists.
+    fn select_node(&mut self, id: &str) {
+        if let Some(pos) = self.node_ids().iter().position(|n| n == id) {
+            self.selected = pos;
+            self.detail_selected = 0;
+        }
+    }
+
+    // --- Confirm ---------------------------------------------------------
+
+    fn handle_confirm_key(&mut self, key: KeyEvent) -> Option<Effect> {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                let action = match &self.mode {
+                    Mode::Confirm { action, .. } => action.clone(),
+                    _ => return None,
+                };
+                match action {
+                    ConfirmAction::DeleteNode { id } => {
+                        match actions::delete_node(&mut self.config, &id) {
+                            Ok(()) => {
+                                self.mode = Mode::Browse;
+                                self.dirty = true;
+                                self.clamp_selection();
+                                self.status_line = Some(format!("deleted {id}"));
+                                Some(Effect::Save)
+                            }
+                            Err(e) => {
+                                self.mode = Mode::Browse;
+                                self.status_line = Some(e.to_string());
+                                None
+                            }
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.mode = Mode::Browse;
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Clamp [`App::selected`] into range after a deletion.
+    fn clamp_selection(&mut self) {
+        let count = self.config.nodes.len();
+        if count == 0 {
+            self.selected = 0;
+        } else if self.selected >= count {
+            self.selected = count - 1;
+        }
+        self.detail_selected = 0;
+    }
+
+    // --- SetDefaultFor ---------------------------------------------------
+
+    fn handle_set_default_key(&mut self, key: KeyEvent) -> Option<Effect> {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Browse;
+                None
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Mode::SetDefaultFor { selected, .. } = &mut self.mode {
+                    *selected = selected.saturating_sub(1);
+                }
+                None
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Mode::SetDefaultFor { selected, caps, .. } = &mut self.mode {
+                    if *selected + 1 < caps.len() {
+                        *selected += 1;
+                    }
+                }
+                None
+            }
+            KeyCode::Enter => {
+                let (node_id, cap_key) = match &self.mode {
+                    Mode::SetDefaultFor {
+                        node_id,
+                        caps,
+                        selected,
+                    } => (
+                        node_id.clone(),
+                        caps.get(*selected)?.config_key().to_string(),
+                    ),
+                    _ => return None,
+                };
+                match actions::set_capability_default(&mut self.config, &cap_key, &node_id) {
+                    Ok(()) => {
+                        self.mode = Mode::Browse;
+                        self.dirty = true;
+                        self.status_line = Some(format!("{node_id} is now the {cap_key} default"));
+                        Some(Effect::Save)
+                    }
+                    Err(e) => {
+                        self.mode = Mode::Browse;
+                        self.status_line = Some(e.to_string());
+                        None
+                    }
+                }
+            }
+            _ => None,
+        }
+    }
+
+    // --- Keychain --------------------------------------------------------
+
+    fn handle_keychain_key(&mut self, key: KeyEvent) -> Option<Effect> {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Browse;
+                None
+            }
+            KeyCode::Enter => {
+                let (node_id, secret) = match &self.mode {
+                    Mode::Keychain { node_id, editor } => {
+                        (node_id.clone(), editor.value.trim().to_string())
+                    }
+                    _ => return None,
+                };
+                if secret.is_empty() {
+                    if let Mode::Keychain { editor, .. } = &mut self.mode {
+                        editor.error = Some("enter a non-empty key".to_string());
+                    }
+                    return None;
+                }
+                self.mode = Mode::Browse;
+                Some(Effect::StoreKeychain { node_id, secret })
+            }
+            _ => {
+                if let Mode::Keychain { editor, .. } = &mut self.mode {
+                    edit_text(editor, key.code);
+                }
+                None
+            }
+        }
+    }
+
+    // --- Test ------------------------------------------------------------
+
+    fn handle_test_key(&mut self, _key: KeyEvent) -> Option<Effect> {
+        // Any key dismisses the result popup.
+        self.mode = Mode::Browse;
+        None
+    }
+
+    // --- Node form (Add / Edit) -----------------------------------------
+
+    /// A mutable borrow of the form driving [`Mode::AddNode`]/[`Mode::EditNode`].
+    fn active_form_mut(&mut self) -> Option<&mut NodeForm> {
+        match &mut self.mode {
+            Mode::AddNode(form) => Some(form),
+            Mode::EditNode { form, .. } => Some(form),
+            _ => None,
+        }
+    }
+
+    fn handle_form_key(&mut self, key: KeyEvent) -> Option<Effect> {
+        // Ctrl+S commits from any field.
+        if matches!(key.code, KeyCode::Char('s')) && key.modifiers.contains(KeyModifiers::CONTROL) {
+            return self.commit_form();
+        }
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Browse;
+                None
+            }
+            KeyCode::Up => {
+                if let Some(form) = self.active_form_mut() {
+                    form.active = form.active.saturating_sub(1);
+                }
+                None
+            }
+            KeyCode::Down | KeyCode::Tab => {
+                if let Some(form) = self.active_form_mut() {
+                    if form.active + 1 < form.fields.len() {
+                        form.active += 1;
+                    }
+                }
+                None
+            }
+            code => self.handle_form_field_key(code),
+        }
+    }
+
+    /// Handle a key aimed at the active field of the form.
+    fn handle_form_field_key(&mut self, code: KeyCode) -> Option<Effect> {
+        // Category of the active field, read without holding a borrow.
+        enum Cat {
+            Text,
+            Select,
+            Toggles,
+            Action,
+        }
+        let (active, field_key, cat) = {
+            let form = self.active_form_mut()?;
+            let active = form.active;
+            let field_key = form.fields[active].key;
+            let cat = match &form.fields[active].kind {
+                FieldKind::Text { .. } => Cat::Text,
+                FieldKind::Select { .. } => Cat::Select,
+                FieldKind::Toggles { .. } => Cat::Toggles,
+                FieldKind::Action => Cat::Action,
+            };
+            (active, field_key, cat)
+        };
+
+        match cat {
+            Cat::Text => {
+                if let Some(form) = self.active_form_mut() {
+                    if let FieldKind::Text { value, cursor } = &mut form.fields[active].kind {
+                        edit_text_parts(value, cursor, code);
+                    }
+                }
+                None
+            }
+            Cat::Select => {
+                let mut changed = false;
+                if let Some(form) = self.active_form_mut() {
+                    if let FieldKind::Select { options, selected } = &mut form.fields[active].kind {
+                        let n = options.len();
+                        if n > 0 {
+                            let forward = matches!(
+                                code,
+                                KeyCode::Right
+                                    | KeyCode::Char(' ')
+                                    | KeyCode::Enter
+                                    | KeyCode::Char('l')
+                            );
+                            let backward = matches!(code, KeyCode::Left | KeyCode::Char('h'));
+                            if forward {
+                                *selected = (*selected + 1) % n;
+                                changed = true;
+                            } else if backward {
+                                *selected = (*selected + n - 1) % n;
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                if changed {
+                    match field_key {
+                        FieldKey::Provider => {
+                            let sel = self
+                                .active_form_mut()
+                                .and_then(|f| match &f.fields[active].kind {
+                                    FieldKind::Select { selected, .. } => Some(*selected),
+                                    _ => None,
+                                })
+                                .unwrap_or(0);
+                            if let Some(form) = self.active_form_mut() {
+                                form.provider = crate::tui::forms::PROVIDER_ORDER[sel].clone();
+                                form.rebuild();
+                                form.active = 0;
+                            }
+                        }
+                        FieldKey::Auth => self.sync_api_key_field(),
+                        _ => {}
+                    }
+                }
+                None
+            }
+            Cat::Toggles => {
+                if let Some(form) = self.active_form_mut() {
+                    if let FieldKind::Toggles {
+                        checked, cursor, ..
+                    } = &mut form.fields[active].kind
+                    {
+                        match code {
+                            KeyCode::Left | KeyCode::Char('h') => {
+                                *cursor = cursor.saturating_sub(1);
+                            }
+                            KeyCode::Right | KeyCode::Char('l') => {
+                                if *cursor + 1 < checked.len() {
+                                    *cursor += 1;
+                                }
+                            }
+                            KeyCode::Char(' ') | KeyCode::Enter => {
+                                if let Some(flag) = checked.get_mut(*cursor) {
+                                    *flag = !*flag;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                None
+            }
+            Cat::Action => match code {
+                KeyCode::Enter | KeyCode::Char(' ') => match field_key {
+                    FieldKey::Save => self.commit_form(),
+                    FieldKey::Discover => self
+                        .active_form_mut()
+                        .map(|f| Effect::Discover(f.provider.clone())),
+                    _ => None,
+                },
+                _ => None,
+            },
+        }
+    }
+
+    /// After the auth selector changes, insert or remove the inline API-key
+    /// text field so it appears only for `api_key` auth.
+    fn sync_api_key_field(&mut self) {
+        let Some(form) = self.active_form_mut() else {
+            return;
+        };
+        let is_api_key =
+            form.field(FieldKey::Auth).and_then(FormField::select_value) == Some("api_key");
+        let has_field = form.field(FieldKey::ApiKey).is_some();
+        if is_api_key && !has_field {
+            // Insert right after the Auth field.
+            if let Some(auth_idx) = form.fields.iter().position(|f| f.key == FieldKey::Auth) {
+                form.fields.insert(
+                    auth_idx + 1,
+                    FormField {
+                        key: FieldKey::ApiKey,
+                        label: "api key".to_string(),
+                        kind: FieldKind::Text {
+                            value: String::new(),
+                            cursor: 0,
+                        },
+                    },
+                );
+            }
+        } else if !is_api_key && has_field {
+            form.fields.retain(|f| f.key != FieldKey::ApiKey);
+            if form.active >= form.fields.len() {
+                form.active = form.fields.len().saturating_sub(1);
+            }
+        }
+    }
+
+    /// Commit the active form: build the node, upsert it, and return to Browse
+    /// with a save effect on success; on a validation error, keep the form open
+    /// and record the message.
+    fn commit_form(&mut self) -> Option<Effect> {
+        let (result, old_id) = match &self.mode {
+            Mode::AddNode(form) => (form.to_node(), None),
+            Mode::EditNode { id, form } => (form.to_node(), Some(id.clone())),
+            _ => return None,
+        };
+        match result {
+            Ok((id, node)) => {
+                // On an edit that renamed the node id, drop the old entry.
+                if let Some(old) = &old_id {
+                    if old != &id {
+                        let _ = actions::delete_node(&mut self.config, old);
+                    }
+                }
+                actions::upsert_node(&mut self.config, id.clone(), node);
+                self.last_saved_node = Some(id.clone());
+                self.dirty = true;
+                self.mode = Mode::Browse;
+                self.select_node(&id);
+                self.status_line = Some(format!("saved {id}"));
+                Some(Effect::Save)
+            }
+            Err(e) => {
+                if let Some(form) = self.active_form_mut() {
+                    form.error = Some(e.to_string());
+                }
+                None
+            }
         }
     }
 
@@ -419,6 +856,50 @@ impl App {
             }
         }
     }
+}
+
+/// Apply a single editing keystroke to a `(value, cursor)` text buffer.
+fn edit_text_parts(value: &mut String, cursor: &mut usize, code: KeyCode) {
+    match code {
+        KeyCode::Char(c) => {
+            value.insert(*cursor, c);
+            *cursor += c.len_utf8();
+        }
+        KeyCode::Backspace => {
+            if *cursor > 0 {
+                let prev = value[..*cursor]
+                    .chars()
+                    .next_back()
+                    .map(char::len_utf8)
+                    .unwrap_or(1);
+                *cursor -= prev;
+                value.remove(*cursor);
+            }
+        }
+        KeyCode::Left if *cursor > 0 => {
+            let prev = value[..*cursor]
+                .chars()
+                .next_back()
+                .map(char::len_utf8)
+                .unwrap_or(1);
+            *cursor -= prev;
+        }
+        KeyCode::Right if *cursor < value.len() => {
+            let next = value[*cursor..]
+                .chars()
+                .next()
+                .map(char::len_utf8)
+                .unwrap_or(1);
+            *cursor += next;
+        }
+        _ => {}
+    }
+}
+
+/// Apply an editing keystroke to an [`Editor`]'s text buffer.
+fn edit_text(editor: &mut Editor, code: KeyCode) {
+    edit_text_parts(&mut editor.value, &mut editor.cursor, code);
+    editor.error = None;
 }
 
 #[cfg(test)]
@@ -748,5 +1229,212 @@ mod tests {
         assert!(!app.dirty);
         let id = app.selected_node_id().unwrap();
         assert!(app.config.nodes[&id].node_defaults.is_none());
+    }
+
+    // --- Task 5.4: node lifecycle keys ----------------------------------
+
+    fn ctrl(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn a_opens_add_node_form() {
+        let mut app = App::new(config_with(1), "ailloy");
+        assert!(app.handle_key(key(KeyCode::Char('a'))).is_none());
+        assert!(matches!(app.mode, Mode::AddNode(_)));
+    }
+
+    #[test]
+    fn e_opens_edit_form_for_selected_node() {
+        let mut app = App::new(config_with(2), "ailloy");
+        app.handle_key(key(KeyCode::Down));
+        app.handle_key(key(KeyCode::Char('e')));
+        match &app.mode {
+            Mode::EditNode { id, form } => {
+                assert_eq!(id, "openai/node-1");
+                assert!(form.editing);
+            }
+            _ => panic!("expected EditNode mode"),
+        }
+    }
+
+    #[test]
+    fn x_opens_confirm_delete() {
+        let mut app = App::new(config_with(1), "ailloy");
+        app.handle_key(key(KeyCode::Char('x')));
+        match &app.mode {
+            Mode::Confirm { action, .. } => {
+                assert_eq!(
+                    *action,
+                    ConfirmAction::DeleteNode {
+                        id: "openai/node-0".into()
+                    }
+                );
+            }
+            _ => panic!("expected Confirm mode"),
+        }
+    }
+
+    #[test]
+    fn t_returns_run_test_effect() {
+        let mut app = App::new(config_with(1), "ailloy");
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('t'))),
+            Some(Effect::RunTest("openai/node-0".into()))
+        );
+    }
+
+    #[test]
+    fn k_opens_keychain_mode() {
+        let mut app = App::new(config_with(1), "ailloy");
+        app.handle_key(key(KeyCode::Char('k')));
+        match &app.mode {
+            Mode::Keychain { node_id, .. } => assert_eq!(node_id, "openai/node-0"),
+            _ => panic!("expected Keychain mode"),
+        }
+    }
+
+    #[test]
+    fn d_opens_set_default_for_with_node_capabilities() {
+        let mut app = App::new(config_with_capable_nodes(), "ailloy");
+        app.handle_key(key(KeyCode::Char('d')));
+        match &app.mode {
+            Mode::SetDefaultFor { node_id, caps, .. } => {
+                assert_eq!(node_id, "openai/node-0");
+                assert_eq!(caps, &vec![Capability::Chat, Capability::Image]);
+            }
+            _ => panic!("expected SetDefaultFor mode"),
+        }
+    }
+
+    #[test]
+    fn confirm_delete_removes_node_and_saves() {
+        let mut app = App::new(config_with(2), "ailloy");
+        app.handle_key(key(KeyCode::Char('x')));
+        let effect = app.handle_key(key(KeyCode::Char('y')));
+        assert_eq!(effect, Some(Effect::Save));
+        assert!(matches!(app.mode, Mode::Browse));
+        assert!(app.dirty);
+        assert!(!app.config.nodes.contains_key("openai/node-0"));
+        assert_eq!(app.config.nodes.len(), 1);
+    }
+
+    #[test]
+    fn confirm_delete_declined_keeps_node() {
+        let mut app = App::new(config_with(1), "ailloy");
+        app.handle_key(key(KeyCode::Char('x')));
+        let effect = app.handle_key(key(KeyCode::Char('n')));
+        assert!(effect.is_none());
+        assert!(matches!(app.mode, Mode::Browse));
+        assert!(app.config.nodes.contains_key("openai/node-0"));
+    }
+
+    #[test]
+    fn set_default_for_commit_sets_default_and_star() {
+        use crate::tui::ui::capability_cell;
+        let mut app = App::new(config_with_capable_nodes(), "ailloy");
+        app.handle_key(key(KeyCode::Char('d')));
+        // caps = [Chat, Image]; move to Image then commit.
+        app.handle_key(key(KeyCode::Down));
+        let effect = app.handle_key(key(KeyCode::Enter));
+        assert_eq!(effect, Some(Effect::Save));
+        assert_eq!(
+            app.config.defaults.get("image").map(String::as_str),
+            Some("openai/node-0")
+        );
+        let node = &app.config.nodes["openai/node-0"];
+        assert_eq!(
+            capability_cell(&app.config, "openai/node-0", node, &Capability::Image),
+            "★"
+        );
+    }
+
+    #[test]
+    fn keychain_commit_returns_store_effect() {
+        let mut app = App::new(config_with(1), "ailloy");
+        app.handle_key(key(KeyCode::Char('k')));
+        for c in ['s', 'k', '-', '1'] {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        let effect = app.handle_key(key(KeyCode::Enter));
+        assert_eq!(
+            effect,
+            Some(Effect::StoreKeychain {
+                node_id: "openai/node-0".into(),
+                secret: "sk-1".into(),
+            })
+        );
+        assert!(matches!(app.mode, Mode::Browse));
+    }
+
+    #[test]
+    fn keychain_empty_secret_is_rejected() {
+        let mut app = App::new(config_with(1), "ailloy");
+        app.handle_key(key(KeyCode::Char('k')));
+        let effect = app.handle_key(key(KeyCode::Enter));
+        assert!(effect.is_none());
+        assert!(matches!(app.mode, Mode::Keychain { .. }));
+    }
+
+    #[test]
+    fn add_form_provider_select_cycles_provider() {
+        let mut app = App::new(config_with(1), "ailloy");
+        app.handle_key(key(KeyCode::Char('a')));
+        // Active field is the provider select; Right cycles to Anthropic.
+        app.handle_key(key(KeyCode::Right));
+        match &app.mode {
+            Mode::AddNode(form) => assert_eq!(form.provider, ProviderKind::Anthropic),
+            _ => panic!("expected AddNode mode"),
+        }
+    }
+
+    #[test]
+    fn add_form_ctrl_s_with_empty_model_sets_error() {
+        let mut app = App::new(config_with(1), "ailloy");
+        app.handle_key(key(KeyCode::Char('a')));
+        let effect = app.handle_key(ctrl(KeyCode::Char('s')));
+        assert!(effect.is_none());
+        match &app.mode {
+            Mode::AddNode(form) => assert!(form.error.is_some()),
+            _ => panic!("expected AddNode mode to persist with an error"),
+        }
+    }
+
+    #[test]
+    fn add_form_commit_upserts_node_and_saves() {
+        let mut app = App::new(Config::default(), "ailloy");
+        app.handle_key(key(KeyCode::Char('a')));
+        // Fill in the model field directly, then commit with Ctrl+S.
+        if let Mode::AddNode(form) = &mut app.mode {
+            let f = form
+                .fields
+                .iter_mut()
+                .find(|f| f.key == FieldKey::Model)
+                .unwrap();
+            f.kind = FieldKind::Text {
+                value: "gpt-5.4-mini".into(),
+                cursor: 0,
+            };
+        }
+        let effect = app.handle_key(ctrl(KeyCode::Char('s')));
+        assert_eq!(effect, Some(Effect::Save));
+        assert!(app.config.nodes.contains_key("openai/gpt-5.4-mini"));
+        assert_eq!(app.last_saved_node.as_deref(), Some("openai/gpt-5.4-mini"));
+        // Auto-set as the chat default.
+        assert_eq!(
+            app.config.defaults.get("chat").map(String::as_str),
+            Some("openai/gpt-5.4-mini")
+        );
+    }
+
+    #[test]
+    fn test_mode_any_key_dismisses() {
+        let mut app = App::new(config_with(1), "ailloy");
+        app.mode = Mode::Test {
+            node_id: "openai/node-0".into(),
+            result: Some("OK".into()),
+        };
+        app.handle_key(key(KeyCode::Esc));
+        assert!(matches!(app.mode, Mode::Browse));
     }
 }
