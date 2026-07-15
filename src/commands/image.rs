@@ -385,6 +385,7 @@ fn build_image_options(args: &ImageArgs) -> ImageOptions {
         size: args.size.as_deref().and_then(parse_size),
         quality: args.quality.clone(),
         style: args.style.clone(),
+        ..Default::default()
     }
 }
 

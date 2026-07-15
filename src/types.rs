@@ -196,10 +196,11 @@ pub struct ImageResponse {
     pub height: u32,
     pub format: ImageFormat,
     pub revised_prompt: Option<String>,
+    pub usage: Option<Usage>,
 }
 
 /// Supported image output formats.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ImageFormat {
     Png,
     Jpeg,
@@ -212,6 +213,123 @@ impl std::fmt::Display for ImageFormat {
             ImageFormat::Png => write!(f, "PNG"),
             ImageFormat::Jpeg => write!(f, "JPEG"),
             ImageFormat::Webp => write!(f, "WebP"),
+        }
+    }
+}
+
+impl ImageFormat {
+    /// Lowercase name as used in provider request payloads (`"png"`, `"jpeg"`, `"webp"`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ImageFormat::Png => "png",
+            ImageFormat::Jpeg => "jpeg",
+            ImageFormat::Webp => "webp",
+        }
+    }
+}
+
+impl std::str::FromStr for ImageFormat {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "png" => Ok(Self::Png),
+            "jpeg" => Ok(Self::Jpeg),
+            "webp" => Ok(Self::Webp),
+            _ => Err(format!(
+                "Unknown image format '{}'. Valid: png, jpeg, webp",
+                s
+            )),
+        }
+    }
+}
+
+/// Background transparency for image generation (gpt-image models).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Background {
+    Transparent,
+    Opaque,
+    Auto,
+}
+
+impl Background {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Background::Transparent => "transparent",
+            Background::Opaque => "opaque",
+            Background::Auto => "auto",
+        }
+    }
+}
+
+impl std::str::FromStr for Background {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "transparent" => Ok(Self::Transparent),
+            "opaque" => Ok(Self::Opaque),
+            "auto" => Ok(Self::Auto),
+            _ => Err(format!(
+                "Unknown background '{}'. Valid: transparent, opaque, auto",
+                s
+            )),
+        }
+    }
+}
+
+/// Moderation strictness for image generation (gpt-image models).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Moderation {
+    Auto,
+    Low,
+}
+
+impl Moderation {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Moderation::Auto => "auto",
+            Moderation::Low => "low",
+        }
+    }
+}
+
+impl std::str::FromStr for Moderation {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "auto" => Ok(Self::Auto),
+            "low" => Ok(Self::Low),
+            _ => Err(format!(
+                "Unknown moderation level '{}'. Valid: auto, low",
+                s
+            )),
+        }
+    }
+}
+
+/// How closely edited images should preserve details from reference images
+/// (gpt-image models).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum InputFidelity {
+    High,
+    Low,
+}
+
+impl InputFidelity {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            InputFidelity::High => "high",
+            InputFidelity::Low => "low",
+        }
+    }
+}
+
+impl std::str::FromStr for InputFidelity {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "high" => Ok(Self::High),
+            "low" => Ok(Self::Low),
+            _ => Err(format!("Unknown input fidelity '{}'. Valid: high, low", s)),
         }
     }
 }
@@ -273,12 +391,85 @@ pub fn image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
 pub struct ImageOptions {
     pub size: Option<(u32, u32)>,
     pub quality: Option<String>,
+    /// DALL·E-only style hint (`"natural"` / `"vivid"`); not supported by
+    /// gpt-image models. Prefer the other fields on this struct for
+    /// gpt-image-2 requests.
     pub style: Option<String>,
+    /// Output image encoding for gpt-image models.
+    pub output_format: Option<ImageFormat>,
+    /// Compression level 0–100, only valid alongside `output_format` of
+    /// `Jpeg` or `Webp`.
+    pub compression: Option<u8>,
+    /// Number of images to generate, 1–10.
+    pub n: Option<u8>,
+    pub background: Option<Background>,
+    pub moderation: Option<Moderation>,
+    /// Only meaningful when `reference_images` is non-empty.
+    pub input_fidelity: Option<InputFidelity>,
+    /// Reference images to edit/compose from (gpt-image models).
+    pub reference_images: Vec<std::path::PathBuf>,
+    /// Mask image for inpainting; requires `reference_images` to be set.
+    pub mask: Option<std::path::PathBuf>,
 }
 
 impl ImageOptions {
     pub fn builder() -> ImageOptionsBuilder {
         ImageOptionsBuilder::default()
+    }
+
+    /// Validate the parameter combination, returning an actionable error
+    /// describing what to change if the options are inconsistent.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if let Some(compression) = self.compression {
+            if compression > 100 {
+                anyhow::bail!(
+                    "Invalid image compression {}: must be between 0 and 100.",
+                    compression
+                );
+            }
+            match self.output_format {
+                None => {
+                    anyhow::bail!(
+                        "compression requires output_format to be set to jpeg or webp (compression does not apply to the default png format)."
+                    );
+                }
+                Some(ImageFormat::Png) => {
+                    anyhow::bail!(
+                        "compression is not supported with output_format png; set output_format to jpeg or webp, or remove compression."
+                    );
+                }
+                Some(ImageFormat::Jpeg) | Some(ImageFormat::Webp) => {}
+            }
+        }
+
+        if let Some(n) = self.n {
+            if !(1..=10).contains(&n) {
+                anyhow::bail!("Invalid image count n={}: must be between 1 and 10.", n);
+            }
+        }
+
+        if self.reference_images.is_empty() {
+            if self.mask.is_some() {
+                anyhow::bail!(
+                    "mask requires at least one reference image; add reference images via reference_image()/reference_images(), or remove mask."
+                );
+            }
+            if self.input_fidelity.is_some() {
+                anyhow::bail!(
+                    "input_fidelity requires at least one reference image; add reference images via reference_image()/reference_images(), or remove input_fidelity."
+                );
+            }
+        }
+
+        if self.background == Some(Background::Transparent)
+            && self.output_format == Some(ImageFormat::Jpeg)
+        {
+            anyhow::bail!(
+                "background transparent is not supported with output_format jpeg (jpeg has no alpha channel); use png or webp, or set background to opaque/auto."
+            );
+        }
+
+        Ok(())
     }
 }
 
@@ -288,6 +479,14 @@ pub struct ImageOptionsBuilder {
     size: Option<(u32, u32)>,
     quality: Option<String>,
     style: Option<String>,
+    output_format: Option<ImageFormat>,
+    compression: Option<u8>,
+    n: Option<u8>,
+    background: Option<Background>,
+    moderation: Option<Moderation>,
+    input_fidelity: Option<InputFidelity>,
+    reference_images: Vec<std::path::PathBuf>,
+    mask: Option<std::path::PathBuf>,
 }
 
 impl ImageOptionsBuilder {
@@ -301,8 +500,59 @@ impl ImageOptionsBuilder {
         self
     }
 
+    /// DALL·E-only style hint; not supported by gpt-image models. Use
+    /// `output_format`, `background`, `moderation`, etc. instead.
+    #[deprecated(note = "DALL·E-only; not supported by gpt-image models")]
     pub fn style(mut self, style: impl Into<String>) -> Self {
         self.style = Some(style.into());
+        self
+    }
+
+    pub fn output_format(mut self, format: ImageFormat) -> Self {
+        self.output_format = Some(format);
+        self
+    }
+
+    pub fn compression(mut self, compression: u8) -> Self {
+        self.compression = Some(compression);
+        self
+    }
+
+    pub fn n(mut self, n: u8) -> Self {
+        self.n = Some(n);
+        self
+    }
+
+    pub fn background(mut self, background: Background) -> Self {
+        self.background = Some(background);
+        self
+    }
+
+    pub fn moderation(mut self, moderation: Moderation) -> Self {
+        self.moderation = Some(moderation);
+        self
+    }
+
+    pub fn input_fidelity(mut self, input_fidelity: InputFidelity) -> Self {
+        self.input_fidelity = Some(input_fidelity);
+        self
+    }
+
+    /// Push a single reference image path.
+    pub fn reference_image(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.reference_images.push(path.into());
+        self
+    }
+
+    /// Set the full list of reference image paths, replacing any previously
+    /// added via [`Self::reference_image`].
+    pub fn reference_images(mut self, paths: Vec<std::path::PathBuf>) -> Self {
+        self.reference_images = paths;
+        self
+    }
+
+    pub fn mask(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.mask = Some(path.into());
         self
     }
 
@@ -311,6 +561,14 @@ impl ImageOptionsBuilder {
             size: self.size,
             quality: self.quality,
             style: self.style,
+            output_format: self.output_format,
+            compression: self.compression,
+            n: self.n,
+            background: self.background,
+            moderation: self.moderation,
+            input_fidelity: self.input_fidelity,
+            reference_images: self.reference_images,
+            mask: self.mask,
         }
     }
 }
@@ -440,6 +698,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_image_options_builder() {
         let opts = ImageOptions::builder()
             .size(1024, 1024)
@@ -531,6 +790,312 @@ mod tests {
             Task::VideoGeneration.to_capability(),
             Some(crate::config::Capability::Video),
         );
+    }
+
+    // --- Task 1.2: full gpt-image parameter surface ---
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_image_options_builder_full_roundtrip() {
+        let opts = ImageOptions::builder()
+            .size(1024, 1024)
+            .quality("hd")
+            .style("natural")
+            .output_format(ImageFormat::Jpeg)
+            .compression(80)
+            .n(4)
+            .background(Background::Opaque)
+            .moderation(Moderation::Low)
+            .input_fidelity(InputFidelity::High)
+            .reference_image(std::path::PathBuf::from("ref1.png"))
+            .reference_image(std::path::PathBuf::from("ref2.png"))
+            .mask(std::path::PathBuf::from("mask.png"))
+            .build();
+
+        assert_eq!(opts.size, Some((1024, 1024)));
+        assert_eq!(opts.quality.as_deref(), Some("hd"));
+        assert_eq!(opts.style.as_deref(), Some("natural"));
+        assert_eq!(opts.output_format, Some(ImageFormat::Jpeg));
+        assert_eq!(opts.compression, Some(80));
+        assert_eq!(opts.n, Some(4));
+        assert_eq!(opts.background, Some(Background::Opaque));
+        assert_eq!(opts.moderation, Some(Moderation::Low));
+        assert_eq!(opts.input_fidelity, Some(InputFidelity::High));
+        assert_eq!(
+            opts.reference_images,
+            vec![
+                std::path::PathBuf::from("ref1.png"),
+                std::path::PathBuf::from("ref2.png"),
+            ]
+        );
+        assert_eq!(opts.mask, Some(std::path::PathBuf::from("mask.png")));
+    }
+
+    #[test]
+    fn test_image_options_builder_reference_images_bulk() {
+        let paths = vec![
+            std::path::PathBuf::from("a.png"),
+            std::path::PathBuf::from("b.png"),
+        ];
+        let opts = ImageOptions::builder()
+            .reference_images(paths.clone())
+            .build();
+        assert_eq!(opts.reference_images, paths);
+    }
+
+    #[test]
+    fn test_image_format_as_str() {
+        assert_eq!(ImageFormat::Png.as_str(), "png");
+        assert_eq!(ImageFormat::Jpeg.as_str(), "jpeg");
+        assert_eq!(ImageFormat::Webp.as_str(), "webp");
+    }
+
+    #[test]
+    fn test_image_format_from_str() {
+        assert_eq!("png".parse::<ImageFormat>().unwrap(), ImageFormat::Png);
+        assert_eq!("jpeg".parse::<ImageFormat>().unwrap(), ImageFormat::Jpeg);
+        assert_eq!("webp".parse::<ImageFormat>().unwrap(), ImageFormat::Webp);
+    }
+
+    #[test]
+    fn test_image_format_from_str_invalid() {
+        let err = "bmp".parse::<ImageFormat>().unwrap_err();
+        assert!(err.contains("bmp"));
+        assert!(err.contains("png"));
+        assert!(err.contains("jpeg"));
+        assert!(err.contains("webp"));
+    }
+
+    #[test]
+    fn test_background_as_str_and_from_str() {
+        assert_eq!(Background::Transparent.as_str(), "transparent");
+        assert_eq!(Background::Opaque.as_str(), "opaque");
+        assert_eq!(Background::Auto.as_str(), "auto");
+        assert_eq!(
+            "transparent".parse::<Background>().unwrap(),
+            Background::Transparent
+        );
+        assert_eq!("opaque".parse::<Background>().unwrap(), Background::Opaque);
+        assert_eq!("auto".parse::<Background>().unwrap(), Background::Auto);
+    }
+
+    #[test]
+    fn test_background_from_str_invalid() {
+        let err = "invisible".parse::<Background>().unwrap_err();
+        assert!(err.contains("invisible"));
+        assert!(err.contains("transparent"));
+        assert!(err.contains("opaque"));
+        assert!(err.contains("auto"));
+    }
+
+    #[test]
+    fn test_moderation_as_str_and_from_str() {
+        assert_eq!(Moderation::Auto.as_str(), "auto");
+        assert_eq!(Moderation::Low.as_str(), "low");
+        assert_eq!("auto".parse::<Moderation>().unwrap(), Moderation::Auto);
+        assert_eq!("low".parse::<Moderation>().unwrap(), Moderation::Low);
+    }
+
+    #[test]
+    fn test_moderation_from_str_invalid() {
+        let err = "strict".parse::<Moderation>().unwrap_err();
+        assert!(err.contains("strict"));
+        assert!(err.contains("auto"));
+        assert!(err.contains("low"));
+    }
+
+    #[test]
+    fn test_input_fidelity_as_str_and_from_str() {
+        assert_eq!(InputFidelity::High.as_str(), "high");
+        assert_eq!(InputFidelity::Low.as_str(), "low");
+        assert_eq!(
+            "high".parse::<InputFidelity>().unwrap(),
+            InputFidelity::High
+        );
+        assert_eq!("low".parse::<InputFidelity>().unwrap(), InputFidelity::Low);
+    }
+
+    #[test]
+    fn test_input_fidelity_from_str_invalid() {
+        let err = "medium".parse::<InputFidelity>().unwrap_err();
+        assert!(err.contains("medium"));
+        assert!(err.contains("high"));
+        assert!(err.contains("low"));
+    }
+
+    #[test]
+    fn test_validate_default_ok() {
+        assert!(ImageOptions::default().validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_compression_too_high_err() {
+        let opts = ImageOptions {
+            output_format: Some(ImageFormat::Jpeg),
+            compression: Some(101),
+            ..Default::default()
+        };
+        let err = opts.validate().unwrap_err().to_string();
+        assert!(err.contains("compression"));
+        assert!(err.contains("100"));
+    }
+
+    #[test]
+    fn test_validate_compression_at_max_ok() {
+        let opts = ImageOptions {
+            output_format: Some(ImageFormat::Jpeg),
+            compression: Some(100),
+            ..Default::default()
+        };
+        assert!(opts.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_compression_without_output_format_err() {
+        let opts = ImageOptions {
+            compression: Some(50),
+            ..Default::default()
+        };
+        let err = opts.validate().unwrap_err().to_string();
+        assert!(err.contains("compression"));
+        assert!(err.contains("output_format"));
+    }
+
+    #[test]
+    fn test_validate_compression_with_png_err() {
+        let opts = ImageOptions {
+            output_format: Some(ImageFormat::Png),
+            compression: Some(50),
+            ..Default::default()
+        };
+        let err = opts.validate().unwrap_err().to_string();
+        assert!(err.contains("compression"));
+        assert!(err.contains("PNG") || err.contains("png"));
+    }
+
+    #[test]
+    fn test_validate_compression_with_jpeg_ok() {
+        let opts = ImageOptions {
+            output_format: Some(ImageFormat::Jpeg),
+            compression: Some(50),
+            ..Default::default()
+        };
+        assert!(opts.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_compression_with_webp_ok() {
+        let opts = ImageOptions {
+            output_format: Some(ImageFormat::Webp),
+            compression: Some(50),
+            ..Default::default()
+        };
+        assert!(opts.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_n_too_low_err() {
+        let opts = ImageOptions {
+            n: Some(0),
+            ..Default::default()
+        };
+        let err = opts.validate().unwrap_err().to_string();
+        assert!(err.contains('n'));
+        assert!(err.contains('1'));
+        assert!(err.contains("10"));
+    }
+
+    #[test]
+    fn test_validate_n_too_high_err() {
+        let opts = ImageOptions {
+            n: Some(11),
+            ..Default::default()
+        };
+        assert!(opts.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_n_in_range_ok() {
+        for n in 1..=10u8 {
+            let opts = ImageOptions {
+                n: Some(n),
+                ..Default::default()
+            };
+            assert!(opts.validate().is_ok(), "n={n} should be valid");
+        }
+    }
+
+    #[test]
+    fn test_validate_mask_without_reference_images_err() {
+        let opts = ImageOptions {
+            mask: Some(std::path::PathBuf::from("mask.png")),
+            ..Default::default()
+        };
+        let err = opts.validate().unwrap_err().to_string();
+        assert!(err.contains("mask"));
+        assert!(err.contains("reference"));
+    }
+
+    #[test]
+    fn test_validate_mask_with_reference_images_ok() {
+        let opts = ImageOptions {
+            mask: Some(std::path::PathBuf::from("mask.png")),
+            reference_images: vec![std::path::PathBuf::from("ref.png")],
+            ..Default::default()
+        };
+        assert!(opts.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_input_fidelity_without_reference_images_err() {
+        let opts = ImageOptions {
+            input_fidelity: Some(InputFidelity::High),
+            ..Default::default()
+        };
+        let err = opts.validate().unwrap_err().to_string();
+        assert!(err.contains("input_fidelity"));
+        assert!(err.contains("reference"));
+    }
+
+    #[test]
+    fn test_validate_input_fidelity_with_reference_images_ok() {
+        let opts = ImageOptions {
+            input_fidelity: Some(InputFidelity::High),
+            reference_images: vec![std::path::PathBuf::from("ref.png")],
+            ..Default::default()
+        };
+        assert!(opts.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_transparent_background_with_jpeg_err() {
+        let opts = ImageOptions {
+            output_format: Some(ImageFormat::Jpeg),
+            background: Some(Background::Transparent),
+            ..Default::default()
+        };
+        let err = opts.validate().unwrap_err().to_string();
+        assert!(err.contains("background"));
+        assert!(err.contains("jpeg") || err.contains("JPEG"));
+    }
+
+    #[test]
+    fn test_validate_transparent_background_with_png_ok() {
+        let opts = ImageOptions {
+            output_format: Some(ImageFormat::Png),
+            background: Some(Background::Transparent),
+            ..Default::default()
+        };
+        assert!(opts.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_transparent_background_with_no_format_ok() {
+        let opts = ImageOptions {
+            background: Some(Background::Transparent),
+            ..Default::default()
+        };
+        assert!(opts.validate().is_ok());
     }
 }
 

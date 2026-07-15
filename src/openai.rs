@@ -321,6 +321,7 @@ impl OpenAiClient {
             height,
             format: ImageFormat::Png,
             revised_prompt: image_data.revised_prompt.clone(),
+            usage: None,
         })
     }
 
@@ -404,6 +405,7 @@ impl OpenAiClient {
             height,
             format: ImageFormat::Png,
             revised_prompt,
+            usage: None,
         })
     }
 }

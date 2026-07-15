@@ -575,6 +575,7 @@ impl Provider for AzureOpenAiClient {
             height,
             format: ImageFormat::Png,
             revised_prompt: image_data.revised_prompt.clone(),
+            usage: None,
         })
     }
 

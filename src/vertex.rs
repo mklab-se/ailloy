@@ -542,6 +542,7 @@ impl Provider for VertexAiClient {
                 height,
                 format,
                 revised_prompt: None,
+                usage: None,
             })
         } else {
             // Gemini with image generation (Nano Banana style)
@@ -614,6 +615,7 @@ impl Provider for VertexAiClient {
                 height,
                 format,
                 revised_prompt: None,
+                usage: None,
             })
         }
     }

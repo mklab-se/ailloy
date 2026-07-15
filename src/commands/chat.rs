@@ -197,11 +197,7 @@ async fn run_image_generation(
         );
     }
 
-    let options = ImageOptions {
-        size: None,
-        quality: None,
-        style: None,
-    };
+    let options = ImageOptions::default();
 
     let image = if quiet {
         provider.generate_image(prompt, Some(&options)).await?
