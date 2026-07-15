@@ -18,8 +18,9 @@ use crate::openai_images::{
 };
 use crate::types::{
     ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageOptions,
-    ImageResponse, Message, StreamEvent, Usage,
+    ImageResponse, Message, StreamEvent, Usage, VideoJob, VideoOptions, VideoResponse,
 };
+use crate::video_jobs::VideoJobsApi;
 
 /// Client for Microsoft Foundry (AI Services).
 pub struct FoundryClient {
@@ -302,6 +303,17 @@ impl FoundryClient {
             }
         } else {
             format!("Microsoft Foundry API error (HTTP {}): {}", status, body)
+        }
+    }
+
+    /// Build a [`VideoJobsApi`] scoped to this client's endpoint and
+    /// api-version, using the given auth header.
+    fn video_api(&self, header: (&'static str, String)) -> VideoJobsApi<'_> {
+        VideoJobsApi {
+            client: &self.client,
+            base: self.base_url(),
+            api_version: self.api_version.as_deref(),
+            header,
         }
     }
 }
@@ -605,6 +617,36 @@ impl Provider for FoundryClient {
             }),
         })
     }
+
+    async fn create_video_job(
+        &self,
+        prompt: &str,
+        options: Option<&VideoOptions>,
+    ) -> Result<VideoJob> {
+        if let Some(options) = options {
+            options.validate()?;
+        }
+        debug!(model = %self.model, "Creating video generation job on Microsoft Foundry");
+        let header = self.get_auth_header().await?;
+        self.video_api(header)
+            .create(&self.model, prompt, options)
+            .await
+    }
+
+    async fn get_video_job(&self, id: &str) -> Result<VideoJob> {
+        let header = self.get_auth_header().await?;
+        self.video_api(header).get(id).await
+    }
+
+    async fn download_video(&self, generation_id: &str) -> Result<VideoResponse> {
+        let header = self.get_auth_header().await?;
+        self.video_api(header).download(generation_id).await
+    }
+
+    async fn delete_video_job(&self, id: &str) -> Result<()> {
+        let header = self.get_auth_header().await?;
+        self.video_api(header).delete(id).await
+    }
 }
 
 #[cfg(test)]
@@ -735,5 +777,35 @@ mod v1_surface_tests {
 
         assert!(!wants_edits(None));
         assert!(!wants_edits(Some(&ImageOptions::default())));
+    }
+
+    #[test]
+    fn video_api_builds_urls_from_client_base_and_api_version() {
+        let c = FoundryClient::new(
+            "https://acct.cognitiveservices.azure.com",
+            "sora-2",
+            AzureAuth::AzureCli,
+        );
+        let api = c.video_api(("Authorization", "Bearer test".to_string()));
+        assert_eq!(
+            api.jobs_url(),
+            "https://acct.services.ai.azure.com/openai/v1/video/generations/jobs?api-version=preview"
+        );
+        assert_eq!(
+            api.job_url("job-1"),
+            "https://acct.services.ai.azure.com/openai/v1/video/generations/jobs/job-1?api-version=preview"
+        );
+
+        let c = FoundryClient::with_api_version(
+            "https://acct.services.ai.azure.com",
+            "sora-2",
+            "2025-04-01-preview",
+            AzureAuth::AzureCli,
+        );
+        let api = c.video_api(("Authorization", "Bearer test".to_string()));
+        assert_eq!(
+            api.jobs_url(),
+            "https://acct.services.ai.azure.com/openai/v1/video/generations/jobs?api-version=2025-04-01-preview"
+        );
     }
 }

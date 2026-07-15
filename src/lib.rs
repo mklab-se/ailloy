@@ -41,6 +41,7 @@ pub mod retirement;
 pub mod terminal;
 pub mod types;
 pub mod vertex;
+mod video_jobs;
 
 // Re-export commonly used types at the crate root.
 pub use client::{Client, Provider};

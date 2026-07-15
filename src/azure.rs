@@ -14,8 +14,9 @@ use crate::openai_images::{
 };
 use crate::types::{
     ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageOptions,
-    ImageResponse, Message, StreamEvent, Usage,
+    ImageResponse, Message, StreamEvent, Usage, VideoJob, VideoOptions, VideoResponse,
 };
+use crate::video_jobs::VideoJobsApi;
 
 /// Authentication method for Azure OpenAI.
 #[derive(Debug, Clone)]
@@ -293,6 +294,17 @@ impl AzureOpenAiClient {
                 let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 Ok(("Authorization", format!("Bearer {}", token)))
             }
+        }
+    }
+
+    /// Build a [`VideoJobsApi`] scoped to this client's endpoint and
+    /// api-version, using the given auth header.
+    fn video_api(&self, header: (&'static str, String)) -> VideoJobsApi<'_> {
+        VideoJobsApi {
+            client: &self.client,
+            base: self.base_url(),
+            api_version: self.api_version.as_deref(),
+            header,
         }
     }
 }
@@ -596,6 +608,36 @@ impl Provider for AzureOpenAiClient {
             }),
         })
     }
+
+    async fn create_video_job(
+        &self,
+        prompt: &str,
+        options: Option<&VideoOptions>,
+    ) -> Result<VideoJob> {
+        if let Some(options) = options {
+            options.validate()?;
+        }
+        debug!(deployment = %self.deployment, "Creating video generation job on Azure OpenAI");
+        let header = self.get_auth_header().await?;
+        self.video_api(header)
+            .create(&self.deployment, prompt, options)
+            .await
+    }
+
+    async fn get_video_job(&self, id: &str) -> Result<VideoJob> {
+        let header = self.get_auth_header().await?;
+        self.video_api(header).get(id).await
+    }
+
+    async fn download_video(&self, generation_id: &str) -> Result<VideoResponse> {
+        let header = self.get_auth_header().await?;
+        self.video_api(header).download(generation_id).await
+    }
+
+    async fn delete_video_job(&self, id: &str) -> Result<()> {
+        let header = self.get_auth_header().await?;
+        self.video_api(header).delete(id).await
+    }
 }
 
 #[cfg(test)]
@@ -680,5 +722,35 @@ mod v1_surface_tests {
             flavor_for("my-custom-deployment"),
             ImageFlavor::AzureGptImage
         ));
+    }
+
+    #[test]
+    fn video_api_builds_urls_from_client_base_and_api_version() {
+        let c = AzureOpenAiClient::new(
+            "https://r.openai.azure.com",
+            "sora-2-deployment",
+            AzureAuth::AzureCli,
+        );
+        let api = c.video_api(("Authorization", "Bearer test".to_string()));
+        assert_eq!(
+            api.jobs_url(),
+            "https://r.openai.azure.com/openai/v1/video/generations/jobs?api-version=preview"
+        );
+        assert_eq!(
+            api.job_url("job-1"),
+            "https://r.openai.azure.com/openai/v1/video/generations/jobs/job-1?api-version=preview"
+        );
+
+        let c = AzureOpenAiClient::with_api_version(
+            "https://r.openai.azure.com/",
+            "sora-2-deployment",
+            "2025-04-01-preview",
+            AzureAuth::AzureCli,
+        );
+        let api = c.video_api(("Authorization", "Bearer test".to_string()));
+        assert_eq!(
+            api.jobs_url(),
+            "https://r.openai.azure.com/openai/v1/video/generations/jobs?api-version=2025-04-01-preview"
+        );
     }
 }
