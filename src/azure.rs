@@ -4,14 +4,16 @@ use std::process::Stdio;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use base64::Engine;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::client::Provider;
+use crate::openai_images::{
+    ImageFlavor, build_edits_form, build_generations_body, parse_images_response, wants_edits,
+};
 use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageFormat, ImageOptions,
+    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageOptions,
     ImageResponse, Message, StreamEvent, Usage,
 };
 
@@ -113,31 +115,6 @@ struct StreamDelta {
     content: Option<String>,
 }
 
-// Image generation types
-#[derive(Serialize)]
-struct ImageGenRequest<'a> {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    model: Option<&'a str>,
-    prompt: &'a str,
-    n: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    size: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    quality: Option<&'a str>,
-    response_format: &'a str,
-}
-
-#[derive(Deserialize)]
-struct ImageGenResponse {
-    data: Vec<ImageData>,
-}
-
-#[derive(Deserialize)]
-struct ImageData {
-    b64_json: Option<String>,
-    revised_prompt: Option<String>,
-}
-
 // Embedding types
 #[derive(Serialize)]
 struct EmbedRequest<'a> {
@@ -164,6 +141,20 @@ struct EmbedData {
 struct EmbedApiUsage {
     prompt_tokens: u32,
     total_tokens: u32,
+}
+
+/// Pick the image request shape for a deployment/model name.
+///
+/// Azure/Foundry only ever exposes DALL·E or gpt-image style deployments;
+/// anything not explicitly named `dall-e*` is treated as a gpt-image
+/// deployment (including custom deployment names that don't echo the
+/// underlying model).
+fn flavor_for(name: &str) -> ImageFlavor {
+    if name.starts_with("dall-e") {
+        ImageFlavor::DallE
+    } else {
+        ImageFlavor::AzureGptImage
+    }
 }
 
 impl AzureOpenAiClient {
@@ -230,6 +221,10 @@ impl AzureOpenAiClient {
 
     fn image_url(&self) -> String {
         self.url_for("images/generations")
+    }
+
+    fn edits_url(&self) -> String {
+        self.url_for("images/edits")
     }
 
     fn embed_url(&self) -> String {
@@ -508,37 +503,42 @@ impl Provider for AzureOpenAiClient {
         Ok(Box::pin(stream))
     }
 
-    async fn generate_image(
+    async fn generate_images(
         &self,
         prompt: &str,
         options: Option<&ImageOptions>,
-    ) -> Result<ImageResponse> {
-        let url = self.image_url();
-        debug!(url = %url, "Sending image generation request to Azure OpenAI");
-
+    ) -> Result<Vec<ImageResponse>> {
         let (header_name, header_value) = self.get_auth_header().await?;
+        let flavor = flavor_for(&self.deployment);
 
-        let size = options
-            .and_then(|o| o.size)
-            .map(|(w, h)| format!("{}x{}", w, h));
+        let response = if wants_edits(options) {
+            // `wants_edits` only returns true when `options` is `Some` with
+            // non-empty `reference_images`.
+            let opts = options.expect("wants_edits(true) implies options is Some");
+            let url = self.edits_url();
+            debug!(url = %url, "Sending image edit request to Azure OpenAI");
 
-        let request = ImageGenRequest {
-            model: self.body_model(),
-            prompt,
-            n: 1,
-            size,
-            quality: options.and_then(|o| o.quality.as_deref()),
-            response_format: "b64_json",
+            let form = build_edits_form(self.body_model(), prompt, opts).await?;
+            self.client
+                .post(&url)
+                .header(header_name, &header_value)
+                .multipart(form)
+                .send()
+                .await
+                .context("Failed to send image edit request to Azure OpenAI")?
+        } else {
+            let url = self.image_url();
+            debug!(url = %url, "Sending image generation request to Azure OpenAI");
+
+            let body = build_generations_body(self.body_model(), prompt, options, flavor)?;
+            self.client
+                .post(&url)
+                .header(header_name, &header_value)
+                .json(&body)
+                .send()
+                .await
+                .context("Failed to send image generation request to Azure OpenAI")?
         };
-
-        let response = self
-            .client
-            .post(&url)
-            .header(header_name, &header_value)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send image generation request to Azure OpenAI")?;
 
         let status = response.status();
         if !status.is_success() {
@@ -546,37 +546,12 @@ impl Provider for AzureOpenAiClient {
             anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
         }
 
-        let api_response: ImageGenResponse = response
-            .json()
+        let body = response
+            .text()
             .await
-            .context("Failed to parse Azure image generation response")?;
+            .context("Failed to read Azure OpenAI image response")?;
 
-        let image_data = api_response
-            .data
-            .first()
-            .context("No image data in response")?;
-
-        let b64 = image_data
-            .b64_json
-            .as_ref()
-            .context("No base64 image data in response")?;
-
-        let data = base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .context("Failed to decode base64 image data")?;
-
-        let (width, height) = crate::types::image_dimensions(&data)
-            .or_else(|| options.and_then(|o| o.size))
-            .unwrap_or((1024, 1024));
-
-        Ok(ImageResponse {
-            data,
-            width,
-            height,
-            format: ImageFormat::Png,
-            revised_prompt: image_data.revised_prompt.clone(),
-            usage: None,
-        })
+        parse_images_response(&body, options.and_then(|o| o.size))
     }
 
     async fn embed(&self, texts: &[&str], options: Option<&EmbedOptions>) -> Result<EmbedResponse> {
@@ -660,6 +635,10 @@ mod v1_surface_tests {
             "https://r.openai.azure.com/openai/v1/images/generations"
         );
         assert_eq!(
+            c.edits_url(),
+            "https://r.openai.azure.com/openai/v1/images/edits"
+        );
+        assert_eq!(
             c.body_model(),
             Some("gpt-5-mini"),
             "v1 bodies carry the deployment as model"
@@ -678,6 +657,28 @@ mod v1_surface_tests {
             c.chat_url(),
             "https://r.openai.azure.com/openai/deployments/dep/chat/completions?api-version=2024-10-21"
         );
+        assert_eq!(
+            c.edits_url(),
+            "https://r.openai.azure.com/openai/deployments/dep/images/edits?api-version=2024-10-21"
+        );
         assert_eq!(c.body_model(), None, "legacy bodies must not carry model");
+    }
+
+    #[test]
+    fn flavor_for_selects_dalle_for_dalle_deployments() {
+        assert!(matches!(flavor_for("dall-e-3"), ImageFlavor::DallE));
+        assert!(matches!(flavor_for("dall-e-2"), ImageFlavor::DallE));
+    }
+
+    #[test]
+    fn flavor_for_selects_azure_gpt_image_for_everything_else() {
+        assert!(matches!(
+            flavor_for("gpt-image-1"),
+            ImageFlavor::AzureGptImage
+        ));
+        assert!(matches!(
+            flavor_for("my-custom-deployment"),
+            ImageFlavor::AzureGptImage
+        ));
     }
 }

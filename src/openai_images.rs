@@ -5,10 +5,8 @@
 //! it performs no HTTP itself — callers (`openai.rs`, `azure.rs`,
 //! `foundry.rs`) own the transport.
 //!
-//! Not yet wired into any client — consumed starting with Tasks 1.5/1.6
-//! (OpenAI/Azure/Foundry image support), hence the module-wide dead-code
-//! allowance below.
-#![allow(dead_code)]
+//! Consumed by `openai.rs` and `azure.rs` (Tasks 1.5); `foundry.rs` wires in
+//! separately (Task 1.6).
 
 use anyhow::Context;
 use base64::Engine;
