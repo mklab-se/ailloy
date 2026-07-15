@@ -1,14 +1,17 @@
 //! Client abstraction and Provider trait.
 
+use std::collections::BTreeMap;
+use std::str::FromStr;
+
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 
 use crate::config::{AiNode, Auth, Config, ProviderKind};
 use crate::error::ClientError;
 use crate::types::{
-    ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageOptions,
-    ImageResponse, Message, Task, VideoJob, VideoJobStatus, VideoOptions, VideoProgress,
-    VideoResponse,
+    Background, ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageFormat,
+    ImageOptions, ImageResponse, Message, Task, VideoJob, VideoJobStatus, VideoOptions,
+    VideoProgress, VideoResponse,
 };
 
 /// Unified provider trait. Override methods for the capabilities you support.
@@ -183,9 +186,157 @@ pub(crate) async fn poll_video_job_until_terminal<P: Provider + ?Sized>(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Per-node default parameter resolution
+// ---------------------------------------------------------------------------
+
+/// Log a hand-edited node default whose stored value could not be parsed.
+fn warn_unparseable_default(key: &str, value: &str) {
+    tracing::warn!(
+        "ignoring node default '{}' = '{}': value could not be parsed for this parameter",
+        key,
+        value
+    );
+}
+
+/// Parse a `WxH` size string into `(width, height)`, rejecting zero dims.
+fn parse_size(value: &str) -> Option<(u32, u32)> {
+    let (w, h) = value.split_once('x')?;
+    let width: u32 = w.parse().ok()?;
+    let height: u32 = h.parse().ok()?;
+    if width == 0 || height == 0 {
+        None
+    } else {
+        Some((width, height))
+    }
+}
+
+/// Fill only the `None` fields of `opts` from a node's stored `image.*`
+/// defaults. Explicit (already-`Some`) values always win. Unparseable stored
+/// values are logged and skipped.
+pub(crate) fn merge_image_defaults(opts: &mut ImageOptions, defaults: &BTreeMap<String, String>) {
+    if opts.size.is_none() {
+        if let Some(v) = defaults.get("image.size") {
+            match parse_size(v) {
+                Some(size) => opts.size = Some(size),
+                None => warn_unparseable_default("image.size", v),
+            }
+        }
+    }
+    if opts.quality.is_none() {
+        if let Some(v) = defaults.get("image.quality") {
+            opts.quality = Some(v.clone());
+        }
+    }
+    if opts.output_format.is_none() {
+        if let Some(v) = defaults.get("image.format") {
+            match ImageFormat::from_str(v) {
+                Ok(fmt) => opts.output_format = Some(fmt),
+                Err(_) => warn_unparseable_default("image.format", v),
+            }
+        }
+    }
+    if opts.compression.is_none() {
+        if let Some(v) = defaults.get("image.compression") {
+            match v.parse::<u8>() {
+                Ok(c) => opts.compression = Some(c),
+                Err(_) => warn_unparseable_default("image.compression", v),
+            }
+        }
+    }
+    if opts.n.is_none() {
+        if let Some(v) = defaults.get("image.variants") {
+            match v.parse::<u8>() {
+                Ok(n) => opts.n = Some(n),
+                Err(_) => warn_unparseable_default("image.variants", v),
+            }
+        }
+    }
+    if opts.background.is_none() {
+        if let Some(v) = defaults.get("image.background") {
+            match Background::from_str(v) {
+                Ok(bg) => opts.background = Some(bg),
+                Err(_) => warn_unparseable_default("image.background", v),
+            }
+        }
+    }
+}
+
+/// Fill only the `None` fields of `opts` from a node's stored `video.*`
+/// defaults.
+pub(crate) fn merge_video_defaults(opts: &mut VideoOptions, defaults: &BTreeMap<String, String>) {
+    if opts.size.is_none() {
+        if let Some(v) = defaults.get("video.size") {
+            match parse_size(v) {
+                Some(size) => opts.size = Some(size),
+                None => warn_unparseable_default("video.size", v),
+            }
+        }
+    }
+    if opts.seconds.is_none() {
+        if let Some(v) = defaults.get("video.seconds") {
+            match v.parse::<u32>() {
+                Ok(s) => opts.seconds = Some(s),
+                Err(_) => warn_unparseable_default("video.seconds", v),
+            }
+        }
+    }
+    if opts.variants.is_none() {
+        if let Some(v) = defaults.get("video.variants") {
+            match v.parse::<u8>() {
+                Ok(n) => opts.variants = Some(n),
+                Err(_) => warn_unparseable_default("video.variants", v),
+            }
+        }
+    }
+}
+
+/// Fill only the `None` fields of `opts` from a node's stored `chat.*`
+/// defaults.
+pub(crate) fn merge_chat_defaults(opts: &mut ChatOptions, defaults: &BTreeMap<String, String>) {
+    if opts.temperature.is_none() {
+        if let Some(v) = defaults.get("chat.temperature") {
+            match v.parse::<f32>() {
+                Ok(t) => opts.temperature = Some(t),
+                Err(_) => warn_unparseable_default("chat.temperature", v),
+            }
+        }
+    }
+    if opts.max_tokens.is_none() {
+        if let Some(v) = defaults.get("chat.max_tokens") {
+            match v.parse::<u32>() {
+                Ok(m) => opts.max_tokens = Some(m),
+                Err(_) => warn_unparseable_default("chat.max_tokens", v),
+            }
+        }
+    }
+}
+
+/// Fill only the `None` field of `opts` from a node's stored
+/// `embedding.dimensions` default, honoring the legacy un-namespaced
+/// `dimensions` key when the namespaced one is absent.
+pub(crate) fn merge_embed_defaults(opts: &mut EmbedOptions, defaults: &BTreeMap<String, String>) {
+    if opts.dimensions.is_none() {
+        if let Some(v) = defaults
+            .get("embedding.dimensions")
+            .or_else(|| defaults.get("dimensions"))
+        {
+            match v.parse::<u32>() {
+                Ok(d) => opts.dimensions = Some(d),
+                Err(_) => warn_unparseable_default("embedding.dimensions", v),
+            }
+        }
+    }
+}
+
 /// A high-level client that wraps a [`Provider`] for convenient AI interactions.
 pub struct Client {
     provider: Box<dyn Provider>,
+    /// Per-node default parameter values (namespaced keys, e.g.
+    /// `image.quality`), captured when the client is built from config or a
+    /// node. `None` for clients built from a raw provider or direct
+    /// constructors.
+    node_defaults: Option<BTreeMap<String, String>>,
 }
 
 impl Client {
@@ -194,7 +345,10 @@ impl Client {
         let config = Config::load()?;
         let (id, node) = config.default_chat_node()?;
         let provider = create_provider_from_node(id, node)?;
-        Ok(Self { provider })
+        Ok(Self {
+            provider,
+            node_defaults: node.node_defaults.clone(),
+        })
     }
 
     /// Create a client using a specific node by ID or alias.
@@ -207,7 +361,10 @@ impl Client {
             ))
         })?;
         let provider = create_provider_from_node(id, node)?;
-        Ok(Self { provider })
+        Ok(Self {
+            provider,
+            node_defaults: node.node_defaults.clone(),
+        })
     }
 
     /// Create a client for a specific capability (uses the capability's default node).
@@ -215,7 +372,10 @@ impl Client {
         let config = Config::load()?;
         let (id, node) = config.default_node_for(cap)?;
         let provider = create_provider_from_node(id, node)?;
-        Ok(Self { provider })
+        Ok(Self {
+            provider,
+            node_defaults: node.node_defaults.clone(),
+        })
     }
 
     /// Create a client for a specific task type (uses the task's default node).
@@ -226,12 +386,18 @@ impl Client {
     /// Create a client directly from an [`AiNode`] (no config file needed).
     pub fn from_node(node: &AiNode) -> Result<Self> {
         let provider = create_provider_from_node("inline", node)?;
-        Ok(Self { provider })
+        Ok(Self {
+            provider,
+            node_defaults: node.node_defaults.clone(),
+        })
     }
 
     /// Create a client wrapping an existing provider.
     pub fn from_provider(provider: Box<dyn Provider>) -> Self {
-        Self { provider }
+        Self {
+            provider,
+            node_defaults: None,
+        }
     }
 
     /// Create a client builder.
@@ -244,6 +410,7 @@ impl Client {
         let client = crate::openai::OpenAiClient::new(api_key, model, None);
         Ok(Self {
             provider: Box::new(client),
+            node_defaults: None,
         })
     }
 
@@ -252,6 +419,7 @@ impl Client {
         let client = crate::anthropic::AnthropicClient::new(api_key, model);
         Ok(Self {
             provider: Box::new(client),
+            node_defaults: None,
         })
     }
 
@@ -260,6 +428,7 @@ impl Client {
         let client = crate::ollama::OllamaClient::new(model, endpoint);
         Ok(Self {
             provider: Box::new(client),
+            node_defaults: None,
         })
     }
 
@@ -281,6 +450,7 @@ impl Client {
         };
         Ok(Self {
             provider: Box::new(client),
+            node_defaults: None,
         })
     }
 
@@ -302,6 +472,7 @@ impl Client {
         };
         Ok(Self {
             provider: Box::new(client),
+            node_defaults: None,
         })
     }
 
@@ -314,12 +485,28 @@ impl Client {
         let client = crate::vertex::VertexAiClient::new(project, location, model);
         Ok(Self {
             provider: Box::new(client),
+            node_defaults: None,
         })
+    }
+
+    /// The node's per-node defaults, but only when they would actually change
+    /// a request. Returns `None` when there are no defaults (either the client
+    /// wasn't built from a node, or the node carried an empty map), so callers
+    /// can take a byte-for-byte identical fast path.
+    fn active_defaults(&self) -> Option<&BTreeMap<String, String>> {
+        self.node_defaults.as_ref().filter(|d| !d.is_empty())
     }
 
     /// Send a simple chat request (no options).
     pub async fn chat(&self, messages: &[Message]) -> Result<ChatResponse> {
-        self.provider.chat(messages, None).await
+        match self.active_defaults() {
+            Some(defaults) => {
+                let mut opts = ChatOptions::default();
+                merge_chat_defaults(&mut opts, defaults);
+                self.provider.chat(messages, Some(&opts)).await
+            }
+            None => self.provider.chat(messages, None).await,
+        }
     }
 
     /// Send a chat request with options.
@@ -328,17 +515,38 @@ impl Client {
         messages: &[Message],
         options: &ChatOptions,
     ) -> Result<ChatResponse> {
-        self.provider.chat(messages, Some(options)).await
+        match self.active_defaults() {
+            Some(defaults) => {
+                let mut opts = options.clone();
+                merge_chat_defaults(&mut opts, defaults);
+                self.provider.chat(messages, Some(&opts)).await
+            }
+            None => self.provider.chat(messages, Some(options)).await,
+        }
     }
 
     /// Send a streaming chat request.
     pub async fn chat_stream(&self, messages: &[Message]) -> Result<ChatStream> {
-        self.provider.chat_stream(messages, None).await
+        match self.active_defaults() {
+            Some(defaults) => {
+                let mut opts = ChatOptions::default();
+                merge_chat_defaults(&mut opts, defaults);
+                self.provider.chat_stream(messages, Some(&opts)).await
+            }
+            None => self.provider.chat_stream(messages, None).await,
+        }
     }
 
     /// Generate an image from a text prompt.
     pub async fn generate_image(&self, prompt: &str) -> Result<ImageResponse> {
-        self.provider.generate_image(prompt, None).await
+        match self.active_defaults() {
+            Some(defaults) => {
+                let mut opts = ImageOptions::default();
+                merge_image_defaults(&mut opts, defaults);
+                self.provider.generate_image(prompt, Some(&opts)).await
+            }
+            None => self.provider.generate_image(prompt, None).await,
+        }
     }
 
     /// Generate an image with options.
@@ -360,7 +568,14 @@ impl Client {
 
     /// Generate one or more images from a text prompt.
     pub async fn generate_images(&self, prompt: &str) -> Result<Vec<ImageResponse>> {
-        self.provider.generate_images(prompt, None).await
+        match self.active_defaults() {
+            Some(defaults) => {
+                let mut opts = ImageOptions::default();
+                merge_image_defaults(&mut opts, defaults);
+                self.provider.generate_images(prompt, Some(&opts)).await
+            }
+            None => self.provider.generate_images(prompt, None).await,
+        }
     }
 
     /// Generate one or more images with options.
@@ -369,12 +584,26 @@ impl Client {
         prompt: &str,
         options: &ImageOptions,
     ) -> Result<Vec<ImageResponse>> {
-        self.provider.generate_images(prompt, Some(options)).await
+        match self.active_defaults() {
+            Some(defaults) => {
+                let mut opts = options.clone();
+                merge_image_defaults(&mut opts, defaults);
+                self.provider.generate_images(prompt, Some(&opts)).await
+            }
+            None => self.provider.generate_images(prompt, Some(options)).await,
+        }
     }
 
     /// Generate embeddings for multiple texts.
     pub async fn embed(&self, texts: &[&str]) -> Result<EmbedResponse> {
-        self.provider.embed(texts, None).await
+        match self.active_defaults() {
+            Some(defaults) => {
+                let mut opts = EmbedOptions::default();
+                merge_embed_defaults(&mut opts, defaults);
+                self.provider.embed(texts, Some(&opts)).await
+            }
+            None => self.provider.embed(texts, None).await,
+        }
     }
 
     /// Generate embeddings with options.
@@ -383,12 +612,26 @@ impl Client {
         texts: &[&str],
         options: &EmbedOptions,
     ) -> Result<EmbedResponse> {
-        self.provider.embed(texts, Some(options)).await
+        match self.active_defaults() {
+            Some(defaults) => {
+                let mut opts = options.clone();
+                merge_embed_defaults(&mut opts, defaults);
+                self.provider.embed(texts, Some(&opts)).await
+            }
+            None => self.provider.embed(texts, Some(options)).await,
+        }
     }
 
     /// Embed a single text, returning the vector directly.
     pub async fn embed_one(&self, text: &str) -> Result<Vec<f32>> {
-        let response = self.provider.embed(&[text], None).await?;
+        let response = match self.active_defaults() {
+            Some(defaults) => {
+                let mut opts = EmbedOptions::default();
+                merge_embed_defaults(&mut opts, defaults);
+                self.provider.embed(&[text], Some(&opts)).await?
+            }
+            None => self.provider.embed(&[text], None).await?,
+        };
         response
             .embeddings
             .into_iter()
@@ -398,7 +641,16 @@ impl Client {
 
     /// Generate a video from a text prompt (no options, no progress callback).
     pub async fn generate_video(&self, prompt: &str) -> Result<Vec<VideoResponse>> {
-        self.provider.generate_video(prompt, None, None).await
+        match self.active_defaults() {
+            Some(defaults) => {
+                let mut opts = VideoOptions::default();
+                merge_video_defaults(&mut opts, defaults);
+                self.provider
+                    .generate_video(prompt, Some(&opts), None)
+                    .await
+            }
+            None => self.provider.generate_video(prompt, None, None).await,
+        }
     }
 
     /// Generate a video with options.
@@ -407,10 +659,22 @@ impl Client {
         prompt: &str,
         options: &VideoOptions,
     ) -> Result<Vec<VideoResponse>> {
-        options.validate()?;
-        self.provider
-            .generate_video(prompt, Some(options), None)
-            .await
+        match self.active_defaults() {
+            Some(defaults) => {
+                let mut opts = options.clone();
+                merge_video_defaults(&mut opts, defaults);
+                opts.validate()?;
+                self.provider
+                    .generate_video(prompt, Some(&opts), None)
+                    .await
+            }
+            None => {
+                options.validate()?;
+                self.provider
+                    .generate_video(prompt, Some(options), None)
+                    .await
+            }
+        }
     }
 
     /// Generate a video with options, invoking `progress` after each poll of
@@ -421,10 +685,22 @@ impl Client {
         options: &VideoOptions,
         progress: impl Fn(&VideoJob) + Send + Sync,
     ) -> Result<Vec<VideoResponse>> {
-        options.validate()?;
-        self.provider
-            .generate_video(prompt, Some(options), Some(&progress))
-            .await
+        match self.active_defaults() {
+            Some(defaults) => {
+                let mut opts = options.clone();
+                merge_video_defaults(&mut opts, defaults);
+                opts.validate()?;
+                self.provider
+                    .generate_video(prompt, Some(&opts), Some(&progress))
+                    .await
+            }
+            None => {
+                options.validate()?;
+                self.provider
+                    .generate_video(prompt, Some(options), Some(&progress))
+                    .await
+            }
+        }
     }
 
     /// Create an asynchronous video generation job.
@@ -433,10 +709,20 @@ impl Client {
         prompt: &str,
         options: Option<&VideoOptions>,
     ) -> Result<VideoJob> {
-        if let Some(options) = options {
-            options.validate()?;
+        match self.active_defaults() {
+            Some(defaults) => {
+                let mut opts = options.cloned().unwrap_or_default();
+                merge_video_defaults(&mut opts, defaults);
+                opts.validate()?;
+                self.provider.create_video_job(prompt, Some(&opts)).await
+            }
+            None => {
+                if let Some(options) = options {
+                    options.validate()?;
+                }
+                self.provider.create_video_job(prompt, options).await
+            }
         }
-        self.provider.create_video_job(prompt, options).await
     }
 
     /// Fetch the current state of a video generation job.
@@ -631,7 +917,12 @@ impl ClientBuilder {
             }
         };
 
-        Ok(Client { provider })
+        // The builder constructs a provider directly from raw parameters, not
+        // from an `AiNode`, so there are no per-node defaults to apply.
+        Ok(Client {
+            provider,
+            node_defaults: None,
+        })
     }
 }
 
@@ -1272,5 +1563,246 @@ mod tests {
             "Error should mention invalid duration: {}",
             err
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Per-node default parameter resolution
+    // -----------------------------------------------------------------
+
+    use crate::types::{EmbedResponse, ImageFormat};
+
+    /// A provider that records the options it last received, so tests can
+    /// assert exactly what the merging logic produced.
+    #[derive(Default)]
+    struct CapturingProvider {
+        chat: Mutex<Option<Option<ChatOptions>>>,
+        image: Mutex<Option<Option<ImageOptions>>>,
+        embed: Mutex<Option<Option<EmbedOptions>>>,
+    }
+
+    #[async_trait]
+    impl Provider for CapturingProvider {
+        fn name(&self) -> &str {
+            "capturing"
+        }
+
+        async fn chat(
+            &self,
+            _messages: &[Message],
+            options: Option<&ChatOptions>,
+        ) -> Result<ChatResponse> {
+            *self.chat.lock().unwrap() = Some(options.cloned());
+            Ok(ChatResponse {
+                content: String::new(),
+                model: "mock".to_string(),
+                usage: None,
+            })
+        }
+
+        async fn generate_images(
+            &self,
+            _prompt: &str,
+            options: Option<&ImageOptions>,
+        ) -> Result<Vec<ImageResponse>> {
+            *self.image.lock().unwrap() = Some(options.cloned());
+            Ok(vec![])
+        }
+
+        async fn embed(
+            &self,
+            _texts: &[&str],
+            options: Option<&EmbedOptions>,
+        ) -> Result<EmbedResponse> {
+            *self.embed.lock().unwrap() = Some(options.cloned());
+            Ok(EmbedResponse {
+                embeddings: vec![vec![0.0]],
+                model: "mock".to_string(),
+                usage: None,
+            })
+        }
+    }
+
+    /// Build a `Client` around an arbitrary provider with explicit defaults,
+    /// mirroring what config/node constructors capture without touching disk.
+    fn test_client(
+        provider: Box<dyn Provider>,
+        defaults: Option<BTreeMap<String, String>>,
+    ) -> Client {
+        Client {
+            provider,
+            node_defaults: defaults,
+        }
+    }
+
+    fn defaults_map(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn defaults_fill_when_option_absent() {
+        let provider = std::sync::Arc::new(CapturingProvider::default());
+        let client = test_client(
+            Box::new(CapturingProviderRef(provider.clone())),
+            Some(defaults_map(&[
+                ("image.quality", "high"),
+                ("chat.temperature", "0.4"),
+                ("embedding.dimensions", "256"),
+            ])),
+        );
+
+        client.chat(&[Message::user("hi")]).await.unwrap();
+        let captured = provider.chat.lock().unwrap().clone().unwrap().unwrap();
+        assert_eq!(captured.temperature, Some(0.4));
+
+        client.generate_images("a cat").await.unwrap();
+        let img = provider.image.lock().unwrap().clone().unwrap().unwrap();
+        assert_eq!(img.quality.as_deref(), Some("high"));
+
+        client.embed(&["x"]).await.unwrap();
+        let emb = provider.embed.lock().unwrap().clone().unwrap().unwrap();
+        assert_eq!(emb.dimensions, Some(256));
+    }
+
+    #[tokio::test]
+    async fn explicit_option_wins_over_default() {
+        let provider = std::sync::Arc::new(CapturingProvider::default());
+        let client = test_client(
+            Box::new(CapturingProviderRef(provider.clone())),
+            Some(defaults_map(&[("chat.temperature", "0.4")])),
+        );
+
+        let opts = ChatOptions {
+            temperature: Some(1.5),
+            ..Default::default()
+        };
+        client
+            .chat_with(&[Message::user("hi")], &opts)
+            .await
+            .unwrap();
+        let captured = provider.chat.lock().unwrap().clone().unwrap().unwrap();
+        assert_eq!(captured.temperature, Some(1.5));
+    }
+
+    #[tokio::test]
+    async fn unparseable_default_is_skipped() {
+        let provider = std::sync::Arc::new(CapturingProvider::default());
+        let client = test_client(
+            Box::new(CapturingProviderRef(provider.clone())),
+            Some(defaults_map(&[
+                ("image.format", "gif"),
+                ("image.quality", "high"),
+            ])),
+        );
+
+        client.generate_images("a cat").await.unwrap();
+        let img = provider.image.lock().unwrap().clone().unwrap().unwrap();
+        // The bad format is skipped, but the good sibling value still applies.
+        assert_eq!(img.output_format, None);
+        assert_eq!(img.quality.as_deref(), Some("high"));
+    }
+
+    #[tokio::test]
+    async fn legacy_dimensions_alias_applies() {
+        let provider = std::sync::Arc::new(CapturingProvider::default());
+        let client = test_client(
+            Box::new(CapturingProviderRef(provider.clone())),
+            Some(defaults_map(&[("dimensions", "512")])),
+        );
+
+        client.embed(&["x"]).await.unwrap();
+        let emb = provider.embed.lock().unwrap().clone().unwrap().unwrap();
+        assert_eq!(emb.dimensions, Some(512));
+    }
+
+    #[tokio::test]
+    async fn no_defaults_passes_options_through_unchanged() {
+        // None defaults: the no-option methods must pass `None` (identity).
+        let provider = std::sync::Arc::new(CapturingProvider::default());
+        let client = test_client(Box::new(CapturingProviderRef(provider.clone())), None);
+
+        client.chat(&[Message::user("hi")]).await.unwrap();
+        assert!(matches!(&*provider.chat.lock().unwrap(), Some(None)));
+
+        client.generate_images("a cat").await.unwrap();
+        assert!(matches!(&*provider.image.lock().unwrap(), Some(None)));
+
+        client.embed(&["x"]).await.unwrap();
+        assert!(matches!(&*provider.embed.lock().unwrap(), Some(None)));
+    }
+
+    #[tokio::test]
+    async fn empty_defaults_map_is_identity() {
+        // An empty (but Some) map must behave exactly like None.
+        let provider = std::sync::Arc::new(CapturingProvider::default());
+        let client = test_client(
+            Box::new(CapturingProviderRef(provider.clone())),
+            Some(BTreeMap::new()),
+        );
+
+        client.chat(&[Message::user("hi")]).await.unwrap();
+        assert!(matches!(&*provider.chat.lock().unwrap(), Some(None)));
+    }
+
+    #[test]
+    fn merge_image_defaults_parses_all_fields() {
+        let defaults = defaults_map(&[
+            ("image.size", "512x768"),
+            ("image.quality", "high"),
+            ("image.format", "jpeg"),
+            ("image.compression", "80"),
+            ("image.variants", "3"),
+            ("image.background", "transparent"),
+        ]);
+        let mut opts = ImageOptions::default();
+        merge_image_defaults(&mut opts, &defaults);
+        assert_eq!(opts.size, Some((512, 768)));
+        assert_eq!(opts.quality.as_deref(), Some("high"));
+        assert_eq!(opts.output_format, Some(ImageFormat::Jpeg));
+        assert_eq!(opts.compression, Some(80));
+        assert_eq!(opts.n, Some(3));
+        assert_eq!(opts.background, Some(Background::Transparent));
+    }
+
+    #[test]
+    fn merge_image_defaults_skips_unparseable_size() {
+        let defaults = defaults_map(&[("image.size", "not-a-size")]);
+        let mut opts = ImageOptions::default();
+        merge_image_defaults(&mut opts, &defaults);
+        assert_eq!(opts.size, None);
+    }
+
+    /// A newtype forwarding to a shared `CapturingProvider` so a test can hold
+    /// a handle to inspect captures while the `Client` owns the boxed provider.
+    struct CapturingProviderRef(std::sync::Arc<CapturingProvider>);
+
+    #[async_trait]
+    impl Provider for CapturingProviderRef {
+        fn name(&self) -> &str {
+            self.0.name()
+        }
+        async fn chat(
+            &self,
+            messages: &[Message],
+            options: Option<&ChatOptions>,
+        ) -> Result<ChatResponse> {
+            self.0.chat(messages, options).await
+        }
+        async fn generate_images(
+            &self,
+            prompt: &str,
+            options: Option<&ImageOptions>,
+        ) -> Result<Vec<ImageResponse>> {
+            self.0.generate_images(prompt, options).await
+        }
+        async fn embed(
+            &self,
+            texts: &[&str],
+            options: Option<&EmbedOptions>,
+        ) -> Result<EmbedResponse> {
+            self.0.embed(texts, options).await
+        }
     }
 }

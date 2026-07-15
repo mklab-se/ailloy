@@ -347,6 +347,26 @@ impl AiNode {
         self.capabilities.contains(cap)
     }
 
+    /// Look up a stored per-node default parameter value by its namespaced
+    /// key (e.g. `"image.quality"`, `"chat.temperature"`).
+    ///
+    /// Special case: `default_for("embedding.dimensions")` falls back to the
+    /// legacy un-namespaced `"dimensions"` key when the namespaced one is
+    /// absent, so older configs keep working.
+    pub fn default_for(&self, key: &str) -> Option<&str> {
+        let defaults = self.node_defaults.as_ref()?;
+        defaults
+            .get(key)
+            .or_else(|| {
+                if key == "embedding.dimensions" {
+                    defaults.get("dimensions")
+                } else {
+                    None
+                }
+            })
+            .map(String::as_str)
+    }
+
     /// Returns embedding metadata for this node.
     ///
     /// Dimensions are resolved in order: explicit `defaults.dimensions` in the
@@ -890,6 +910,55 @@ mod tests {
             location: None,
             node_defaults: None,
         }
+    }
+
+    #[test]
+    fn default_for_reads_namespaced_key() {
+        let mut node = sample_node(ProviderKind::OpenAi, "gpt-image-2", vec![Capability::Image]);
+        node.node_defaults = Some(BTreeMap::from([
+            ("image.quality".to_string(), "high".to_string()),
+            ("image.size".to_string(), "1024x1024".to_string()),
+        ]));
+        assert_eq!(node.default_for("image.quality"), Some("high"));
+        assert_eq!(node.default_for("image.size"), Some("1024x1024"));
+        assert_eq!(node.default_for("image.format"), None);
+    }
+
+    #[test]
+    fn default_for_none_when_no_defaults() {
+        let node = sample_node(ProviderKind::OpenAi, "gpt-5.4-mini", vec![Capability::Chat]);
+        assert_eq!(node.default_for("chat.temperature"), None);
+    }
+
+    #[test]
+    fn default_for_embedding_dimensions_legacy_alias() {
+        // Only the legacy un-namespaced key is present.
+        let mut node = sample_node(
+            ProviderKind::OpenAi,
+            "text-embedding-3-small",
+            vec![Capability::Embedding],
+        );
+        node.node_defaults = Some(BTreeMap::from([(
+            "dimensions".to_string(),
+            "256".to_string(),
+        )]));
+        assert_eq!(node.default_for("embedding.dimensions"), Some("256"));
+        // The legacy alias only applies to embedding.dimensions.
+        assert_eq!(node.default_for("chat.max_tokens"), None);
+    }
+
+    #[test]
+    fn default_for_embedding_dimensions_namespaced_wins_over_legacy() {
+        let mut node = sample_node(
+            ProviderKind::OpenAi,
+            "text-embedding-3-small",
+            vec![Capability::Embedding],
+        );
+        node.node_defaults = Some(BTreeMap::from([
+            ("embedding.dimensions".to_string(), "512".to_string()),
+            ("dimensions".to_string(), "256".to_string()),
+        ]));
+        assert_eq!(node.default_for("embedding.dimensions"), Some("512"));
     }
 
     #[test]
