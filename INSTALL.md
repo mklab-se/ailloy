@@ -31,7 +31,13 @@ cargo binstall ailloy
 
 ## Shell Completions
 
-Generate completions for your shell:
+ailloy offers two kinds of completion.
+
+### Static completions
+
+`ailloy completion <shell>` generates a static script covering commands, flag
+names, and known flag values (e.g. `--quality` → low/medium/high/...). Install
+it once:
 
 ### Bash
 
@@ -57,3 +63,26 @@ ailloy completion fish > ~/.config/fish/completions/ailloy.fish
 ```powershell
 ailloy completion powershell >> $PROFILE
 ```
+
+### Dynamic completions (recommended)
+
+Static scripts can't know your configured nodes. For completion that also
+completes `--node` and node-id arguments (`ai config set-default`,
+`edit-node`, `delete-node`, `show-node`, `set-key`) from the nodes in your
+config — showing each node's provider and model as a hint — register ailloy's
+built-in completer instead. It runs `ailloy` itself on each Tab, so new nodes
+show up immediately with no regeneration.
+
+```bash
+# zsh — add to ~/.zshrc
+source <(COMPLETE=zsh ailloy)
+
+# bash — add to ~/.bashrc
+source <(COMPLETE=bash ailloy)
+
+# fish — add to ~/.config/fish/completions/ailloy.fish
+COMPLETE=fish ailloy | source
+```
+
+Reload your shell (or `source` the rc file) afterwards. Use either the static
+script or the dynamic completer for a given shell, not both.

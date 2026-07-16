@@ -214,6 +214,23 @@ the form. A connectivity test blocks the UI briefly while it runs.
 | `-q, --quiet` | Suppress non-essential output |
 | `--no-color` | Disable colored output |
 
+## Shell Completion
+
+Two modes:
+
+- **Static** — `ailloy completion <bash|zsh|fish|powershell>` writes a script
+  covering commands, flag names, and known flag values (e.g. `image --quality`
+  completes low/medium/high/auto/hd/standard).
+- **Dynamic** (recommended) — register ailloy's built-in completer so `--node`
+  and node-id positionals (`ai config set-default|edit-node|delete-node|show-node|set-key`)
+  complete from your configured nodes, each annotated with its provider and
+  model. New nodes appear immediately, no regeneration:
+  - zsh: `source <(COMPLETE=zsh ailloy)` in `~/.zshrc`
+  - bash: `source <(COMPLETE=bash ailloy)` in `~/.bashrc`
+  - fish: `COMPLETE=fish ailloy | source`
+
+See INSTALL.md for the full setup.
+
 ## Provider Types
 
 | Provider | Chat | Stream | Embed | Image | Video | Auth |

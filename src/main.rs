@@ -8,10 +8,24 @@ use clap::Parser;
 use colored::Colorize;
 use tracing_subscriber::EnvFilter;
 
+use clap::CommandFactory;
+
 use cli::{Cli, Commands, ConfigCommands, KNOWN_SUBCOMMANDS};
+
+/// Build the `clap::Command` for dynamic-completion requests.
+fn cli_command_factory() -> clap::Command {
+    Cli::command()
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Dynamic shell completion (clap_complete CompleteEnv): this must run
+    // FIRST, on the raw argv, before the default-command rewrite below. It
+    // returns instantly for normal runs (only acts when COMPLETE is set by a
+    // shell completion invocation), so it does not affect startup, piped
+    // stdin, or the update checker.
+    clap_complete::CompleteEnv::with_factory(cli_command_factory).complete();
+
     // Pre-parse: if argv[1] is not a known subcommand and doesn't start with '-',
     // insert "chat" so it becomes: ailloy chat "message"
     let args: Vec<String> = std::env::args().collect();

@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Dynamic shell completion — `--node` and node-id positionals
+  (`ai config set-default|edit-node|delete-node|show-node|set-key`) complete
+  from your configured nodes, each annotated with its provider and model;
+  register with `source <(COMPLETE=zsh ailloy)` (zsh),
+  `source <(COMPLETE=bash ailloy)` (bash), or `COMPLETE=fish ailloy | source`
+  (fish). Enum flags (`image --quality/--style/--format/--background/`
+  `--moderation/--fidelity`, `ai config set-default --task`) now complete and
+  validate their values. `ailloy completion <shell>` continues to emit the
+  static script. See INSTALL.md.
+
 ## [2.0.1] - 2026-07-16
 
 ### Fixed

@@ -127,12 +127,14 @@ pub enum AiConfigCommands {
     /// Edit an existing node
     EditNode {
         /// Node ID or alias
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(complete_node_ids))]
         id: String,
     },
 
     /// Delete a node
     DeleteNode {
         /// Node ID or alias
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(complete_node_ids))]
         id: String,
     },
 
@@ -146,15 +148,18 @@ pub enum AiConfigCommands {
     /// Store a node's API key in the OS keychain (and switch its auth to keychain)
     SetKey {
         /// Node ID or alias
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(complete_node_ids))]
         id: String,
     },
 
     /// Set default node for a capability
     SetDefault {
         /// Node ID or alias
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(complete_node_ids))]
         node_name: String,
         /// Capability (chat, image)
-        #[arg(long)]
+        #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(
+            ["chat", "image", "video", "embedding"]))]
         task: String,
     },
 
@@ -164,6 +169,7 @@ pub enum AiConfigCommands {
     /// Show details of a specific node
     ShowNode {
         /// Node ID or alias
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(complete_node_ids))]
         id: String,
     },
 
@@ -225,7 +231,7 @@ pub struct EvalArgs {
     pub context: Option<String>,
 
     /// Judge node (defaults to the default chat node)
-    #[arg(short, long)]
+    #[arg(short, long, add = clap_complete::engine::ArgValueCandidates::new(complete_node_ids))]
     pub node: Option<String>,
 
     /// Pass when score >= threshold (0.0-1.0) instead of the judge's verdict
@@ -252,7 +258,7 @@ pub struct ChatArgs {
     pub message: Option<String>,
 
     /// Node to use (overrides default, accepts ID or alias)
-    #[arg(short, long)]
+    #[arg(short, long, add = clap_complete::engine::ArgValueCandidates::new(complete_node_ids))]
     pub node: Option<String>,
 
     /// Provider to use (hidden alias for --node)
@@ -327,7 +333,7 @@ pub struct ImageArgs {
     pub message: Option<String>,
 
     /// Node to use for image generation (overrides default)
-    #[arg(short, long)]
+    #[arg(short, long, add = clap_complete::engine::ArgValueCandidates::new(complete_node_ids))]
     pub node: Option<String>,
 
     /// Output file path (auto-generated if omitted)
@@ -343,15 +349,18 @@ pub struct ImageArgs {
     pub size: Option<String>,
 
     /// Image quality: low, medium, high, auto (DALL·E models: hd, standard)
-    #[arg(long)]
+    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(
+        ["low", "medium", "high", "auto", "hd", "standard"]))]
     pub quality: Option<String>,
 
     /// Image style (e.g. natural, vivid)
-    #[arg(long)]
+    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(
+        ["natural", "vivid"]))]
     pub style: Option<String>,
 
     /// Output image format (png, jpeg, webp)
-    #[arg(long)]
+    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(
+        ["png", "jpeg", "webp"]))]
     pub format: Option<String>,
 
     /// Compression level 0-100 (only with --format jpeg or webp)
@@ -363,15 +372,18 @@ pub struct ImageArgs {
     pub variants: Option<u8>,
 
     /// Background transparency (transparent, opaque, auto)
-    #[arg(long)]
+    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(
+        ["transparent", "opaque", "auto"]))]
     pub background: Option<String>,
 
     /// Content moderation strictness (auto, low)
-    #[arg(long)]
+    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(
+        ["auto", "low"]))]
     pub moderation: Option<String>,
 
     /// How closely edits should preserve details from reference images (high, low)
-    #[arg(long)]
+    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(
+        ["high", "low"]))]
     pub fidelity: Option<String>,
 
     /// Reference image to edit/compose from (repeatable); using this switches
@@ -407,7 +419,7 @@ pub struct VideoArgs {
     pub message: Option<String>,
 
     /// Node to use for video generation (overrides default)
-    #[arg(short, long)]
+    #[arg(short, long, add = clap_complete::engine::ArgValueCandidates::new(complete_node_ids))]
     pub node: Option<String>,
 
     /// Output file path (auto-generated if omitted)
@@ -447,7 +459,7 @@ pub struct EmbedArgs {
     pub text: Option<String>,
 
     /// Node to use for embedding (overrides default)
-    #[arg(short, long)]
+    #[arg(short, long, add = clap_complete::engine::ArgValueCandidates::new(complete_node_ids))]
     pub node: Option<String>,
 
     /// Print the full vector as JSON
@@ -538,9 +550,65 @@ pub struct DiscoverArgs {
 // ---------------------------------------------------------------------------
 
 #[derive(clap::Args)]
+#[command(after_help = "\
+This generates STATIC completions (commands, flags, and known flag values).
+
+For DYNAMIC completion that also completes --node and node-id arguments from
+your configured nodes, register ailloy's built-in completer instead:
+  zsh:   echo 'source <(COMPLETE=zsh ailloy)'  >> ~/.zshrc
+  bash:  echo 'source <(COMPLETE=bash ailloy)' >> ~/.bashrc
+  fish:  echo 'COMPLETE=fish ailloy | source'  >> ~/.config/fish/completions/ailloy.fish
+
+Reload your shell afterwards. See INSTALL.md for details.")]
 pub struct CompletionArgs {
     /// Shell to generate completions for
     pub shell: clap_complete::Shell,
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic completion: node ids + aliases
+// ---------------------------------------------------------------------------
+
+use clap_complete::engine::CompletionCandidate;
+
+/// Build completion candidates for node identifiers from a loaded config.
+///
+/// Emits one candidate per node id (help = provider + model/deployment/binary
+/// detail) and one per alias (help = "alias for <id>"). Sorted by candidate
+/// value for deterministic output. Kept separate from the loader so it can be
+/// unit-tested without touching the filesystem or environment.
+pub(crate) fn candidates_from(config: &ailloy::config::Config) -> Vec<CompletionCandidate> {
+    let mut out: Vec<CompletionCandidate> = Vec::new();
+    for (id, node) in &config.nodes {
+        let detail = node
+            .model
+            .as_deref()
+            .or(node.deployment.as_deref())
+            .or(node.binary.as_deref());
+        let help = match detail {
+            Some(d) => format!("{} — {}", node.provider, d),
+            None => node.provider.to_string(),
+        };
+        out.push(CompletionCandidate::new(id.clone()).help(Some(help.into())));
+        if let Some(alias) = node.alias.as_deref() {
+            out.push(
+                CompletionCandidate::new(alias.to_string())
+                    .help(Some(format!("alias for {}", id).into())),
+            );
+        }
+    }
+    out.sort_by(|a, b| a.get_value().cmp(b.get_value()));
+    out
+}
+
+/// Completer for `--node`/node-id arguments: reads the merged local+global
+/// config and returns node id and alias candidates. Never panics or prints —
+/// on any load error it yields no candidates (completion stays silent).
+pub(crate) fn complete_node_ids() -> Vec<CompletionCandidate> {
+    match ailloy::config::Config::load() {
+        Ok(config) => candidates_from(&config),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// Known subcommand names for default command pre-parsing.
@@ -559,3 +627,77 @@ pub const KNOWN_SUBCOMMANDS: &[&str] = &[
     "nodes",
     "discover",
 ];
+
+#[cfg(test)]
+mod completion_tests {
+    use super::*;
+    use ailloy::config::{AiNode, Config, ProviderKind};
+
+    fn help_of(c: &CompletionCandidate) -> Option<String> {
+        c.get_help().map(|s| s.to_string())
+    }
+
+    fn value_of(c: &CompletionCandidate) -> String {
+        c.get_value().to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn candidates_are_sorted_and_include_aliases_with_help() {
+        let mut config = Config::default();
+
+        let mut openai = AiNode::new(ProviderKind::OpenAi);
+        openai.model = Some("gpt-5.4-mini".to_string());
+        openai.alias = Some("mini".to_string());
+        config
+            .nodes
+            .insert("openai/gpt-5.4-mini".to_string(), openai);
+
+        let mut foundry = AiNode::new(ProviderKind::MicrosoftFoundry);
+        foundry.deployment = Some("gpt-image-2".to_string());
+        config
+            .nodes
+            .insert("microsoft-foundry/gpt-image-2".to_string(), foundry);
+
+        let cands = candidates_from(&config);
+        let values: Vec<String> = cands.iter().map(value_of).collect();
+
+        // Two node ids + one alias, sorted by value.
+        assert_eq!(
+            values,
+            vec![
+                "microsoft-foundry/gpt-image-2".to_string(),
+                "mini".to_string(),
+                "openai/gpt-5.4-mini".to_string(),
+            ]
+        );
+
+        // Node id help = "<provider> — <detail>".
+        let id_cand = cands
+            .iter()
+            .find(|c| value_of(c) == "openai/gpt-5.4-mini")
+            .unwrap();
+        assert_eq!(help_of(id_cand).as_deref(), Some("openai — gpt-5.4-mini"));
+
+        // Deployment used as detail when model is absent.
+        let dep_cand = cands
+            .iter()
+            .find(|c| value_of(c) == "microsoft-foundry/gpt-image-2")
+            .unwrap();
+        assert_eq!(
+            help_of(dep_cand).as_deref(),
+            Some("microsoft-foundry — gpt-image-2")
+        );
+
+        // Alias help points back to the id.
+        let alias_cand = cands.iter().find(|c| value_of(c) == "mini").unwrap();
+        assert_eq!(
+            help_of(alias_cand).as_deref(),
+            Some("alias for openai/gpt-5.4-mini")
+        );
+    }
+
+    #[test]
+    fn empty_config_yields_no_candidates() {
+        assert!(candidates_from(&Config::default()).is_empty());
+    }
+}
