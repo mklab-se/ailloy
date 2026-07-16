@@ -95,6 +95,22 @@ pub async fn check_for_update() -> Option<String> {
     Some(latest)
 }
 
+/// Returns true if `latest` is a strictly newer semver version than `current`.
+///
+/// Used to decide whether to show the "update available" banner. The cached
+/// `~/.cache/ailloy/latest_version` file can hold a stale (older) version
+/// across a downgrade or a rollback of the published crate, so a plain
+/// `latest != current` check can wrongly suggest downgrading. Parsing both
+/// as semver and comparing avoids that; any parse failure is treated as "not
+/// newer" so garbage never triggers a nag.
+pub fn is_newer(latest: &str, current: &str) -> bool {
+    use semver::Version;
+    match (Version::parse(latest), Version::parse(current)) {
+        (Ok(latest), Ok(current)) => latest > current,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,5 +126,36 @@ mod tests {
         // In a test/dev environment, exe is in target/ — not Cellar or homebrew
         let hint = upgrade_hint();
         assert_eq!(hint, "cargo install ailloy");
+    }
+
+    #[test]
+    fn is_newer_true_when_latest_is_greater() {
+        assert!(is_newer("2.0.1", "2.0.0"));
+    }
+
+    #[test]
+    fn is_newer_false_when_equal() {
+        assert!(!is_newer("2.0.0", "2.0.0"));
+    }
+
+    #[test]
+    fn is_newer_false_when_latest_is_older() {
+        // The reported bug: a stale cache entry holding an older version
+        // must never suggest a downgrade.
+        assert!(!is_newer("1.1.0", "2.0.0"));
+    }
+
+    #[test]
+    fn is_newer_prerelease_vs_release() {
+        // A newer prerelease still counts as "newer" per semver ordering rules
+        // applied here (major.minor.patch comparison outranks prerelease tag).
+        assert!(is_newer("2.0.1-rc.1", "2.0.0"));
+    }
+
+    #[test]
+    fn is_newer_false_on_unparseable_versions() {
+        assert!(!is_newer("not-a-version", "2.0.0"));
+        assert!(!is_newer("2.0.0", "also-not-a-version"));
+        assert!(!is_newer("garbage", "garbage"));
     }
 }

@@ -1,14 +1,14 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
 
-use ailloy::config::{Capability, Config};
+use ailloy::config::{ALL_CAPABILITY_KEYS, Capability, Config};
 use ailloy::config_tui;
 
 use crate::cli::{AiCommands, AiConfigCommands, NodeCommands};
 
 pub async fn run(command: Option<AiCommands>) -> Result<()> {
     match command {
-        None => config_tui::print_ai_status("ailloy", &["chat", "image", "video"]),
+        None => config_tui::print_ai_status("ailloy", ALL_CAPABILITY_KEYS),
         Some(AiCommands::Config { command }) => run_config(command).await,
         Some(AiCommands::Test { message, all }) => {
             if all {
@@ -19,9 +19,7 @@ pub async fn run(command: Option<AiCommands>) -> Result<()> {
         }
         Some(AiCommands::Enable) => config_tui::enable_ai("ailloy"),
         Some(AiCommands::Disable) => config_tui::disable_ai("ailloy"),
-        Some(AiCommands::Status) => {
-            config_tui::print_ai_status("ailloy", &["chat", "image", "video"])
-        }
+        Some(AiCommands::Status) => config_tui::print_ai_status("ailloy", ALL_CAPABILITY_KEYS),
         Some(AiCommands::Skill { emit, reference }) => {
             crate::commands::skill::run(emit, reference);
             Ok(())
@@ -33,11 +31,7 @@ async fn run_config(command: Option<AiConfigCommands>) -> Result<()> {
     match command {
         None => {
             let mut config = Config::load_global()?;
-            config_tui::run_interactive_config(
-                &mut config,
-                &["chat", "image", "video", "embedding"],
-            )
-            .await?;
+            config_tui::run_interactive_config(&mut config, ALL_CAPABILITY_KEYS).await?;
             Ok(())
         }
         Some(AiConfigCommands::AddNode) => {

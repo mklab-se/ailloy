@@ -516,6 +516,13 @@ pub const ALL_CAPABILITIES: &[(&str, &str)] = &[
 /// Ordered list of task keys with human-readable labels (backward-compatible alias).
 pub const ALL_TASKS: &[(&str, &str)] = ALL_CAPABILITIES;
 
+/// Every capability key, in display order (chat, image, video, embedding).
+///
+/// Single source of truth for call sites that need "all capabilities" (e.g.
+/// `ailloy ai status`, the interactive config wizard) so the list can never
+/// drift and silently drop a capability again.
+pub const ALL_CAPABILITY_KEYS: &[&str] = &["chat", "image", "video", "embedding"];
+
 /// Well-known consent keys for external CLI tools.
 pub mod consent_keys {
     /// Azure CLI (`az`) — used for Azure OpenAI discovery and authentication.
@@ -1221,6 +1228,26 @@ mod tests {
         assert_eq!(parsed, Capability::Video);
         assert_eq!(Capability::Video.config_key(), "video");
         assert_eq!(Capability::Video.label(), "Video Generation");
+    }
+
+    #[test]
+    fn all_capability_keys_matches_all_capabilities_set() {
+        // Regression test for the missing-embedding-row bug: ALL_CAPABILITY_KEYS
+        // is the single source of truth for "every capability" call sites, and
+        // must never drift from ALL_CAPABILITIES (checked via Capability::config_key()).
+        use std::collections::BTreeSet;
+        let from_const: BTreeSet<&str> = ALL_CAPABILITY_KEYS.iter().copied().collect();
+        let from_all_capabilities: BTreeSet<&str> =
+            ALL_CAPABILITIES.iter().map(|(k, _)| *k).collect();
+        assert_eq!(
+            from_const, from_all_capabilities,
+            "ALL_CAPABILITY_KEYS must contain exactly the same keys as ALL_CAPABILITIES"
+        );
+        assert_eq!(
+            ALL_CAPABILITY_KEYS.len(),
+            4,
+            "expected chat, image, video, embedding"
+        );
     }
 
     #[test]

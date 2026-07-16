@@ -96,7 +96,7 @@ async fn main() -> Result<()> {
                     let mut config = ailloy::config::Config::load_global()?;
                     ailloy::config_tui::run_interactive_config(
                         &mut config,
-                        &["chat", "image", "video", "embedding"],
+                        ailloy::config::ALL_CAPABILITY_KEYS,
                     )
                     .await?;
                     Ok(())
@@ -128,7 +128,7 @@ async fn main() -> Result<()> {
     if let Some(handle) = update_handle {
         if let Ok(Some(latest)) = handle.await {
             let current = env!("CARGO_PKG_VERSION");
-            if latest != current && !update::is_running_from_source() {
+            if update::is_newer(&latest, current) && !update::is_running_from_source() {
                 let hint = update::upgrade_hint();
                 eprintln!(
                     "\n{} {} -> {} ({})",
