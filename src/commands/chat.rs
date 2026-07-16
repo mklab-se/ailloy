@@ -5,9 +5,7 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use futures_util::StreamExt;
 
-use ailloy::client::{
-    create_provider_from_node, merge_chat_defaults, merge_image_defaults, merge_video_defaults,
-};
+use ailloy::client::{create_provider_from_node, merge_chat_defaults, merge_video_defaults};
 use ailloy::config::{AiNode, Config};
 use ailloy::types::{ChatOptions, ImageOptions, Message, StreamEvent, VideoOptions};
 
@@ -234,15 +232,11 @@ async fn run_image_generation(
         );
     }
 
-    let mut options = ImageOptions::default();
-    // The `-o filename` extension counts as user intent for the output format;
-    // it takes precedence over the node default (applied on the next line).
-    if let Some(fmt) = super::image::format_from_extension(output) {
-        options.output_format = Some(fmt);
-    }
-    if let Some(defaults) = &node.node_defaults {
-        merge_image_defaults(&mut options, defaults);
-    }
+    let options = super::image::finalize_image_options(
+        ImageOptions::default(),
+        Some(output),
+        node.node_defaults.as_ref(),
+    )?;
 
     let image = if quiet {
         provider.generate_image(prompt, Some(&options)).await?

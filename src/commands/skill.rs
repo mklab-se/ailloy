@@ -20,14 +20,36 @@ command details without bloating the skill file itself.
 
 const SKILL_MARKDOWN: &str = r#"---
 name: ailloy
-description: Vendor-flexible AI integration CLI — configure and use multiple AI providers (OpenAI, Anthropic, Azure, Foundry, Ollama, etc.) for chat, image generation, video generation, and embeddings, with file attachments, structured JSON output, and per-node defaults.
+description: Use the user's own configured AI providers (OpenAI, Anthropic, Azure, Foundry, Ollama, local agents) from the CLI — chat, image generation, video generation, embeddings, and LLM-as-judge evaluation with script-friendly exit codes. Use when the user wants THEIR models/deployments to do the work, needs a capability you lack (e.g. video), or needs pass/fail output checks in scripts and tests.
 ---
 
 # ailloy — Vendor-Flexible AI CLI
 
-Use ailloy when the user needs to chat with AI models (optionally with file
-attachments or structured JSON output), generate images or videos, create
-embeddings, judge text against criteria, or configure multi-provider AI setups.
+ailloy is the user's own pre-configured gateway to THEIR AI providers and
+models (OpenAI, Anthropic, Azure OpenAI, Microsoft Foundry, Vertex, Ollama,
+local agents). `ailloy ai status` shows what they have configured.
+
+## When to use ailloy
+
+Reach for ailloy when:
+
+- The user asks to **generate an image or video** and you lack that capability
+  yourself — or they want it produced by *their* configured model/deployment
+  (e.g. their Azure/Foundry gpt-image or sora deployment).
+- Output must be **scored or gate-checked in a script, test, or CI** —
+  `ailloy eval` gives deterministic pass/fail exit codes and JSON verdicts.
+- **Embedding vectors** are needed.
+- A prompt should run against a **specific provider or model the user
+  configured** (a local Ollama model, their Azure deployment, a local agent)
+  rather than through your own model.
+- The user mentions ailloy, their "nodes", or their configured AI providers.
+
+When NOT to use it: if you can already do the task well natively (e.g. you can
+judge a piece of text yourself in conversation, or you have your own image
+generation) and the user didn't ask for their configured providers, prefer
+your native capability. ailloy is an option to know about, not a required
+detour — its value is reaching the user's own models, offline/local providers,
+and script-friendly output.
 
 ## Getting current documentation
 

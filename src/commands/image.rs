@@ -359,20 +359,11 @@ async fn generate_and_save(
     node_defaults: Option<&BTreeMap<String, String>>,
     quiet: bool,
 ) -> Result<()> {
-    let mut options = build_image_options(args)?;
-    // An explicit `-o filename` extension counts as user intent for the output
-    // format. Priority: `--format` flag (already set above) > extension > node
-    // default. Only applies when the user gave a concrete `-o` path; auto-
-    // generated filenames follow the actual response format instead.
-    if options.output_format.is_none() {
-        if let Some(fmt) = args.output.as_deref().and_then(format_from_extension) {
-            options.output_format = Some(fmt);
-        }
-    }
-    // Fill unset fields from per-node defaults; explicit flags already won.
-    if let Some(defaults) = node_defaults {
-        merge_image_defaults(&mut options, defaults);
-    }
+    let options = finalize_image_options(
+        build_image_options(args)?,
+        args.output.as_deref(),
+        node_defaults,
+    )?;
 
     let images = if quiet {
         provider.generate_images(prompt, Some(&options)).await?
@@ -473,8 +464,28 @@ pub(crate) fn build_image_options(args: &ImageArgs) -> Result<ImageOptions> {
         mask: args.mask.as_ref().map(std::path::PathBuf::from),
     };
 
-    options.validate()?;
+    Ok(options)
+}
 
+/// Finalize image options for a generation call: infer the output format from
+/// an explicit `-o` path extension (flag wins, extension second), fill unset
+/// fields from per-node defaults, then validate the effective combination.
+/// Validation runs last so intent expressed via the filename (e.g.
+/// `-o banner.jpg --compression 85`) is honored.
+pub(crate) fn finalize_image_options(
+    mut options: ImageOptions,
+    output: Option<&str>,
+    node_defaults: Option<&BTreeMap<String, String>>,
+) -> Result<ImageOptions> {
+    if options.output_format.is_none() {
+        if let Some(fmt) = output.and_then(format_from_extension) {
+            options.output_format = Some(fmt);
+        }
+    }
+    if let Some(defaults) = node_defaults {
+        merge_image_defaults(&mut options, defaults);
+    }
+    options.validate()?;
     Ok(options)
 }
 
@@ -857,14 +868,46 @@ mod tests {
     }
 
     #[test]
-    fn test_build_image_options_validate_rejects_bad_combo() {
-        // compression without output_format triggers ImageOptions::validate()
+    fn test_finalize_rejects_compression_without_any_format_source() {
+        // compression with no --format, no -o extension, and no node default
+        // still fails validation (validation runs after inference + merge).
         let args = ImageArgs {
             compression: Some(50),
             ..Default::default()
         };
-        let err = build_image_options(&args).unwrap_err().to_string();
+        let opts = build_image_options(&args).unwrap();
+        let err = finalize_image_options(opts, None, None)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("compression"));
         assert!(err.contains("output_format"));
+    }
+
+    #[test]
+    fn test_finalize_output_extension_satisfies_compression() {
+        // `-o banner.jpg --compression 85` is unambiguous user intent: the
+        // extension supplies the jpeg format before validation runs.
+        let args = ImageArgs {
+            compression: Some(85),
+            ..Default::default()
+        };
+        let opts = build_image_options(&args).unwrap();
+        let opts = finalize_image_options(opts, Some("banner.jpg"), None).unwrap();
+        assert_eq!(opts.output_format, Some(ImageFormat::Jpeg));
+        assert_eq!(opts.compression, Some(85));
+    }
+
+    #[test]
+    fn test_finalize_flag_beats_extension_and_defaults_fill_rest() {
+        let args = ImageArgs {
+            format: Some("png".into()),
+            ..Default::default()
+        };
+        let mut defaults = BTreeMap::new();
+        defaults.insert("image.quality".to_string(), "low".to_string());
+        let opts = build_image_options(&args).unwrap();
+        let opts = finalize_image_options(opts, Some("x.jpg"), Some(&defaults)).unwrap();
+        assert_eq!(opts.output_format, Some(ImageFormat::Png)); // flag wins over .jpg
+        assert_eq!(opts.quality.as_deref(), Some("low")); // default filled
     }
 }

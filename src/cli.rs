@@ -321,7 +321,8 @@ impl ChatArgs {
 #[command(after_help = "\
 Examples:
   ailloy image \"A sunset over mountains\"
-  ailloy image \"Logo design\" -o logo.png --size 1024x1024 --quality high
+  ailloy image \"Fashion portrait\" -o p.png --quality high --size 1024x1536    Portrait, best quality
+  ailloy image \"Wide banner art\" -o banner.jpg --size 1536x1024 --compression 85
   ailloy image \"3 icon options\" -o icon.png --variants 3     Writes icon.png, icon-2.png, icon-3.png
   ailloy image \"same scene at night\" --ref day.png -o night.png
   ailloy image \"replace the sky\" --ref photo.png --mask sky-mask.png -o out.png
@@ -408,7 +409,8 @@ pub struct ImageArgs {
 #[command(after_help = "\
 Examples:
   ailloy video \"A drone shot over a coastal cliff at sunrise\"
-  ailloy video \"Logo animation\" -o logo.mp4 --size 1280x720 --seconds 8
+  ailloy video \"Logo animation\" -o logo.mp4 --size 1280x720 --seconds 8    Landscape, 8 seconds
+  ailloy video \"Dancer on stage\" -o d.mp4 --size 720x1280                  Portrait / vertical
   ailloy video \"Two takes of waves\" -o waves.mp4 --variants 2   Writes waves.mp4, waves-2.mp4
 
 Needs an Azure OpenAI or Microsoft Foundry node with a sora deployment
