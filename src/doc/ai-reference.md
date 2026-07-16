@@ -54,8 +54,8 @@ Generate an image from a text description.
 | `-o, --output <FILE>` | Output file path (auto-generated if omitted) |
 | `-i, --interactive` | AI helps describe the image |
 | `--size <WxH>` | Image size (e.g. 1024x1024) |
-| `--quality <Q>` | Image quality (hd, standard) |
-| `--style <S>` | Image style (natural, vivid) |
+| `--quality <Q>` | Image quality: `low`, `medium`, `high`, `auto` (gpt-image models; DALL·E takes `hd`/`standard`) |
+| `--style <S>` | Image style (natural, vivid) — DALL·E only, ignored by gpt-image models |
 | `--format <F>` | Output image format (png, jpeg, webp) |
 | `--compression <0-100>` | Compression level (only with `--format` jpeg or webp) |
 | `--variants <1-10>` | Number of image variants to generate |
@@ -221,7 +221,7 @@ the form. A connectivity test blocks the UI briefly while it runs.
 | `openai` | yes | yes | yes | yes | no | API key, keychain, or env (`OPENAI_API_KEY`) |
 | `anthropic` | yes | yes | no | no | no | API key, keychain, or env (`ANTHROPIC_API_KEY`) |
 | `azure-openai` | yes | yes | yes | yes | yes (Sora deployment) | API key, keychain, Azure CLI, or env |
-| `microsoft-foundry` | yes | yes | yes | no | yes (Sora deployment) | API key, keychain, or Azure CLI |
+| `microsoft-foundry` | yes | yes | yes | yes (gpt-image deployment) | yes (Sora deployment) | API key, keychain, or Azure CLI |
 | `vertex-ai` | yes | yes | yes | yes | no | gcloud CLI |
 | `ollama` | yes | yes | yes | no | no | None (local) |
 | `local-agent` | yes | yes | no | no | no | None (local binary: claude, codex, copilot) |
@@ -262,13 +262,48 @@ nodes:
     endpoint: http://localhost:11434
     capabilities: [chat]
 
+  microsoft-foundry/gpt-image-2:
+    provider: microsoft-foundry
+    model: gpt-image-2            # = deployment name on the v1 surface
+    endpoint: https://myresource.services.ai.azure.com
+    auth:
+      azure_cli: true
+    capabilities: [image]
+    defaults:                     # per-node default parameters (see below)
+      image.quality: low
+      image.format: jpeg
+      image.compression: "80"
+
 defaults:
   chat: openai/gpt-5.4-mini
-  image: openai/gpt-5.4-mini
+  image: microsoft-foundry/gpt-image-2
 
 consents:
   azure-cli: true
 ```
+
+### Per-node default parameters
+
+Each node may carry a `defaults:` map of parameter values that are applied
+whenever a call does not set that parameter explicitly. Resolution order is
+always: explicit flag/option > node default > provider default. Values are
+strings in YAML. Edit them in the `ailloy ai config` dashboard (Detail pane →
+Enter) or directly in the YAML.
+
+| Key | Values | Applies to |
+|-----|--------|------------|
+| `image.size` | `WxH`, e.g. `1024x1024` | image |
+| `image.quality` | `low`, `medium`, `high`, `auto` | image |
+| `image.format` | `png`, `jpeg` | image (OpenAI/Azure/Foundry) |
+| `image.compression` | `0`–`100` (jpeg/webp only; auto-skipped when the effective format is png) | image (OpenAI/Azure/Foundry) |
+| `image.background` | `transparent`, `opaque`, `auto` | image (OpenAI/Azure/Foundry) |
+| `image.variants` | `1`–`10` | image |
+| `video.size` | `WxH`, e.g. `1280x720` | video |
+| `video.seconds` | `1`–`20` (API typically accepts 4/8/12) | video |
+| `video.variants` | `1`–`5` | video |
+| `chat.temperature` | `0`–`2` | chat |
+| `chat.max_tokens` | positive integer | chat |
+| `embedding.dimensions` | positive integer (legacy key `dimensions` also read) | embedding |
 
 ### Node ID Format
 
@@ -320,7 +355,23 @@ ailloy ai config set-key openai/gpt-5.4-mini   # prompts for the key
 
 ```bash
 ailloy image "A sunset over mountains"
-ailloy image "Logo design" -o logo.png --size 1024x1024
+ailloy image "Logo design" -o logo.png --size 1024x1024 --quality high
+ailloy image "3 icon options" -o icon.png --variants 3        # icon.png, icon-2.png, icon-3.png
+ailloy image "same scene at night" --ref day.png -o night.png # edit from a reference image
+```
+
+### Chat with attachments
+
+```bash
+ailloy chat "What animal is in this image?" --attach photo.jpg
+ailloy chat "Summarize this report" --attach report.pdf --raw
+```
+
+### Embeddings
+
+```bash
+ailloy embed "text to embed"          # dimensions + preview
+ailloy embed "text to embed" --full   # full vector as JSON
 ```
 
 ### Check status and test
