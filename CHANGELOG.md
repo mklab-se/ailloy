@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.2] - 2026-07-16
 
 ### Added
 
@@ -18,6 +18,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--moderation/--fidelity`, `ai config set-default --task`) now complete and
   validate their values. `ailloy completion <shell>` continues to emit the
   static script. See INSTALL.md.
+- `--help` now shows worked examples on the top level and on
+  `chat`/`image`/`video`/`embed`/`eval`, including parameterized ones
+  (portrait/high-quality images, landscape vs portrait video)
+- The emitted agent skill (`ailloy ai skill --emit`) explains when an AI
+  agent should (and should not) reach for ailloy, and now covers embeddings,
+  `eval`, structured output (`--json`/`--schema`), `--raw`, and `-o` routing
+
+### Fixed
+
+- `ailloy image -o file.jpg --compression 85` works without an explicit
+  `--format`: format inference from the `-o` extension and node defaults now
+  resolve before option validation
+- AI-agent reference: the provider matrix wrongly said Microsoft Foundry has
+  no image support; documented the full per-node defaults key table and
+  current `--quality` values
 
 ## [2.0.1] - 2026-07-16
 
