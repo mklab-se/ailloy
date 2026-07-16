@@ -665,7 +665,13 @@ fn draw_node_table(frame: &mut Frame, app: &App, area: Rect) {
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Length(1),
+        // The last capability column is widened by 1 so its cell (and the
+        // header "V" above it) never sit flush against the table's right
+        // border — otherwise terminals clip the ambiguous-width ★ glyph to a
+        // single cell there while the other columns' trailing spacing cell
+        // lets it render full-size. The extra cell stays blank; C/I/E/V
+        // header positions stay aligned above their data cells.
+        Constraint::Length(2),
     ];
 
     if node_ids.is_empty() {
@@ -1072,6 +1078,33 @@ mod tests {
         );
         assert!(text.contains("0..=100"), "popup shows the range hint");
         assert!(text.contains("Enter save"), "popup footer key hints render");
+    }
+
+    #[test]
+    fn draw_node_table_leaves_space_before_border_after_last_column_star() {
+        // Regression test: the last capability column (V) sat directly against
+        // the table's right border, so terminals clipped the ambiguous-width
+        // ★ glyph to one cell there while C/I/E stars bled into their trailing
+        // spacing cell and rendered full-size. There must be a blank cell
+        // between a default-marker star in the last column and the border.
+        let mut config = Config::default();
+        let mut sora = node_with_caps(ProviderKind::OpenAi, vec![Capability::Video]);
+        sora.model = Some("sora-2".to_string());
+        config.nodes.insert("openai/sora-2".to_string(), sora);
+        config
+            .defaults
+            .insert("video".to_string(), "openai/sora-2".to_string());
+
+        let app = App::new(config, "ailloy");
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        let text = buffer_to_string(&terminal);
+        assert!(
+            text.contains("★ ┃"),
+            "the V column's default star must have a blank cell before the border, not be clipped against it: {text}"
+        );
     }
 
     #[test]
