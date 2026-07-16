@@ -482,6 +482,20 @@ fn build_fields_with_auth(
         ));
     }
 
+    // Discovery pseudo-field for Azure/Foundry (add-node only) — placed right
+    // under the provider selector because it prefills everything below it.
+    if !editing
+        && matches!(
+            provider,
+            ProviderKind::AzureOpenAi | ProviderKind::MicrosoftFoundry
+        )
+    {
+        fields.push(FormField::action(
+            FieldKey::Discover,
+            "[ Discover via Azure CLI ]",
+        ));
+    }
+
     let model = prefill.and_then(|n| n.model.clone()).unwrap_or_default();
     let endpoint = prefill.and_then(|n| n.endpoint.clone());
     let deployment = prefill
@@ -615,19 +629,6 @@ fn build_fields_with_auth(
             cursor: 0,
         },
     });
-
-    // Discovery pseudo-field for Azure/Foundry (add-node only).
-    if !editing
-        && matches!(
-            provider,
-            ProviderKind::AzureOpenAi | ProviderKind::MicrosoftFoundry
-        )
-    {
-        fields.push(FormField::action(
-            FieldKey::Discover,
-            "[ Discover via az CLI ]",
-        ));
-    }
 
     // Save action.
     fields.push(FormField::action(FieldKey::Save, "[ Save ]"));
@@ -897,6 +898,10 @@ mod tests {
         form.provider = ProviderKind::AzureOpenAi;
         form.rebuild();
         assert!(form.field(FieldKey::Discover).is_some());
+        // Discovery sits directly beneath the provider selector — it prefills
+        // the rest of the form, so it must come first, not at the bottom.
+        assert_eq!(form.fields[0].key, FieldKey::Provider);
+        assert_eq!(form.fields[1].key, FieldKey::Discover);
         // Editing must not offer discovery.
         let mut node = AiNode::new(ProviderKind::AzureOpenAi);
         node.deployment = Some("d".into());

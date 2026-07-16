@@ -202,7 +202,7 @@ auth selector (`env`/`api_key`/`keychain`/`azure_cli`/`gcloud_cli` as applicable
 an optional alias, and capability toggles. In the form: `↑`/`↓` move between
 fields, `←`/`→` change a selector, `Space` toggles a capability, `Ctrl+S` (or the
 `[ Save ]` action) commits, and `Esc` cancels. For Azure OpenAI and Microsoft
-Foundry, a `[ Discover via az CLI ]` action lists your subscriptions, resources,
+Foundry, a `[ Discover via Azure CLI ]` action lists your subscriptions, resources,
 and deployments via the Azure CLI (after a one-time consent prompt) and prefills
 the form. A connectivity test blocks the UI briefly while it runs.
 
