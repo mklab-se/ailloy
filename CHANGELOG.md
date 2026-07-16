@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-07-16
+
+### Fixed
+
+- `ailloy ai` / `ailloy ai status` now include the Embedding row; capability
+  lists are driven by a single `ALL_CAPABILITY_KEYS` constant so they cannot
+  drift again
+- The update banner only appears when the published version is actually
+  newer (semver comparison) — a stale version cache no longer suggests a
+  downgrade such as `2.0.0 -> 1.1.0`
+- The default `★` marker in the config TUI's last capability column no
+  longer renders clipped/smaller: the column now leaves an empty cell before
+  the table border, like the other columns
+
 ## [2.0.0] - 2026-07-16
 
 Ailloy 2.0: Foundry image generation, a full gpt-image parameter surface,
