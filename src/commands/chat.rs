@@ -166,16 +166,14 @@ pub async fn run(args: ChatArgs, quiet: bool) -> Result<()> {
                     if !raw {
                         writeln!(output_writer)?;
                     }
-                    if !quiet {
-                        if let Some(usage) = &response.usage {
-                            eprintln!(
-                                "\n{} {} prompt + {} completion = {} total",
-                                "Tokens:".dimmed(),
-                                usage.prompt_tokens.to_string().dimmed(),
-                                usage.completion_tokens.to_string().dimmed(),
-                                usage.total_tokens.to_string().dimmed(),
-                            );
-                        }
+                    if !quiet && let Some(usage) = &response.usage {
+                        eprintln!(
+                            "\n{} {} prompt + {} completion = {} total",
+                            "Tokens:".dimmed(),
+                            usage.prompt_tokens.to_string().dimmed(),
+                            usage.completion_tokens.to_string().dimmed(),
+                            usage.total_tokens.to_string().dimmed(),
+                        );
                     }
                 }
             }
@@ -196,16 +194,14 @@ pub async fn run(args: ChatArgs, quiet: bool) -> Result<()> {
             println!("{}", strip_think_blocks(&response.content));
         }
 
-        if !quiet {
-            if let Some(usage) = &response.usage {
-                eprintln!(
-                    "\n{} {} prompt + {} completion = {} total",
-                    "Tokens:".dimmed(),
-                    usage.prompt_tokens.to_string().dimmed(),
-                    usage.completion_tokens.to_string().dimmed(),
-                    usage.total_tokens.to_string().dimmed(),
-                );
-            }
+        if !quiet && let Some(usage) = &response.usage {
+            eprintln!(
+                "\n{} {} prompt + {} completion = {} total",
+                "Tokens:".dimmed(),
+                usage.prompt_tokens.to_string().dimmed(),
+                usage.completion_tokens.to_string().dimmed(),
+                usage.total_tokens.to_string().dimmed(),
+            );
         }
     }
 

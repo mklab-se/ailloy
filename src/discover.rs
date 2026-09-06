@@ -76,27 +76,27 @@ pub async fn discover_local() -> Result<Vec<DiscoveredNode>> {
             .arg(binary)
             .output()
             .await;
-        if let Ok(output) = check {
-            if output.status.success() {
-                results.push(DiscoveredNode {
-                    suggested_id: format!("local-agent/{}", binary),
-                    node: AiNode {
-                        provider: ProviderKind::LocalAgent,
-                        alias: None,
-                        capabilities: vec![Capability::Chat],
-                        auth: None,
-                        model: None,
-                        endpoint: None,
-                        deployment: None,
-                        api_version: None,
-                        binary: Some(binary.to_string()),
-                        project: None,
-                        location: None,
-                        node_defaults: None,
-                    },
-                    description: format!("{} found in PATH", binary),
-                });
-            }
+        if let Ok(output) = check
+            && output.status.success()
+        {
+            results.push(DiscoveredNode {
+                suggested_id: format!("local-agent/{}", binary),
+                node: AiNode {
+                    provider: ProviderKind::LocalAgent,
+                    alias: None,
+                    capabilities: vec![Capability::Chat],
+                    auth: None,
+                    model: None,
+                    endpoint: None,
+                    deployment: None,
+                    api_version: None,
+                    binary: Some(binary.to_string()),
+                    project: None,
+                    location: None,
+                    node_defaults: None,
+                },
+                description: format!("{} found in PATH", binary),
+            });
         }
     }
 

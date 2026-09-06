@@ -139,19 +139,19 @@ async fn main() -> Result<()> {
         }
     };
 
-    if let Some(handle) = update_handle {
-        if let Ok(Some(latest)) = handle.await {
-            let current = env!("CARGO_PKG_VERSION");
-            if update::is_newer(&latest, current) && !update::is_running_from_source() {
-                let hint = update::upgrade_hint();
-                eprintln!(
-                    "\n{} {} -> {} ({})",
-                    "Update available:".yellow().bold(),
-                    current.dimmed(),
-                    latest.green(),
-                    hint.dimmed()
-                );
-            }
+    if let Some(handle) = update_handle
+        && let Ok(Some(latest)) = handle.await
+    {
+        let current = env!("CARGO_PKG_VERSION");
+        if update::is_newer(&latest, current) && !update::is_running_from_source() {
+            let hint = update::upgrade_hint();
+            eprintln!(
+                "\n{} {} -> {} ({})",
+                "Update available:".yellow().bold(),
+                current.dimmed(),
+                latest.green(),
+                hint.dimmed()
+            );
         }
     }
 

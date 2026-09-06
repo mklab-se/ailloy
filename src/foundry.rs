@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::azure::AzureAuth;
+use crate::azure::az_cli_token_from_stdout;
 use crate::client::Provider;
 use crate::openai_images::{
     ImageFlavor, build_edits_form, build_generations_body, parse_images_response, wants_edits,
@@ -274,7 +275,12 @@ impl FoundryClient {
                     );
                 }
 
-                let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let token = az_cli_token_from_stdout(&stdout).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Azure CLI returned no access token. Run 'az login' to authenticate."
+                    )
+                })?;
                 Ok(("Authorization", format!("Bearer {}", token)))
             }
         }
@@ -480,16 +486,15 @@ impl Provider for FoundryClient {
                                         total_tokens: u.total_tokens,
                                     });
                                 }
-                                if let Some(choice) = chunk.choices.first() {
-                                    if let Some(text) = &choice.delta.content {
-                                        if !text.is_empty() {
-                                            assembled.push_str(text);
-                                            return Some((
-                                                Ok(StreamEvent::Delta(text.clone())),
-                                                (byte_stream, buffer, assembled, model, usage),
-                                            ));
-                                        }
-                                    }
+                                if let Some(choice) = chunk.choices.first()
+                                    && let Some(text) = &choice.delta.content
+                                    && !text.is_empty()
+                                {
+                                    assembled.push_str(text);
+                                    return Some((
+                                        Ok(StreamEvent::Delta(text.clone())),
+                                        (byte_stream, buffer, assembled, model, usage),
+                                    ));
                                 }
                             }
                         }

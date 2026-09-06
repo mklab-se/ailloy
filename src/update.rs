@@ -40,20 +40,16 @@ pub async fn check_for_update() -> Option<String> {
     }
 
     // Check cache first
-    if let Some(path) = cache_path() {
-        if let Ok(metadata) = std::fs::metadata(&path) {
-            if let Ok(modified) = metadata.modified() {
-                if SystemTime::now()
-                    .duration_since(modified)
-                    .unwrap_or(CACHE_DURATION)
-                    < CACHE_DURATION
-                {
-                    if let Ok(version) = std::fs::read_to_string(&path) {
-                        return Some(version.trim().to_string());
-                    }
-                }
-            }
-        }
+    if let Some(path) = cache_path()
+        && let Ok(metadata) = std::fs::metadata(&path)
+        && let Ok(modified) = metadata.modified()
+        && SystemTime::now()
+            .duration_since(modified)
+            .unwrap_or(CACHE_DURATION)
+            < CACHE_DURATION
+        && let Ok(version) = std::fs::read_to_string(&path)
+    {
+        return Some(version.trim().to_string());
     }
 
     // Query crates.io

@@ -18,6 +18,20 @@ use crate::types::{
 };
 use crate::video_jobs::VideoJobsApi;
 
+/// Extract the access token from `az account get-access-token -o tsv` output.
+///
+/// The Azure CLI occasionally prints notices (e.g. "A new release of Azure CLI
+/// is available") to stdout ahead of the token. Anything but the bare token
+/// makes an invalid HTTP header value, so take the last non-empty line that
+/// contains no whitespace.
+pub(crate) fn az_cli_token_from_stdout(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty() && !l.contains(char::is_whitespace))
+        .map(str::to_string)
+}
+
 /// Authentication method for Azure OpenAI.
 #[derive(Debug, Clone)]
 pub enum AzureAuth {
@@ -294,7 +308,12 @@ impl AzureOpenAiClient {
                     );
                 }
 
-                let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let token = az_cli_token_from_stdout(&stdout).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Azure CLI returned no access token. Run 'az login' to authenticate."
+                    )
+                })?;
                 Ok(("Authorization", format!("Bearer {}", token)))
             }
         }
@@ -471,16 +490,15 @@ impl Provider for AzureOpenAiClient {
                                         total_tokens: u.total_tokens,
                                     });
                                 }
-                                if let Some(choice) = chunk.choices.first() {
-                                    if let Some(text) = &choice.delta.content {
-                                        if !text.is_empty() {
-                                            assembled.push_str(text);
-                                            return Some((
-                                                Ok(StreamEvent::Delta(text.clone())),
-                                                (byte_stream, buffer, assembled, deployment, usage),
-                                            ));
-                                        }
-                                    }
+                                if let Some(choice) = chunk.choices.first()
+                                    && let Some(text) = &choice.delta.content
+                                    && !text.is_empty()
+                                {
+                                    assembled.push_str(text);
+                                    return Some((
+                                        Ok(StreamEvent::Delta(text.clone())),
+                                        (byte_stream, buffer, assembled, deployment, usage),
+                                    ));
                                 }
                             }
                         }
@@ -803,5 +821,33 @@ mod v1_surface_tests {
             api.videos_url(),
             "https://r.openai.azure.com/openai/v1/videos?api-version=2025-04-01-preview"
         );
+    }
+}
+
+#[cfg(test)]
+mod az_token_tests {
+    use super::az_cli_token_from_stdout;
+
+    #[test]
+    fn plain_token_is_returned_trimmed() {
+        assert_eq!(
+            az_cli_token_from_stdout("eyJabc.def.ghi\n").as_deref(),
+            Some("eyJabc.def.ghi")
+        );
+    }
+
+    #[test]
+    fn notices_before_the_token_are_ignored() {
+        let out = "A new release of Azure CLI is available.\nRun az upgrade.\n\neyJabc.def.ghi\n";
+        assert_eq!(
+            az_cli_token_from_stdout(out).as_deref(),
+            Some("eyJabc.def.ghi")
+        );
+    }
+
+    #[test]
+    fn empty_or_prose_only_output_is_none() {
+        assert_eq!(az_cli_token_from_stdout(""), None);
+        assert_eq!(az_cli_token_from_stdout("Please run az login\n"), None);
     }
 }

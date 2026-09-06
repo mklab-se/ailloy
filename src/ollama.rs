@@ -312,14 +312,14 @@ impl Provider for OllamaClient {
                                 ));
                             }
 
-                            if let Some(msg) = &chunk.message {
-                                if !msg.content.is_empty() {
-                                    assembled.push_str(&msg.content);
-                                    return Some((
-                                        Ok(StreamEvent::Delta(msg.content.clone())),
-                                        (byte_stream, buffer, assembled, model),
-                                    ));
-                                }
+                            if let Some(msg) = &chunk.message
+                                && !msg.content.is_empty()
+                            {
+                                assembled.push_str(&msg.content);
+                                return Some((
+                                    Ok(StreamEvent::Delta(msg.content.clone())),
+                                    (byte_stream, buffer, assembled, model),
+                                ));
                             }
                         }
                     }

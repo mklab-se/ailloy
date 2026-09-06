@@ -403,16 +403,14 @@ async fn generate_and_save(
         }
     }
 
-    if !quiet {
-        if let Some(usage) = images.iter().find_map(|img| img.usage.as_ref()) {
-            eprintln!(
-                "{} {} prompt + {} completion = {} total",
-                "Tokens:".dimmed(),
-                usage.prompt_tokens.to_string().dimmed(),
-                usage.completion_tokens.to_string().dimmed(),
-                usage.total_tokens.to_string().dimmed(),
-            );
-        }
+    if !quiet && let Some(usage) = images.iter().find_map(|img| img.usage.as_ref()) {
+        eprintln!(
+            "{} {} prompt + {} completion = {} total",
+            "Tokens:".dimmed(),
+            usage.prompt_tokens.to_string().dimmed(),
+            usage.completion_tokens.to_string().dimmed(),
+            usage.total_tokens.to_string().dimmed(),
+        );
     }
 
     Ok(())
@@ -477,10 +475,10 @@ pub(crate) fn finalize_image_options(
     output: Option<&str>,
     node_defaults: Option<&BTreeMap<String, String>>,
 ) -> Result<ImageOptions> {
-    if options.output_format.is_none() {
-        if let Some(fmt) = output.and_then(format_from_extension) {
-            options.output_format = Some(fmt);
-        }
+    if options.output_format.is_none()
+        && let Some(fmt) = output.and_then(format_from_extension)
+    {
+        options.output_format = Some(fmt);
     }
     if let Some(defaults) = node_defaults {
         merge_image_defaults(&mut options, defaults);
@@ -514,10 +512,10 @@ pub(crate) fn variant_path(path: &str, index: usize) -> String {
 
 fn parse_size(s: &str) -> Option<(u32, u32)> {
     let parts: Vec<&str> = s.split('x').collect();
-    if parts.len() == 2 {
-        if let (Ok(w), Ok(h)) = (parts[0].parse(), parts[1].parse()) {
-            return Some((w, h));
-        }
+    if parts.len() == 2
+        && let (Ok(w), Ok(h)) = (parts[0].parse(), parts[1].parse())
+    {
+        return Some((w, h));
     }
     None
 }
@@ -815,10 +813,10 @@ mod tests {
         defaults: &BTreeMap<String, String>,
     ) -> Option<ImageFormat> {
         let mut opts = build_image_options(args).unwrap();
-        if opts.output_format.is_none() {
-            if let Some(fmt) = args.output.as_deref().and_then(format_from_extension) {
-                opts.output_format = Some(fmt);
-            }
+        if opts.output_format.is_none()
+            && let Some(fmt) = args.output.as_deref().and_then(format_from_extension)
+        {
+            opts.output_format = Some(fmt);
         }
         merge_image_defaults(&mut opts, defaults);
         opts.output_format

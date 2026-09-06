@@ -801,10 +801,10 @@ impl ImageOptions {
             }
         }
 
-        if let Some(n) = self.n {
-            if !(1..=10).contains(&n) {
-                anyhow::bail!("Invalid image count n={}: must be between 1 and 10.", n);
-            }
+        if let Some(n) = self.n
+            && !(1..=10).contains(&n)
+        {
+            anyhow::bail!("Invalid image count n={}: must be between 1 and 10.", n);
         }
 
         if self.reference_images.is_empty() {
@@ -996,22 +996,22 @@ impl VideoOptions {
     /// Validate the parameter ranges, returning an actionable error
     /// describing what to change if the options are out of range.
     pub fn validate(&self) -> anyhow::Result<()> {
-        if let Some(seconds) = self.seconds {
-            if !(1..=20).contains(&seconds) {
-                anyhow::bail!(
-                    "Invalid video duration seconds={}: must be between 1 and 20.",
-                    seconds
-                );
-            }
+        if let Some(seconds) = self.seconds
+            && !(1..=20).contains(&seconds)
+        {
+            anyhow::bail!(
+                "Invalid video duration seconds={}: must be between 1 and 20.",
+                seconds
+            );
         }
 
-        if let Some(variants) = self.variants {
-            if !(1..=5).contains(&variants) {
-                anyhow::bail!(
-                    "Invalid video variants={}: must be between 1 and 5.",
-                    variants
-                );
-            }
+        if let Some(variants) = self.variants
+            && !(1..=5).contains(&variants)
+        {
+            anyhow::bail!(
+                "Invalid video variants={}: must be between 1 and 5.",
+                variants
+            );
         }
 
         Ok(())

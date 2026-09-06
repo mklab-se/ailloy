@@ -98,12 +98,11 @@ pub(crate) async fn run(app_name: &str) -> Result<()> {
             continue;
         }
 
-        if let Event::Key(key) = event::read()? {
-            if let Some(effect) = app.handle_key(key) {
-                if handle_effect(&mut app, effect, &mut guard.terminal).await? {
-                    break;
-                }
-            }
+        if let Event::Key(key) = event::read()?
+            && let Some(effect) = app.handle_key(key)
+            && handle_effect(&mut app, effect, &mut guard.terminal).await?
+        {
+            break;
         }
     }
 
@@ -148,12 +147,11 @@ pub(crate) async fn run_single_form(
                 continue;
             }
 
-            if let Event::Key(key) = event::read()? {
-                if let Some(effect) = app.handle_key(key) {
-                    if handle_effect(&mut app, effect, &mut guard.terminal).await? {
-                        break;
-                    }
-                }
+            if let Event::Key(key) = event::read()?
+                && let Some(effect) = app.handle_key(key)
+                && handle_effect(&mut app, effect, &mut guard.terminal).await?
+            {
+                break;
             }
 
             // A single-form session ends the moment we fall back to Browse

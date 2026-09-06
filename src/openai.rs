@@ -553,16 +553,15 @@ impl Provider for OpenAiClient {
                                         total_tokens: u.total_tokens,
                                     });
                                 }
-                                if let Some(choice) = chunk.choices.first() {
-                                    if let Some(text) = &choice.delta.content {
-                                        if !text.is_empty() {
-                                            assembled.push_str(text);
-                                            return Some((
-                                                Ok(StreamEvent::Delta(text.clone())),
-                                                (byte_stream, buffer, assembled, model, usage),
-                                            ));
-                                        }
-                                    }
+                                if let Some(choice) = chunk.choices.first()
+                                    && let Some(text) = &choice.delta.content
+                                    && !text.is_empty()
+                                {
+                                    assembled.push_str(text);
+                                    return Some((
+                                        Ok(StreamEvent::Delta(text.clone())),
+                                        (byte_stream, buffer, assembled, model, usage),
+                                    ));
                                 }
                             }
                         }

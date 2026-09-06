@@ -163,10 +163,10 @@ pub fn print_ai_status(app_name: &str, capabilities: &[&str]) -> Result<()> {
                         node.provider.to_string().dimmed(),
                         node.detail(),
                     );
-                    if let Some(model) = node.model.as_deref().or(node.deployment.as_deref()) {
-                        if let Some(warning) = crate::retirement::retirement_warning(model) {
-                            println!("    {} {}", "⚠".yellow().bold(), warning.yellow());
-                        }
+                    if let Some(model) = node.model.as_deref().or(node.deployment.as_deref())
+                        && let Some(warning) = crate::retirement::retirement_warning(model)
+                    {
+                        println!("    {} {}", "⚠".yellow().bold(), warning.yellow());
                     }
                 } else {
                     println!(

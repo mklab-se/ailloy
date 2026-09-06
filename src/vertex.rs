@@ -457,26 +457,22 @@ impl Provider for VertexAiClient {
                             continue;
                         }
 
-                        if let Some(data) = line.strip_prefix("data: ") {
-                            if let Ok(chunk) = serde_json::from_str::<GenerateContentResponse>(data)
-                            {
-                                if let Some(text) = chunk
-                                    .candidates
-                                    .as_ref()
-                                    .and_then(|c| c.first())
-                                    .and_then(|c| c.content.as_ref())
-                                    .and_then(|c| c.parts.first())
-                                    .and_then(|p| p.text.clone())
-                                {
-                                    if !text.is_empty() {
-                                        assembled.push_str(&text);
-                                        return Some((
-                                            Ok(StreamEvent::Delta(text)),
-                                            (byte_stream, buffer, assembled, model),
-                                        ));
-                                    }
-                                }
-                            }
+                        if let Some(data) = line.strip_prefix("data: ")
+                            && let Ok(chunk) = serde_json::from_str::<GenerateContentResponse>(data)
+                            && let Some(text) = chunk
+                                .candidates
+                                .as_ref()
+                                .and_then(|c| c.first())
+                                .and_then(|c| c.content.as_ref())
+                                .and_then(|c| c.parts.first())
+                                .and_then(|p| p.text.clone())
+                            && !text.is_empty()
+                        {
+                            assembled.push_str(&text);
+                            return Some((
+                                Ok(StreamEvent::Delta(text)),
+                                (byte_stream, buffer, assembled, model),
+                            ));
                         }
                     }
 

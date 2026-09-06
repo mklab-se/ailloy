@@ -222,60 +222,60 @@ fn parse_size(value: &str) -> Option<(u32, u32)> {
 /// defaults. Explicit (already-`Some`) values always win. Unparseable stored
 /// values are logged and skipped.
 pub fn merge_image_defaults(opts: &mut ImageOptions, defaults: &BTreeMap<String, String>) {
-    if opts.size.is_none() {
-        if let Some(v) = defaults.get("image.size") {
-            match parse_size(v) {
-                Some(size) => opts.size = Some(size),
-                None => warn_unparseable_default("image.size", v),
-            }
+    if opts.size.is_none()
+        && let Some(v) = defaults.get("image.size")
+    {
+        match parse_size(v) {
+            Some(size) => opts.size = Some(size),
+            None => warn_unparseable_default("image.size", v),
         }
     }
-    if opts.quality.is_none() {
-        if let Some(v) = defaults.get("image.quality") {
-            opts.quality = Some(v.clone());
-        }
+    if opts.quality.is_none()
+        && let Some(v) = defaults.get("image.quality")
+    {
+        opts.quality = Some(v.clone());
     }
-    if opts.output_format.is_none() {
-        if let Some(v) = defaults.get("image.format") {
-            match ImageFormat::from_str(v) {
-                Ok(fmt) => opts.output_format = Some(fmt),
-                Err(_) => warn_unparseable_default("image.format", v),
-            }
+    if opts.output_format.is_none()
+        && let Some(v) = defaults.get("image.format")
+    {
+        match ImageFormat::from_str(v) {
+            Ok(fmt) => opts.output_format = Some(fmt),
+            Err(_) => warn_unparseable_default("image.format", v),
         }
     }
     // Compression only makes sense for jpeg/webp. Gate the default on the
     // *effective* output format (the format fill above already ran), so a
     // node default like `image.compression: 80` doesn't invalidate a PNG
     // request (e.g. `-o out.png` overriding a jpeg node default).
-    if opts.compression.is_none() {
-        if let Some(v) = defaults.get("image.compression") {
-            match opts.output_format {
-                Some(ImageFormat::Jpeg) | Some(ImageFormat::Webp) => match v.parse::<u8>() {
-                    Ok(c) => opts.compression = Some(c),
-                    Err(_) => warn_unparseable_default("image.compression", v),
-                },
-                _ => tracing::debug!(
-                    "skipping node default 'image.compression' = '{}': \
+    if opts.compression.is_none()
+        && let Some(v) = defaults.get("image.compression")
+    {
+        match opts.output_format {
+            Some(ImageFormat::Jpeg) | Some(ImageFormat::Webp) => match v.parse::<u8>() {
+                Ok(c) => opts.compression = Some(c),
+                Err(_) => warn_unparseable_default("image.compression", v),
+            },
+            _ => tracing::debug!(
+                "skipping node default 'image.compression' = '{}': \
                      effective output format is not jpeg or webp",
-                    v
-                ),
-            }
+                v
+            ),
         }
     }
-    if opts.n.is_none() {
-        if let Some(v) = defaults.get("image.variants") {
-            match v.parse::<u8>() {
-                Ok(n) => opts.n = Some(n),
-                Err(_) => warn_unparseable_default("image.variants", v),
-            }
+    if opts.n.is_none()
+        && let Some(v) = defaults.get("image.variants")
+    {
+        match v.parse::<u8>() {
+            Ok(n) => opts.n = Some(n),
+            Err(_) => warn_unparseable_default("image.variants", v),
         }
     }
-    if opts.background.is_none() {
-        if let Some(v) = defaults.get("image.background") {
-            match Background::from_str(v) {
-                Ok(bg) => opts.background = Some(bg),
-                Err(_) => warn_unparseable_default("image.background", v),
-            }
+    if opts.background.is_none()
+        && let Some(v) = defaults.get("image.background")
+    {
+        match Background::from_str(v) {
+            Ok(bg) => opts.background = Some(bg),
+            Err(_) => warn_unparseable_default("image.background", v),
         }
     }
 }
@@ -283,28 +283,28 @@ pub fn merge_image_defaults(opts: &mut ImageOptions, defaults: &BTreeMap<String,
 /// Fill only the `None` fields of `opts` from a node's stored `video.*`
 /// defaults.
 pub fn merge_video_defaults(opts: &mut VideoOptions, defaults: &BTreeMap<String, String>) {
-    if opts.size.is_none() {
-        if let Some(v) = defaults.get("video.size") {
-            match parse_size(v) {
-                Some(size) => opts.size = Some(size),
-                None => warn_unparseable_default("video.size", v),
-            }
+    if opts.size.is_none()
+        && let Some(v) = defaults.get("video.size")
+    {
+        match parse_size(v) {
+            Some(size) => opts.size = Some(size),
+            None => warn_unparseable_default("video.size", v),
         }
     }
-    if opts.seconds.is_none() {
-        if let Some(v) = defaults.get("video.seconds") {
-            match v.parse::<u32>() {
-                Ok(s) => opts.seconds = Some(s),
-                Err(_) => warn_unparseable_default("video.seconds", v),
-            }
+    if opts.seconds.is_none()
+        && let Some(v) = defaults.get("video.seconds")
+    {
+        match v.parse::<u32>() {
+            Ok(s) => opts.seconds = Some(s),
+            Err(_) => warn_unparseable_default("video.seconds", v),
         }
     }
-    if opts.variants.is_none() {
-        if let Some(v) = defaults.get("video.variants") {
-            match v.parse::<u8>() {
-                Ok(n) => opts.variants = Some(n),
-                Err(_) => warn_unparseable_default("video.variants", v),
-            }
+    if opts.variants.is_none()
+        && let Some(v) = defaults.get("video.variants")
+    {
+        match v.parse::<u8>() {
+            Ok(n) => opts.variants = Some(n),
+            Err(_) => warn_unparseable_default("video.variants", v),
         }
     }
 }
@@ -312,20 +312,20 @@ pub fn merge_video_defaults(opts: &mut VideoOptions, defaults: &BTreeMap<String,
 /// Fill only the `None` fields of `opts` from a node's stored `chat.*`
 /// defaults.
 pub fn merge_chat_defaults(opts: &mut ChatOptions, defaults: &BTreeMap<String, String>) {
-    if opts.temperature.is_none() {
-        if let Some(v) = defaults.get("chat.temperature") {
-            match v.parse::<f32>() {
-                Ok(t) => opts.temperature = Some(t),
-                Err(_) => warn_unparseable_default("chat.temperature", v),
-            }
+    if opts.temperature.is_none()
+        && let Some(v) = defaults.get("chat.temperature")
+    {
+        match v.parse::<f32>() {
+            Ok(t) => opts.temperature = Some(t),
+            Err(_) => warn_unparseable_default("chat.temperature", v),
         }
     }
-    if opts.max_tokens.is_none() {
-        if let Some(v) = defaults.get("chat.max_tokens") {
-            match v.parse::<u32>() {
-                Ok(m) => opts.max_tokens = Some(m),
-                Err(_) => warn_unparseable_default("chat.max_tokens", v),
-            }
+    if opts.max_tokens.is_none()
+        && let Some(v) = defaults.get("chat.max_tokens")
+    {
+        match v.parse::<u32>() {
+            Ok(m) => opts.max_tokens = Some(m),
+            Err(_) => warn_unparseable_default("chat.max_tokens", v),
         }
     }
 }
@@ -334,15 +334,14 @@ pub fn merge_chat_defaults(opts: &mut ChatOptions, defaults: &BTreeMap<String, S
 /// `embedding.dimensions` default, honoring the legacy un-namespaced
 /// `dimensions` key when the namespaced one is absent.
 pub fn merge_embed_defaults(opts: &mut EmbedOptions, defaults: &BTreeMap<String, String>) {
-    if opts.dimensions.is_none() {
-        if let Some(v) = defaults
+    if opts.dimensions.is_none()
+        && let Some(v) = defaults
             .get("embedding.dimensions")
             .or_else(|| defaults.get("dimensions"))
-        {
-            match v.parse::<u32>() {
-                Ok(d) => opts.dimensions = Some(d),
-                Err(_) => warn_unparseable_default("embedding.dimensions", v),
-            }
+    {
+        match v.parse::<u32>() {
+            Ok(d) => opts.dimensions = Some(d),
+            Err(_) => warn_unparseable_default("embedding.dimensions", v),
         }
     }
 }

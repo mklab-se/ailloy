@@ -386,60 +386,53 @@ impl Provider for AnthropicClient {
                         }
 
                         // Anthropic SSE format: "event: ..." followed by "data: ..."
-                        if let Some(data) = line.strip_prefix("data: ") {
-                            if let Ok(event) = serde_json::from_str::<StreamEvent_>(data) {
-                                match event.event_type.as_str() {
-                                    "message_start" => {
-                                        // input tokens arrive on the initial message
-                                        if let Some(u) =
-                                            event.message.as_ref().and_then(|m| m.usage.as_ref())
-                                        {
-                                            tokens.0 = u.input_tokens;
-                                        }
+                        if let Some(data) = line.strip_prefix("data: ")
+                            && let Ok(event) = serde_json::from_str::<StreamEvent_>(data)
+                        {
+                            match event.event_type.as_str() {
+                                "message_start" => {
+                                    // input tokens arrive on the initial message
+                                    if let Some(u) =
+                                        event.message.as_ref().and_then(|m| m.usage.as_ref())
+                                    {
+                                        tokens.0 = u.input_tokens;
                                     }
-                                    "message_delta" => {
-                                        // cumulative output tokens arrive on deltas
-                                        if let Some(u) = event.usage.as_ref() {
-                                            tokens.1 = u.output_tokens;
-                                        }
+                                }
+                                "message_delta" => {
+                                    // cumulative output tokens arrive on deltas
+                                    if let Some(u) = event.usage.as_ref() {
+                                        tokens.1 = u.output_tokens;
                                     }
-                                    "content_block_delta" => {
-                                        if let Some(delta) = &event.delta {
-                                            if let Some(text) = &delta.text {
-                                                if !text.is_empty() {
-                                                    assembled.push_str(text);
-                                                    return Some((
-                                                        Ok(StreamEvent::Delta(text.clone())),
-                                                        (
-                                                            byte_stream,
-                                                            buffer,
-                                                            assembled,
-                                                            model,
-                                                            tokens,
-                                                        ),
-                                                    ));
-                                                }
-                                            }
-                                        }
-                                    }
-                                    "message_stop" => {
-                                        let usage = (tokens.0 + tokens.1 > 0).then_some(Usage {
-                                            prompt_tokens: tokens.0,
-                                            completion_tokens: tokens.1,
-                                            total_tokens: tokens.0 + tokens.1,
-                                        });
-                                        let response = ChatResponse {
-                                            content: assembled.clone(),
-                                            model: model.clone(),
-                                            usage,
-                                        };
+                                }
+                                "content_block_delta" => {
+                                    if let Some(delta) = &event.delta
+                                        && let Some(text) = &delta.text
+                                        && !text.is_empty()
+                                    {
+                                        assembled.push_str(text);
                                         return Some((
-                                            Ok(StreamEvent::Done(response)),
+                                            Ok(StreamEvent::Delta(text.clone())),
                                             (byte_stream, buffer, assembled, model, tokens),
                                         ));
                                     }
-                                    _ => {}
                                 }
+                                "message_stop" => {
+                                    let usage = (tokens.0 + tokens.1 > 0).then_some(Usage {
+                                        prompt_tokens: tokens.0,
+                                        completion_tokens: tokens.1,
+                                        total_tokens: tokens.0 + tokens.1,
+                                    });
+                                    let response = ChatResponse {
+                                        content: assembled.clone(),
+                                        model: model.clone(),
+                                        usage,
+                                    };
+                                    return Some((
+                                        Ok(StreamEvent::Done(response)),
+                                        (byte_stream, buffer, assembled, model, tokens),
+                                    ));
+                                }
+                                _ => {}
                             }
                         }
                     }

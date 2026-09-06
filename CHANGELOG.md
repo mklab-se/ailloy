@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-09-06
+
+### Added
+
+- Supply-chain transparency for release builds: binaries are built with `cargo auditable`
+  (dependency list embedded in the executable, readable with `cargo audit bin` or `syft`), and
+  a per-target CycloneDX 1.5 SBOM (`ailloy-vX.Y.Z-<target>.cdx.json`) is attached to every
+  GitHub release.
+
+### Fixed
+
+- Azure OpenAI / Microsoft Foundry with `azure_cli` auth: notices the Azure CLI prints to stdout
+  (e.g. upgrade hints) no longer end up in the `Authorization` header, which surfaced as an
+  intermittent "failed to parse header value" error.
+
+### Changed
+
+- Dependencies upgraded to current majors: `keyring` 3 → 4 (default feature set; the Linux
+  Secret Service backend is now pure-Rust `zbus`, so no vendored libdbus), `ratatui` 0.29 → 0.30,
+  `crossterm` 0.28 → 0.29, `inquire` 0.7 → 0.9, `colored` 2 → 3, `dirs` 5 → 7, `base64` 0.22 → 0.23,
+  plus `cargo update` across the lockfile. `reqwest` stays on 0.12: 0.13 switches the TLS
+  provider to `aws-lc-rs`, which needs cmake/NASM on Windows for `cargo install` users.
+- MSRV raised from 1.86 to 1.88 (required by `keyring` 4).
+- CI/release workflows moved to the Node 24 action majors (`checkout@v7`, `upload-artifact@v7`,
+  `download-artifact@v8`, `action-gh-release@v3`).
+
 ## [2.0.4] - 2026-07-16
 
 ### Fixed

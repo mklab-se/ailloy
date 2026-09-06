@@ -172,12 +172,12 @@ pub(crate) fn build_video_options(args: &VideoArgs) -> Result<VideoOptions> {
 /// 1280x720, 720x1280, 1080x1080, 1920x1080, 1080x1920.
 pub(crate) fn parse_size(s: &str) -> Result<(u32, u32)> {
     let parts: Vec<&str> = s.split('x').collect();
-    if let [w, h] = parts[..] {
-        if let (Ok(w), Ok(h)) = (w.parse::<u32>(), h.parse::<u32>()) {
-            if w > 0 && h > 0 {
-                return Ok((w, h));
-            }
-        }
+    if let [w, h] = parts[..]
+        && let (Ok(w), Ok(h)) = (w.parse::<u32>(), h.parse::<u32>())
+        && w > 0
+        && h > 0
+    {
+        return Ok((w, h));
     }
     anyhow::bail!(
         "Invalid video size '{}': expected WxH (e.g. 1280x720). Known supported dimensions: \

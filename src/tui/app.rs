@@ -236,11 +236,11 @@ impl App {
                 None
             }
             KeyCode::Char('e') => {
-                if let Some(id) = self.selected_node_id() {
-                    if let Some(node) = self.config.nodes.get(&id) {
-                        let form = NodeForm::from_node(&id, node);
-                        self.mode = Mode::EditNode { id, form };
-                    }
+                if let Some(id) = self.selected_node_id()
+                    && let Some(node) = self.config.nodes.get(&id)
+                {
+                    let form = NodeForm::from_node(&id, node);
+                    self.mode = Mode::EditNode { id, form };
                 }
                 None
             }
@@ -361,10 +361,10 @@ impl App {
                 None
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if let Mode::SetDefaultFor { selected, caps, .. } = &mut self.mode {
-                    if *selected + 1 < caps.len() {
-                        *selected += 1;
-                    }
+                if let Mode::SetDefaultFor { selected, caps, .. } = &mut self.mode
+                    && *selected + 1 < caps.len()
+                {
+                    *selected += 1;
                 }
                 None
             }
@@ -467,10 +467,10 @@ impl App {
                 None
             }
             KeyCode::Down | KeyCode::Tab => {
-                if let Some(form) = self.active_form_mut() {
-                    if form.active + 1 < form.fields.len() {
-                        form.active += 1;
-                    }
+                if let Some(form) = self.active_form_mut()
+                    && form.active + 1 < form.fields.len()
+                {
+                    form.active += 1;
                 }
                 None
             }
@@ -502,34 +502,34 @@ impl App {
 
         match cat {
             Cat::Text => {
-                if let Some(form) = self.active_form_mut() {
-                    if let FieldKind::Text { value, cursor } = &mut form.fields[active].kind {
-                        edit_text_parts(value, cursor, code);
-                    }
+                if let Some(form) = self.active_form_mut()
+                    && let FieldKind::Text { value, cursor } = &mut form.fields[active].kind
+                {
+                    edit_text_parts(value, cursor, code);
                 }
                 None
             }
             Cat::Select => {
                 let mut changed = false;
-                if let Some(form) = self.active_form_mut() {
-                    if let FieldKind::Select { options, selected } = &mut form.fields[active].kind {
-                        let n = options.len();
-                        if n > 0 {
-                            let forward = matches!(
-                                code,
-                                KeyCode::Right
-                                    | KeyCode::Char(' ')
-                                    | KeyCode::Enter
-                                    | KeyCode::Char('l')
-                            );
-                            let backward = matches!(code, KeyCode::Left | KeyCode::Char('h'));
-                            if forward {
-                                *selected = (*selected + 1) % n;
-                                changed = true;
-                            } else if backward {
-                                *selected = (*selected + n - 1) % n;
-                                changed = true;
-                            }
+                if let Some(form) = self.active_form_mut()
+                    && let FieldKind::Select { options, selected } = &mut form.fields[active].kind
+                {
+                    let n = options.len();
+                    if n > 0 {
+                        let forward = matches!(
+                            code,
+                            KeyCode::Right
+                                | KeyCode::Char(' ')
+                                | KeyCode::Enter
+                                | KeyCode::Char('l')
+                        );
+                        let backward = matches!(code, KeyCode::Left | KeyCode::Char('h'));
+                        if forward {
+                            *selected = (*selected + 1) % n;
+                            changed = true;
+                        } else if backward {
+                            *selected = (*selected + n - 1) % n;
+                            changed = true;
                         }
                     }
                 }
@@ -556,27 +556,26 @@ impl App {
                 None
             }
             Cat::Toggles => {
-                if let Some(form) = self.active_form_mut() {
-                    if let FieldKind::Toggles {
+                if let Some(form) = self.active_form_mut()
+                    && let FieldKind::Toggles {
                         checked, cursor, ..
                     } = &mut form.fields[active].kind
-                    {
-                        match code {
-                            KeyCode::Left | KeyCode::Char('h') => {
-                                *cursor = cursor.saturating_sub(1);
-                            }
-                            KeyCode::Right | KeyCode::Char('l') => {
-                                if *cursor + 1 < checked.len() {
-                                    *cursor += 1;
-                                }
-                            }
-                            KeyCode::Char(' ') | KeyCode::Enter => {
-                                if let Some(flag) = checked.get_mut(*cursor) {
-                                    *flag = !*flag;
-                                }
-                            }
-                            _ => {}
+                {
+                    match code {
+                        KeyCode::Left | KeyCode::Char('h') => {
+                            *cursor = cursor.saturating_sub(1);
                         }
+                        KeyCode::Right | KeyCode::Char('l') => {
+                            if *cursor + 1 < checked.len() {
+                                *cursor += 1;
+                            }
+                        }
+                        KeyCode::Char(' ') | KeyCode::Enter => {
+                            if let Some(flag) = checked.get_mut(*cursor) {
+                                *flag = !*flag;
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 None
@@ -638,10 +637,10 @@ impl App {
         match result {
             Ok((id, node)) => {
                 // On an edit that renamed the node id, drop the old entry.
-                if let Some(old) = &old_id {
-                    if old != &id {
-                        let _ = actions::delete_node(&mut self.config, old);
-                    }
+                if let Some(old) = &old_id
+                    && old != &id
+                {
+                    let _ = actions::delete_node(&mut self.config, old);
                 }
                 actions::upsert_node(&mut self.config, id.clone(), node);
                 self.last_saved_node = Some(id.clone());

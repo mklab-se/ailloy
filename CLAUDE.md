@@ -167,7 +167,7 @@ examples/
 2. Update `CHANGELOG.md`
 3. Commit and push to main
 4. Tag: `git tag v0.X.Y && git push origin v0.X.Y`
-5. Release workflow builds binaries (Linux, macOS Intel+ARM, Windows), creates GitHub Release, updates Homebrew tap (`mklab-se/homebrew-tap`), publishes to crates.io
+5. Release workflow builds [auditable](https://github.com/rust-secure-code/cargo-auditable) binaries (Linux, macOS Intel+ARM, Windows) with a CycloneDX SBOM per target, creates GitHub Release, updates Homebrew tap (`mklab-se/homebrew-tap`), publishes to crates.io
 
 **Required GitHub secrets:**
 - `CARGO_REGISTRY_TOKEN` (in `crates-io` environment)
@@ -175,7 +175,7 @@ examples/
 
 ## Code Style
 
-- Edition 2024, MSRV 1.86
+- Edition 2024, MSRV 1.88
 - `cargo clippy` with `-D warnings` (zero warnings policy)
 - `cargo fmt` enforced in CI
 
