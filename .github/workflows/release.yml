@@ -12,7 +12,7 @@ jobs:
     name: CI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
@@ -35,14 +35,41 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+      # cargo-auditable embeds the dependency list into the binary itself
+      # (readable with `cargo audit bin` or syft); cargo-cyclonedx emits a
+      # standalone CycloneDX SBOM that ships next to the binary as a release asset.
+      - name: Install SBOM tooling
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-auditable,cargo-cyclonedx
+
+      - name: Build (auditable)
+        shell: bash
+        run: cargo auditable build --release --target "$TARGET"
+        env:
+          TARGET: ${{ matrix.target }}
+
+      # One SBOM per target: the dependency graph differs per platform
+      # (e.g. windows-sys only on Windows). cargo-cyclonedx writes the file
+      # next to Cargo.toml named after --override-filename with a .json suffix.
+      - name: Generate CycloneDX SBOM
+        shell: bash
+        run: |
+          cargo cyclonedx \
+            --format json \
+            --spec-version 1.5 \
+            --target "$TARGET" \
+            --override-filename "$SBOM"
+          mv "${SBOM}.json" "${SBOM}.cdx.json"
+        env:
+          TARGET: ${{ matrix.target }}
+          SBOM: ailloy-${{ github.ref_name }}-${{ matrix.target }}
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
@@ -58,7 +85,7 @@ jobs:
           $version = $env:GITHUB_REF_NAME -replace '^v',''
           Compress-Archive -Path "target/${{ matrix.target }}/release/ailloy.exe" -DestinationPath "ailloy-v$version-${{ matrix.target }}.zip"
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: ailloy-${{ matrix.target }}
           path: ailloy-v*.*
@@ -68,13 +95,13 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*
           generate_release_notes: true
@@ -84,7 +111,7 @@ jobs:
     needs: github-release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
@@ -163,7 +190,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: crates-io
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Publish
         run: cargo publish

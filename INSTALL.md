@@ -29,6 +29,26 @@ Pre-built binaries via [cargo-binstall](https://github.com/cargo-bins/cargo-bins
 cargo binstall ailloy
 ```
 
+## Software bill of materials (SBOM)
+
+Every GitHub release asset has a matching CycloneDX 1.5 SBOM listing the exact crate versions
+compiled into that platform's binary:
+
+```
+ailloy-vX.Y.Z-<target>.cdx.json
+```
+
+The binaries are also built with [`cargo auditable`](https://github.com/rust-secure-code/cargo-auditable),
+so the dependency list travels inside the executable itself. Check a downloaded binary against the
+RustSec advisory database with:
+
+```sh
+cargo install cargo-audit --features=fix
+cargo audit bin ./ailloy
+```
+
+`syft` and `trivy` also understand this format.
+
 ## Shell Completions
 
 ailloy offers two kinds of completion.
