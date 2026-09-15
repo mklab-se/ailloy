@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Dependencies refreshed to the latest compatible versions (lockfile only; no manifest
+  changes). MSRV stays 1.88, which `ratatui` 0.30 and `keyring` 4 require.
+- CI and the release workflow lint all targets (`cargo clippy --all-targets`), matching the
+  local gate and the template.
+
 ## [2.1.0] - 2026-09-06
 
 ### Added
