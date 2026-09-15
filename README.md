@@ -502,11 +502,32 @@ ailloy = { version = "2.0", default-features = false, features = ["keychain"] }
 cargo build                              # Build everything
 cargo build --no-default-features --lib  # Build library only
 cargo test                               # Run tests
-cargo clippy -- -D warnings              # Lint (zero warnings)
+cargo clippy --all-targets -- -D warnings  # Lint (zero warnings)
 cargo fmt --all -- --check               # Format check
 cargo run -- chat "hello"                # Run the CLI
 ```
 
+## Releasing
+
+Releases are driven by the [`/release`](.claude/commands/release.md) command (run it in Claude
+Code with `major`, `minor`, or `patch`). It updates dependencies, runs the CI gates, bumps the
+version, updates the changelog, then commits, pushes, and tags `vX.Y.Z`. Pushing the tag triggers
+`.github/workflows/release.yml`, which:
+
+1. Re-runs the full CI suite
+2. Builds [auditable](https://github.com/rust-secure-code/cargo-auditable) binaries for Linux, macOS
+   (Intel + ARM), and Windows, with a CycloneDX SBOM per target
+3. Creates a GitHub Release with the archives and SBOMs (see
+   [INSTALL.md](INSTALL.md#software-bill-of-materials-sbom) for how to read them)
+4. Publishes `ailloy` to crates.io
+5. Updates the Homebrew formula in [`mklab-se/homebrew-tap`](https://github.com/mklab-se/homebrew-tap)
+
+### Required secrets
+
+| Secret | Where | Purpose |
+| --- | --- | --- |
+| `CARGO_REGISTRY_TOKEN` | Environment **`crates-io`** | Publish to crates.io |
+| `HOMEBREW_TAP_TOKEN` | Repository secret | Push the formula to the tap |
 
 ## Folder-local configuration
 
