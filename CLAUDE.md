@@ -163,11 +163,12 @@ examples/
 
 ## Releasing
 
-1. Bump `version` in `Cargo.toml`
-2. Update `CHANGELOG.md`
-3. Commit and push to main
-4. Tag: `git tag v0.X.Y && git push origin v0.X.Y`
-5. Release workflow builds [auditable](https://github.com/rust-secure-code/cargo-auditable) binaries (Linux, macOS Intel+ARM, Windows) with a CycloneDX SBOM per target, creates GitHub Release, updates Homebrew tap (`mklab-se/homebrew-tap`), publishes to crates.io
+Releases go through the `/release` skill (`.claude/skills/release/`) → tag push → `release.yml`.
+The skill updates the toolchain and dependencies first, runs the CI gates, bumps the version,
+updates the changelog, then commits, pushes, tags `vX.Y.Z`, and watches the workflow.
+`release.yml` builds [auditable](https://github.com/rust-secure-code/cargo-auditable) binaries
+(Linux, macOS Intel+ARM, Windows) with a CycloneDX SBOM per target, creates a GitHub Release,
+updates the Homebrew tap (`mklab-se/homebrew-tap`), and publishes to crates.io.
 
 **Required GitHub secrets:**
 - `CARGO_REGISTRY_TOKEN` (in `crates-io` environment)

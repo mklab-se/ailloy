@@ -509,10 +509,10 @@ cargo run -- chat "hello"                # Run the CLI
 
 ## Releasing
 
-Releases are driven by the [`/release`](.claude/commands/release.md) command (run it in Claude
-Code with `major`, `minor`, or `patch`). It updates dependencies, runs the CI gates, bumps the
-version, updates the changelog, then commits, pushes, and tags `vX.Y.Z`. Pushing the tag triggers
-`.github/workflows/release.yml`, which:
+Releases are driven by the [`/release`](.claude/skills/release/SKILL.md) skill (run it in Claude
+Code with `major`, `minor`, or `patch`). It updates the toolchain and dependencies, runs the CI
+gates, bumps the version, updates the changelog, then commits, pushes, and tags `vX.Y.Z`. Pushing
+the tag triggers `.github/workflows/release.yml`, which:
 
 1. Re-runs the full CI suite
 2. Builds [auditable](https://github.com/rust-secure-code/cargo-auditable) binaries for Linux, macOS

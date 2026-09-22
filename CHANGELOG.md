@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Dependencies refreshed to the latest compatible versions (lockfile only; no manifest
+  changes). `reqwest` stays on 0.12 and `serde_yaml` on 0.9 per the template's documented pins.
+- Migrated the `/release` workflow from `.claude/commands/release.md` to
+  `.claude/skills/release/SKILL.md`, matching the current `rusty-tmpl` template: it now updates
+  the local toolchain before releasing and watches the release workflow to completion instead of
+  stopping at the tag push.
+
 ## [2.1.1] - 2026-09-16
 
 ### Changed
