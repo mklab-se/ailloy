@@ -241,11 +241,52 @@ struct ImagesApiData {
     revised_prompt: Option<String>,
 }
 
-#[derive(Deserialize)]
+/// Token usage as reported by the images endpoints. Every field is optional
+/// because different model families use different vocabularies on the same
+/// `/openai/v1/images/generations` surface:
+///
+/// - gpt-image / DALL-E: `input_tokens`, `output_tokens`, `total_tokens`
+/// - MAI-Image-2.x (Foundry): `num_input_text_tokens`,
+///   `num_input_image_tokens`, `num_output_tokens` (no total)
+///
+/// Usage is informational, so an unrecognized shape must never fail the
+/// whole response — the image bytes are what the caller asked for.
+#[derive(Deserialize, Default)]
+#[serde(default)]
 struct ImagesApiUsage {
-    input_tokens: u32,
-    output_tokens: u32,
-    total_tokens: u32,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+    total_tokens: Option<u32>,
+    num_input_text_tokens: Option<u32>,
+    num_input_image_tokens: Option<u32>,
+    num_output_tokens: Option<u32>,
+}
+
+impl ImagesApiUsage {
+    /// Normalize to the library's [`Usage`], or `None` when no recognized
+    /// counter is present. A missing `total_tokens` is derived as
+    /// prompt + completion.
+    fn into_usage(self) -> Option<Usage> {
+        let prompt = self.input_tokens.or_else(|| {
+            match (self.num_input_text_tokens, self.num_input_image_tokens) {
+                (None, None) => None,
+                (text, image) => Some(text.unwrap_or(0) + image.unwrap_or(0)),
+            }
+        });
+        let completion = self.output_tokens.or(self.num_output_tokens);
+        if prompt.is_none() && completion.is_none() && self.total_tokens.is_none() {
+            return None;
+        }
+        let prompt_tokens = prompt.unwrap_or(0);
+        let completion_tokens = completion.unwrap_or(0);
+        Some(Usage {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens: self
+                .total_tokens
+                .unwrap_or(prompt_tokens + completion_tokens),
+        })
+    }
 }
 
 /// Parse an `images/generations` or `images/edits` JSON response body into
@@ -254,9 +295,9 @@ struct ImagesApiUsage {
 /// Each image is base64-decoded, its dimensions read from magic bytes (via
 /// [`crate::types::image_dimensions`]) falling back to `fallback_size` and
 /// then `(1024, 1024)`, and its format detected from magic bytes (falling
-/// back to `Png` when undetectable). `usage`, when present, is mapped
-/// (`input_tokens` -> `prompt_tokens`, `output_tokens` -> `completion_tokens`)
-/// and attached to the *first* image only, to avoid double-counting tokens
+/// back to `Png` when undetectable). `usage`, when present and recognized,
+/// is normalized via [`ImagesApiUsage::into_usage`] (gpt-image and
+/// MAI-Image vocabularies) and attached to the *first* image only, to avoid double-counting tokens
 /// across a multi-image response.
 pub(crate) fn parse_images_response(
     body: &str,
@@ -265,11 +306,7 @@ pub(crate) fn parse_images_response(
     let parsed: ImagesApiResponse =
         serde_json::from_str(body).context("Failed to parse image generation response")?;
 
-    let usage = parsed.usage.map(|u| Usage {
-        prompt_tokens: u.input_tokens,
-        completion_tokens: u.output_tokens,
-        total_tokens: u.total_tokens,
-    });
+    let usage = parsed.usage.and_then(ImagesApiUsage::into_usage);
 
     let mut images = Vec::with_capacity(parsed.data.len());
     for (i, item) in parsed.data.into_iter().enumerate() {
@@ -626,6 +663,43 @@ mod tests {
         assert_eq!(images.len(), 2);
         assert!(images[0].usage.is_some());
         assert!(images[1].usage.is_none());
+    }
+
+    #[test]
+    fn parse_mai_image_usage_shape() {
+        // MAI-Image-2.x on Foundry reports usage with its own key names and
+        // no total_tokens (observed live 2026-09-16).
+        let png = minimal_png_bytes();
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png);
+        let body = format!(
+            r#"{{"created":1,"data":[{{"b64_json":"{b64}"}}],"model":"MAI-Image-2.6-Flash","size":"1024x1024","usage":{{"num_output_tokens":1024,"num_input_text_tokens":2,"num_input_image_tokens":3}}}}"#
+        );
+        let images = parse_images_response(&body, None).unwrap();
+        let usage = images[0].usage.as_ref().unwrap();
+        assert_eq!(usage.prompt_tokens, 5);
+        assert_eq!(usage.completion_tokens, 1024);
+        assert_eq!(usage.total_tokens, 1029);
+    }
+
+    #[test]
+    fn parse_unrecognized_usage_shape_is_none_not_error() {
+        let png = minimal_png_bytes();
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png);
+        let body = format!(r#"{{"data":[{{"b64_json":"{b64}"}}],"usage":{{"something_else":7}}}}"#);
+        let images = parse_images_response(&body, None).unwrap();
+        assert!(images[0].usage.is_none());
+    }
+
+    #[test]
+    fn parse_partial_gpt_image_usage_derives_total() {
+        let png = minimal_png_bytes();
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png);
+        let body = format!(
+            r#"{{"data":[{{"b64_json":"{b64}"}}],"usage":{{"input_tokens":5,"output_tokens":10}}}}"#
+        );
+        let images = parse_images_response(&body, None).unwrap();
+        let usage = images[0].usage.as_ref().unwrap();
+        assert_eq!(usage.total_tokens, 15);
     }
 
     #[test]

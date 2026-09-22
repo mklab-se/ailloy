@@ -238,7 +238,7 @@ See INSTALL.md for the full setup.
 | `openai` | yes | yes | yes | yes | no | API key, keychain, or env (`OPENAI_API_KEY`) |
 | `anthropic` | yes | yes | no | no | no | API key, keychain, or env (`ANTHROPIC_API_KEY`) |
 | `azure-openai` | yes | yes | yes | yes | yes (Sora deployment) | API key, keychain, Azure CLI, or env |
-| `microsoft-foundry` | yes | yes | yes | yes (gpt-image deployment) | yes (Sora deployment) | API key, keychain, or Azure CLI |
+| `microsoft-foundry` | yes | yes | yes | yes (any image deployment: gpt-image-2, MAI-Image, ...) | yes (Sora deployment) | API key, keychain, or Azure CLI |
 | `vertex-ai` | yes | yes | yes | yes | no | gcloud CLI |
 | `ollama` | yes | yes | yes | no | no | None (local) |
 | `local-agent` | yes | yes | no | no | no | None (local binary: claude, codex, copilot) |

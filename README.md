@@ -189,7 +189,9 @@ async fn main() -> anyhow::Result<()> {
 full parameter surface: `output_format` (png/jpeg/webp), `compression`, `n`
 (1-10 variants), `background` (transparent/opaque/auto), `moderation`,
 `input_fidelity`, and `reference_images`/`mask` for image edits (switches to
-the edits endpoint automatically):
+the edits endpoint automatically). Any other Foundry image deployment (e.g.
+Microsoft's own `MAI-Image-2.x` family) works the same way — usage reporting
+is normalized regardless of which token-count vocabulary the model returns:
 
 ```rust
 use ailloy::{Client, ImageFormat, ImageOptions};
@@ -336,7 +338,7 @@ Options: `--criteria/-c` or `--criteria-file`, input as an argument, `--file`, o
 | OpenAI | `openai` | yes | yes | DALL-E, gpt-image-2 | — | API key |
 | Anthropic | `anthropic` | yes | yes | — | — | API key |
 | Azure OpenAI | `azure-openai` | yes | yes | yes (gpt-image-2) | Sora | API key / `az` CLI |
-| Microsoft Foundry | `microsoft-foundry` | yes | yes | yes (gpt-image-2) | Sora | API key / `az` CLI |
+| Microsoft Foundry | `microsoft-foundry` | yes | yes | yes (gpt-image-2, MAI-Image) | Sora | API key / `az` CLI |
 | Google Vertex AI | `vertex-ai` | yes | yes | Imagen | — | `gcloud` CLI |
 | Ollama | `ollama` | yes | yes | — | — | None |
 | LM Studio | `openai` | yes | yes | — | — | None |
