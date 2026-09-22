@@ -21,6 +21,12 @@ brew install mklab-se/tap/ailloy
 cargo install ailloy
 ```
 
+On Windows, building from source needs [NASM](https://www.nasm.us/) and [CMake](https://cmake.org/)
+on `PATH` (plus the Visual Studio Build Tools most Rust installs already have) — they're needed to
+compile [`aws-lc-rs`](https://github.com/aws/aws-lc-rs), the TLS crypto backend. macOS and Linux need
+nothing extra. If you'd rather skip the build tools entirely, use `cargo binstall` or Homebrew below —
+both fetch a pre-built binary.
+
 ## Cargo binstall
 
 Pre-built binaries via [cargo-binstall](https://github.com/cargo-bins/cargo-binstall):

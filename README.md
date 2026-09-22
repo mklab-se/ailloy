@@ -288,6 +288,9 @@ cargo install ailloy
 cargo binstall ailloy
 ```
 
+`cargo install` builds from source; on Windows that needs NASM and CMake on `PATH` (see
+[INSTALL.md](INSTALL.md#cargo)) — `cargo binstall` and Homebrew skip that by using a pre-built binary.
+
 Configure your nodes:
 
 ```bash
