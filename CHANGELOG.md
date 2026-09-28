@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-09-28
+
+### Fixed
+
+- Image generation with Microsoft's MAI image models (`MAI-Image-2.6-Flash`, `MAI-Image-2.5`, ...)
+  on Microsoft Foundry failed with `HTTP 404: Requested path is not found`, because Microsoft moved
+  these models off the OpenAI-compatible `/openai/v1/images/*` surface
+  ([#2](https://github.com/mklab-se/ailloy/issues/2)). Foundry deployments whose name contains
+  `MAI-Image` are now sent to the dedicated `/mai/v1/images/generations` and
+  `/mai/v1/images/edits` endpoints, with the MAI request shape:
+  - `--size WxH` is sent as `width`/`height` (the MAI API silently ignores `size`), validated
+    client-side: each side at least 768px, at most 2,359,296 pixels for 2.6 models and 1,048,576
+    for 2.5 models.
+  - `--variants N` issues N requests, since the MAI API returns one image per call and ignores
+    `n`; token usage is summed across them.
+  - Image edits (`--ref`) accept up to five PNG or JPEG reference images.
+  - Output is always PNG. `--quality`, `--format jpeg`/`-o *.jpg`, `--compression`,
+    `--background`, `--moderation`, `--fidelity` and `--mask` now fail with an actionable error
+    instead of being silently ignored.
+
 ## [2.2.0] - 2026-09-22
 
 ### Changed
