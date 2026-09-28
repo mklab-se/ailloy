@@ -64,6 +64,10 @@ src/
   discover.rs         # Discovery library API — discover_env_keys(), discover_local(),
                       #   discover_ollama(), DiscoveredNode struct
   openai.rs           # OpenAI client — chat, stream (SSE), image gen (via openai_images), embedding
+  mai_images.rs       # MAI-Image-2.x request builders (private): Foundry deployments named
+                      #   *MAI-Image* go to /mai/v1/images/{generations,edits} (not /openai/v1/),
+                      #   width/height ints, PNG only, one image per request (n = N calls),
+                      #   `image` multipart fields; validate() rejects gpt-image-only params
   openai_images.rs    # Shared OpenAI-family image request/response builder (private) — JSON
                       #   generations body vs multipart edits form, per-flavor (GptImage/DallE/
                       #   AzureGptImage) validation; consumed by openai.rs, azure.rs, foundry.rs
@@ -71,9 +75,10 @@ src/
   azure.rs            # Azure OpenAI client — chat, stream (SSE), image gen (openai_images),
                       #   video jobs (video_jobs), embedding; defaults to unified /openai/v1/
                       #   surface, dated api-version = legacy
-  foundry.rs          # Microsoft Foundry client — chat, stream (SSE), image gen (gpt-image-2,
-                      #   via openai_images), video jobs (video_jobs), embedding; defaults to
-                      #   unified /openai/v1/ surface, dated api-version = legacy
+  foundry.rs          # Microsoft Foundry client — chat, stream (SSE), image gen (gpt-image-2
+                      #   via openai_images, MAI-Image via mai_images), video jobs (video_jobs),
+                      #   embedding; defaults to unified /openai/v1/ surface, dated
+                      #   api-version = legacy
   video_jobs.rs       # Shared Azure/Foundry video (sora-2) request logic (private) — OpenAI-style
                       #   Videos API (POST/GET/DELETE /openai/v1/videos[/{id}][/content]); no
                       #   ?api-version on v1 surface, appended only for dated nodes;

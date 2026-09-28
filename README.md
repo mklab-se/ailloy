@@ -189,9 +189,12 @@ async fn main() -> anyhow::Result<()> {
 full parameter surface: `output_format` (png/jpeg/webp), `compression`, `n`
 (1-10 variants), `background` (transparent/opaque/auto), `moderation`,
 `input_fidelity`, and `reference_images`/`mask` for image edits (switches to
-the edits endpoint automatically). Any other Foundry image deployment (e.g.
-Microsoft's own `MAI-Image-2.x` family) works the same way — usage reporting
-is normalized regardless of which token-count vocabulary the model returns:
+the edits endpoint automatically). Microsoft's own `MAI-Image-2.x` family on
+Foundry is supported too: deployments whose name contains `MAI-Image` are sent to
+the dedicated `/mai/v1/images/*` endpoints, with `size` mapped to width/height
+(each at least 768px), PNG-only output, up to five PNG/JPEG reference images for
+edits, and `n` served as one request per image. Usage reporting is normalized
+regardless of which token-count vocabulary the model returns:
 
 ```rust
 use ailloy::{Client, ImageFormat, ImageOptions};

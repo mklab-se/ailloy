@@ -191,7 +191,7 @@ pub(crate) async fn build_edits_form(
 
 /// Read a reference/mask image from disk into a multipart form part, with
 /// the file name preserved and MIME type guessed from its extension.
-async fn file_part(path: &std::path::Path) -> anyhow::Result<reqwest::multipart::Part> {
+pub(crate) async fn file_part(path: &std::path::Path) -> anyhow::Result<reqwest::multipart::Part> {
     let bytes = tokio::fs::read(path).await.with_context(|| {
         format!(
             "Failed to read image file '{}': check that the path exists and is readable.",
@@ -211,7 +211,7 @@ async fn file_part(path: &std::path::Path) -> anyhow::Result<reqwest::multipart:
 }
 
 /// Guess a part's MIME type from its file extension.
-fn guess_mime(path: &std::path::Path) -> anyhow::Result<&'static str> {
+pub(crate) fn guess_mime(path: &std::path::Path) -> anyhow::Result<&'static str> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())

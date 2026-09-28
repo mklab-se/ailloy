@@ -14,6 +14,7 @@ use tracing::debug;
 use crate::azure::AzureAuth;
 use crate::azure::az_cli_token_from_stdout;
 use crate::client::Provider;
+use crate::mai_images;
 use crate::openai_images::{
     ImageFlavor, build_edits_form, build_generations_body, parse_images_response, wants_edits,
 };
@@ -150,6 +151,27 @@ fn flavor_for(name: &str) -> ImageFlavor {
         ImageFlavor::DallE
     } else {
         ImageFlavor::AzureGptImage
+    }
+}
+
+/// Move every image's token usage onto the first image, summed, so a result
+/// assembled from several single-image responses reports usage once.
+fn sum_usage_onto_first(images: &mut [ImageResponse]) {
+    let mut total: Option<Usage> = None;
+    for image in images.iter_mut() {
+        if let Some(u) = image.usage.take() {
+            let t = total.get_or_insert(Usage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+            });
+            t.prompt_tokens += u.prompt_tokens;
+            t.completion_tokens += u.completion_tokens;
+            t.total_tokens += u.total_tokens;
+        }
+    }
+    if let Some(first) = images.first_mut() {
+        first.usage = total;
     }
 }
 
@@ -313,6 +335,57 @@ impl FoundryClient {
         } else {
             format!("Microsoft Foundry API error (HTTP {}): {}", status, body)
         }
+    }
+
+    /// Generate images with an MAI image model on its own `/mai/v1/` surface
+    /// (see [`crate::mai_images`]). MAI returns one image per call, so `n`
+    /// images take `n` sequential requests; token usage is summed onto the
+    /// first image.
+    async fn generate_mai_images(
+        &self,
+        prompt: &str,
+        options: Option<&ImageOptions>,
+    ) -> Result<Vec<ImageResponse>> {
+        if let Some(opts) = options {
+            mai_images::validate(&self.model, opts)?;
+        }
+        let (header_name, header_value) = self.get_auth_header().await?;
+        let edits = wants_edits(options);
+        let url = if edits {
+            mai_images::edits_url(&self.base_url())
+        } else {
+            mai_images::generations_url(&self.base_url())
+        };
+
+        let mut images: Vec<ImageResponse> = Vec::new();
+        for _ in 0..mai_images::request_count(options) {
+            debug!(url = %url, "Sending MAI image request to Microsoft Foundry");
+            let request = self.client.post(&url).header(header_name, &header_value);
+            let response = if edits {
+                // `wants_edits` only returns true when `options` is `Some`.
+                let opts = options.expect("wants_edits(true) implies options is Some");
+                let form = mai_images::build_edits_form(&self.model, prompt, opts).await?;
+                request.multipart(form).send().await
+            } else {
+                let body = mai_images::build_generations_body(&self.model, prompt, options);
+                request.json(&body).send().await
+            }
+            .context("Failed to send MAI image request to Microsoft Foundry")?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
+            }
+            let body = response
+                .text()
+                .await
+                .context("Failed to read Microsoft Foundry image response")?;
+            images.extend(parse_images_response(&body, options.and_then(|o| o.size))?);
+        }
+
+        sum_usage_onto_first(&mut images);
+        Ok(images)
     }
 
     /// Build a [`VideoJobsApi`] scoped to this client's endpoint and
@@ -538,6 +611,10 @@ impl Provider for FoundryClient {
         prompt: &str,
         options: Option<&ImageOptions>,
     ) -> Result<Vec<ImageResponse>> {
+        if mai_images::is_mai_image_model(&self.model) {
+            return self.generate_mai_images(prompt, options).await;
+        }
+
         let (header_name, header_value) = self.get_auth_header().await?;
         let flavor = flavor_for(&self.model);
 
@@ -838,6 +915,48 @@ mod v1_surface_tests {
 
         assert!(!wants_edits(None));
         assert!(!wants_edits(Some(&ImageOptions::default())));
+    }
+
+    #[test]
+    fn sum_usage_onto_first_aggregates_and_clears_the_rest() {
+        let image = |usage: Option<(u32, u32)>| ImageResponse {
+            data: vec![],
+            width: 1024,
+            height: 1024,
+            format: crate::types::ImageFormat::Png,
+            revised_prompt: None,
+            usage: usage.map(|(p, c)| Usage {
+                prompt_tokens: p,
+                completion_tokens: c,
+                total_tokens: p + c,
+            }),
+        };
+        let mut images = vec![image(Some((2, 1024))), image(Some((3, 576))), image(None)];
+        sum_usage_onto_first(&mut images);
+        let usage = images[0].usage.as_ref().unwrap();
+        assert_eq!(usage.prompt_tokens, 5);
+        assert_eq!(usage.completion_tokens, 1600);
+        assert_eq!(usage.total_tokens, 1605);
+        assert!(images[1].usage.is_none());
+        assert!(images[2].usage.is_none());
+
+        let mut none = vec![image(None)];
+        sum_usage_onto_first(&mut none);
+        assert!(none[0].usage.is_none());
+    }
+
+    #[test]
+    fn mai_urls_ignore_dated_api_version_and_normalize_host() {
+        let c = FoundryClient::with_api_version(
+            "https://acct.cognitiveservices.azure.com/",
+            "MAI-Image-2.6-Flash",
+            "2024-05-01-preview",
+            AzureAuth::ApiKey("k".into()),
+        );
+        assert_eq!(
+            mai_images::generations_url(&c.base_url()),
+            "https://acct.services.ai.azure.com/mai/v1/images/generations"
+        );
     }
 
     #[test]

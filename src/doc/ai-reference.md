@@ -248,6 +248,16 @@ endpoint surface (model field = deployment name). Set `api_version` on the
 node to use the legacy dated endpoints instead. Video generation is only
 available on Azure OpenAI and Microsoft Foundry nodes with a Sora deployment.
 
+Microsoft's MAI image models (`MAI-Image-2.x`) on Foundry use their own
+`/mai/v1/images/generations` and `/mai/v1/images/edits` endpoints, selected
+automatically when the deployment name contains `MAI-Image` (a custom deployment
+name without it is sent to the OpenAI-compatible surface and fails with HTTP 404).
+They take `--size WxH` (each side at least 768px; at most 1536x1536 worth of
+pixels for 2.6 models, 1024x1024 for 2.5), `--variants`, and up to five PNG/JPEG
+`--ref` images. Output is always PNG; `--quality`, `--format jpeg`,
+`--compression`, `--background`, `--moderation`, `--fidelity`, and `--mask` are
+rejected with an error.
+
 ## Configuration
 
 Config file: `~/.config/ailloy/config.yaml`

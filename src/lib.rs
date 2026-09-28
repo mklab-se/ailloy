@@ -34,6 +34,7 @@ pub mod discover;
 pub mod error;
 pub mod foundry;
 pub mod local_agent;
+mod mai_images;
 pub mod ollama;
 pub mod openai;
 mod openai_images;
