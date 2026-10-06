@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 /// The kind of AI provider.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum ProviderKind {
     #[serde(rename = "openai", alias = "open-ai")]
     OpenAi,
@@ -81,6 +82,15 @@ impl ProviderKind {
                         | Self::MicrosoftFoundry,
                     "embedding"
                 )
+                | (
+                    Self::OpenAi
+                        | Self::Anthropic
+                        | Self::AzureOpenAi
+                        | Self::MicrosoftFoundry
+                        | Self::VertexAi
+                        | Self::Ollama,
+                    "eval"
+                )
         )
     }
 
@@ -91,17 +101,16 @@ impl ProviderKind {
 
     /// Returns the capabilities this provider kind can potentially support.
     pub fn supported_capabilities(&self) -> Vec<Capability> {
-        let mut caps = vec![Capability::Chat];
-        if self.supports_task("image") {
-            caps.push(Capability::Image);
-        }
-        if self.supports_task("video") {
-            caps.push(Capability::Video);
-        }
-        if self.supports_task("embedding") {
-            caps.push(Capability::Embedding);
-        }
-        caps
+        [
+            Capability::Chat,
+            Capability::Image,
+            Capability::Video,
+            Capability::Embedding,
+            Capability::Eval,
+        ]
+        .into_iter()
+        .filter(|cap| self.supports_capability(cap))
+        .collect()
     }
 }
 
@@ -112,11 +121,13 @@ impl ProviderKind {
 /// Capability of an AI node.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum Capability {
     Chat,
     Image,
     Embedding,
     Video,
+    Eval,
 }
 
 impl Capability {
@@ -127,6 +138,7 @@ impl Capability {
             Self::Image => "image",
             Self::Embedding => "embedding",
             Self::Video => "video",
+            Self::Eval => "eval",
         }
     }
 
@@ -137,6 +149,7 @@ impl Capability {
             Self::Image => "Image Generation",
             Self::Embedding => "Embedding",
             Self::Video => "Video Generation",
+            Self::Eval => "Evaluation",
         }
     }
 }
@@ -155,8 +168,9 @@ impl std::str::FromStr for Capability {
             "image" => Ok(Self::Image),
             "embedding" => Ok(Self::Embedding),
             "video" => Ok(Self::Video),
+            "eval" => Ok(Self::Eval),
             _ => Err(format!(
-                "Unknown capability '{}'. Valid: chat, image, embedding, video",
+                "Unknown capability '{}'. Valid: chat, image, embedding, video, eval",
                 s
             )),
         }
@@ -511,17 +525,18 @@ pub const ALL_CAPABILITIES: &[(&str, &str)] = &[
     ("image", "Image Generation"),
     ("embedding", "Embedding"),
     ("video", "Video Generation"),
+    ("eval", "Evaluation"),
 ];
 
 /// Ordered list of task keys with human-readable labels (backward-compatible alias).
 pub const ALL_TASKS: &[(&str, &str)] = ALL_CAPABILITIES;
 
-/// Every capability key, in display order (chat, image, video, embedding).
+/// Every capability key, in display order (chat, image, video, embedding, eval).
 ///
 /// Single source of truth for call sites that need "all capabilities" (e.g.
 /// `ailloy ai status`, the interactive config wizard) so the list can never
 /// drift and silently drop a capability again.
-pub const ALL_CAPABILITY_KEYS: &[&str] = &["chat", "image", "video", "embedding"];
+pub const ALL_CAPABILITY_KEYS: &[&str] = &["chat", "image", "video", "embedding", "eval"];
 
 /// Well-known consent keys for external CLI tools.
 pub mod consent_keys {
@@ -841,6 +856,20 @@ impl Config {
     /// Convenience: get the default chat node.
     pub fn default_chat_node(&self) -> Result<(&str, &AiNode)> {
         self.default_node_for("chat")
+    }
+
+    /// The node that serves `eval`: `defaults.eval` when set, otherwise the
+    /// default chat node (any chat model can emulate evaluation).
+    pub fn default_eval_node(&self) -> Result<(&str, &AiNode)> {
+        if self.defaults.contains_key("eval") {
+            return self.default_node_for("eval");
+        }
+        self.default_node_for("chat").map_err(|_| {
+            anyhow::anyhow!(
+                "No node configured for 'eval' and no default chat node to fall back to. \
+                 Run `ailloy ai config` to add a TypeSafe or chat node."
+            )
+        })
     }
 
     /// Set the default node for a capability.
@@ -1245,8 +1274,8 @@ mod tests {
         );
         assert_eq!(
             ALL_CAPABILITY_KEYS.len(),
-            4,
-            "expected chat, image, video, embedding"
+            5,
+            "expected chat, image, video, embedding, eval"
         );
     }
 
@@ -1735,6 +1764,90 @@ consents:
         let meta = node.embedding_metadata();
         // Explicit 256 wins over auto-detected 3072
         assert_eq!(meta.dimensions, Some(256));
+    }
+
+    #[test]
+    fn eval_capability_round_trips() {
+        assert_eq!(Capability::Eval.config_key(), "eval");
+        assert_eq!(Capability::Eval.label(), "Evaluation");
+        assert_eq!("eval".parse::<Capability>().unwrap(), Capability::Eval);
+        assert!(ALL_CAPABILITIES.iter().any(|(k, _)| *k == "eval"));
+        assert!(ALL_CAPABILITY_KEYS.contains(&"eval"));
+        let err = "nope".parse::<Capability>().unwrap_err();
+        assert!(err.contains("eval"), "{err}");
+    }
+
+    #[test]
+    fn eval_supported_by_chat_providers_but_not_local_agents() {
+        for kind in [
+            ProviderKind::OpenAi,
+            ProviderKind::Anthropic,
+            ProviderKind::AzureOpenAi,
+            ProviderKind::MicrosoftFoundry,
+            ProviderKind::VertexAi,
+            ProviderKind::Ollama,
+        ] {
+            assert!(kind.supports_capability(&Capability::Eval), "{kind}");
+            assert!(
+                kind.supported_capabilities().contains(&Capability::Eval),
+                "{kind}"
+            );
+        }
+        assert!(!ProviderKind::LocalAgent.supports_capability(&Capability::Eval));
+    }
+
+    fn config_with(nodes: &[(&str, ProviderKind)], defaults: &[(&str, &str)]) -> Config {
+        let mut config = Config::default();
+        for (id, kind) in nodes {
+            config
+                .nodes
+                .insert(id.to_string(), AiNode::new(kind.clone()));
+        }
+        for (cap, id) in defaults {
+            config.defaults.insert(cap.to_string(), id.to_string());
+        }
+        config
+    }
+
+    #[test]
+    fn default_eval_node_prefers_eval_default() {
+        let config = config_with(
+            &[
+                ("openai/a", ProviderKind::OpenAi),
+                ("ollama/b", ProviderKind::Ollama),
+            ],
+            &[("chat", "openai/a"), ("eval", "ollama/b")],
+        );
+        assert_eq!(config.default_eval_node().unwrap().0, "ollama/b");
+    }
+
+    #[test]
+    fn default_eval_node_falls_back_to_chat() {
+        let config = config_with(
+            &[("openai/a", ProviderKind::OpenAi)],
+            &[("chat", "openai/a")],
+        );
+        assert_eq!(config.default_eval_node().unwrap().0, "openai/a");
+    }
+
+    #[test]
+    fn default_eval_node_without_eval_or_chat_errors() {
+        let config = config_with(&[], &[]);
+        let err = config.default_eval_node().unwrap_err().to_string();
+        assert!(
+            err.contains("eval") && err.contains("ailloy ai config"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn default_eval_node_dangling_reference_errors() {
+        let config = config_with(
+            &[("openai/a", ProviderKind::OpenAi)],
+            &[("chat", "openai/a"), ("eval", "typesafe/gone")],
+        );
+        let err = config.default_eval_node().unwrap_err().to_string();
+        assert!(err.contains("typesafe/gone"), "{err}");
     }
 }
 

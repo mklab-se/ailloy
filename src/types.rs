@@ -1143,12 +1143,14 @@ pub type VideoProgress<'a> = &'a (dyn Fn(&VideoJob) + Send + Sync);
 
 /// Task types for provider routing.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Task {
     Chat,
     ImageGeneration,
     VideoGeneration,
     Transcription,
     Embedding,
+    Evaluation,
 }
 
 impl Task {
@@ -1160,6 +1162,7 @@ impl Task {
             Self::VideoGeneration => "video",
             Self::Transcription => "transcription",
             Self::Embedding => "embedding",
+            Self::Evaluation => "eval",
         }
     }
 
@@ -1171,6 +1174,7 @@ impl Task {
             Self::VideoGeneration => Some(crate::config::Capability::Video),
             Self::Transcription => None,
             Self::Embedding => Some(crate::config::Capability::Embedding),
+            Self::Evaluation => Some(crate::config::Capability::Eval),
         }
     }
 }
@@ -2313,5 +2317,14 @@ mod response_format_tests {
             opts.response_format,
             Some(ResponseFormat::JsonObject)
         ));
+    }
+
+    #[test]
+    fn evaluation_task_maps_to_eval_capability() {
+        assert_eq!(Task::Evaluation.config_key(), "eval");
+        assert_eq!(
+            Task::Evaluation.to_capability(),
+            Some(crate::config::Capability::Eval)
+        );
     }
 }

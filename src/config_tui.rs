@@ -152,6 +152,20 @@ pub fn print_ai_status(app_name: &str, capabilities: &[&str]) -> Result<()> {
             .map(|(_, l)| *l)
             .unwrap_or(cap_key);
 
+        if cap_key == "eval"
+            && !config.defaults.contains_key("eval")
+            && let Ok((chat_id, _)) = config.default_chat_node()
+        {
+            println!(
+                "  {} {}: {} {}",
+                "✓".green().bold(),
+                label,
+                chat_id.bold(),
+                "(default chat node; set defaults.eval to use a TypeSafe node)".dimmed()
+            );
+            continue;
+        }
+
         match config.defaults.get(cap_key) {
             Some(node_id) => {
                 if let Some((_, node)) = config.get_node(node_id) {

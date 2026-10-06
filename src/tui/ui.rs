@@ -17,12 +17,13 @@ use crate::retirement::retirement_warning;
 use crate::tui::app::{App, Focus, Mode};
 use crate::tui::forms::{Editor, FieldKind, NodeForm};
 
-/// The four capability columns shown in the node table, in display order.
+/// The five capability columns shown in the node table, in display order.
 const CAPABILITY_COLUMNS: &[Capability] = &[
     Capability::Chat,
     Capability::Image,
     Capability::Embedding,
     Capability::Video,
+    Capability::Eval,
 ];
 
 /// Marker glyphs for a capability cell.
