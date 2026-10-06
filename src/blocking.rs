@@ -149,6 +149,24 @@ impl Client {
         self.runtime.block_on(self.inner.embed_one(text))
     }
 
+    /// Evaluate typed questions about `state` (blocking).
+    pub fn eval(
+        &self,
+        state: impl Into<serde_json::Value>,
+        questions: &crate::eval::Questions,
+    ) -> Result<crate::eval::EvalResponse> {
+        self.runtime.block_on(self.inner.eval(state, questions))
+    }
+
+    /// Evaluate a single question (blocking).
+    pub fn eval_one(
+        &self,
+        state: impl Into<serde_json::Value>,
+        question: crate::eval::Question,
+    ) -> Result<crate::eval::Answer> {
+        self.runtime.block_on(self.inner.eval_one(state, question))
+    }
+
     /// Generate a video from a text prompt (no options).
     pub fn generate_video(&self, prompt: &str) -> Result<Vec<VideoResponse>> {
         self.runtime.block_on(self.inner.generate_video(prompt))

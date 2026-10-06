@@ -100,6 +100,19 @@ impl Provider for LocalAgentClient {
         &self.binary
     }
 
+    async fn evaluate(
+        &self,
+        _state: &serde_json::Value,
+        _questions: &crate::eval::Questions,
+    ) -> Result<crate::eval::EvalResponse> {
+        Err(crate::error::ClientError::Unsupported(format!(
+            "eval on local agent '{}': CLI agents cannot follow a JSON schema; \
+             use a TypeSafe or API chat node (run `ailloy ai config`)",
+            self.binary
+        ))
+        .into())
+    }
+
     async fn chat(
         &self,
         messages: &[Message],
@@ -290,5 +303,17 @@ mod tests {
             debug.contains("\"--print\""),
             "unknown binary should fall back to --print"
         );
+    }
+
+    #[tokio::test]
+    async fn local_agent_does_not_support_eval() {
+        let client = LocalAgentClient::new("claude");
+        let mut qs = crate::eval::Questions::new();
+        qs.insert("q".into(), crate::eval::Question::yes_no("ok?"));
+        let err = crate::client::Provider::evaluate(&client, &serde_json::json!("s"), &qs)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("eval"), "{err}");
     }
 }

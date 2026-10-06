@@ -33,6 +33,7 @@ pub mod conversation;
 pub mod discover;
 pub mod error;
 pub mod eval;
+mod eval_chat;
 pub mod foundry;
 pub mod local_agent;
 mod mai_images;

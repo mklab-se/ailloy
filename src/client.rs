@@ -8,6 +8,7 @@ use async_trait::async_trait;
 
 use crate::config::{AiNode, Auth, Config, ProviderKind};
 use crate::error::ClientError;
+use crate::eval::{Answer, EvalResponse, Question, Questions};
 use crate::types::{
     Background, ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageFormat,
     ImageOptions, ImageResponse, Message, Task, VideoJob, VideoJobStatus, VideoOptions,
@@ -71,6 +72,19 @@ pub trait Provider: Send + Sync {
         _options: Option<&EmbedOptions>,
     ) -> Result<EmbedResponse> {
         Err(ClientError::Unsupported("embedding".to_string()).into())
+    }
+
+    /// Answer typed questions about a state.
+    ///
+    /// Default implementation emulates evaluation over [`Provider::chat`]
+    /// with one structured-output call per question (self-reported
+    /// probabilities). Judgment providers such as TypeSafe override it.
+    async fn evaluate(
+        &self,
+        state: &serde_json::Value,
+        questions: &Questions,
+    ) -> Result<EvalResponse> {
+        crate::eval_chat::evaluate_via_chat(self, state, questions).await
     }
 
     /// Create an asynchronous video generation job.
@@ -387,7 +401,11 @@ impl Client {
     /// Create a client for a specific capability (uses the capability's default node).
     pub fn for_capability(cap: &str) -> Result<Self> {
         let config = Config::load()?;
-        let (id, node) = config.default_node_for(cap)?;
+        let (id, node) = if cap == "eval" {
+            config.default_eval_node()?
+        } else {
+            config.default_node_for(cap)?
+        };
         let provider = create_provider_from_node(id, node)?;
         Ok(Self {
             provider,
@@ -654,6 +672,34 @@ impl Client {
             .into_iter()
             .next()
             .context("No embedding returned")
+    }
+
+    /// Evaluate typed questions about `state` (a string or structured JSON).
+    ///
+    /// Routes to the node's provider: TypeSafe nodes answer natively in one
+    /// request; chat nodes answer one question per call.
+    pub async fn eval(
+        &self,
+        state: impl Into<serde_json::Value>,
+        questions: &Questions,
+    ) -> Result<EvalResponse> {
+        let state = state.into();
+        self.provider.evaluate(&state, questions).await
+    }
+
+    /// Evaluate a single question and return its answer.
+    pub async fn eval_one(
+        &self,
+        state: impl Into<serde_json::Value>,
+        question: Question,
+    ) -> Result<Answer> {
+        let mut questions = Questions::new();
+        questions.insert("q".to_string(), question);
+        let mut response = self.eval(state, &questions).await?;
+        response
+            .answers
+            .remove("q")
+            .context("the evaluation returned no answer for the question")
     }
 
     /// Generate a video from a text prompt (no options, no progress callback).
@@ -1115,6 +1161,165 @@ pub fn create_provider_from_node(node_id: &str, node: &AiNode) -> Result<Box<dyn
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Answers every eval question from canned JSON chosen by question type,
+    /// recording prompts and tracking peak concurrency.
+    struct MockJudge {
+        prompts: Mutex<Vec<String>>,
+        in_flight: AtomicUsize,
+        peak: AtomicUsize,
+        fail_on: Option<&'static str>,
+    }
+
+    impl MockJudge {
+        fn new(fail_on: Option<&'static str>) -> Self {
+            Self {
+                prompts: Mutex::new(Vec::new()),
+                in_flight: AtomicUsize::new(0),
+                peak: AtomicUsize::new(0),
+                fail_on,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for MockJudge {
+        fn name(&self) -> &str {
+            "mock-judge"
+        }
+
+        async fn chat(
+            &self,
+            messages: &[Message],
+            _options: Option<&ChatOptions>,
+        ) -> Result<ChatResponse> {
+            let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(now, Ordering::SeqCst);
+            tokio::task::yield_now().await;
+            let prompt = messages.last().unwrap().content.text().to_string();
+            self.prompts.lock().unwrap().push(prompt.clone());
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            if let Some(marker) = self.fail_on
+                && prompt.contains(marker)
+            {
+                anyhow::bail!("boom");
+            }
+            let content = if prompt.contains("(yes/no)") {
+                r#"{"probability": 0.9, "rationale": "yes-ish"}"#
+            } else if prompt.contains("(choose one)") {
+                r#"{"probabilities": {"a": 0.7, "b": 0.3}, "rationale": "a"}"#
+            } else {
+                r#"{"probabilities": {"0": 0.0, "1": 1.0}, "rationale": "high"}"#
+            };
+            Ok(ChatResponse {
+                content: content.to_string(),
+                model: "mock-model".to_string(),
+                usage: Some(crate::types::Usage {
+                    prompt_tokens: 10,
+                    completion_tokens: 2,
+                    total_tokens: 12,
+                }),
+            })
+        }
+    }
+
+    fn mixed_questions(n_yes_no: usize) -> crate::eval::Questions {
+        let mut qs = crate::eval::Questions::new();
+        for i in 0..n_yes_no {
+            qs.insert(
+                format!("yn{i}"),
+                crate::eval::Question::yes_no(format!("question {i}?")),
+            );
+        }
+        qs.insert(
+            "pick".into(),
+            crate::eval::Question::choice("pick one")
+                .option_bare("a")
+                .option_bare("b"),
+        );
+        qs.insert(
+            "rate".into(),
+            crate::eval::Question::score("rate it").levels(["lo", "hi"]),
+        );
+        qs
+    }
+
+    #[tokio::test]
+    async fn chat_emulation_asks_one_call_per_question() {
+        let client = Client::from_provider(Box::new(MockJudge::new(None)));
+        let resp = client
+            .eval("some state", &mixed_questions(1))
+            .await
+            .unwrap();
+        assert_eq!(resp.answers.len(), 3);
+        assert_eq!(resp.calibration, crate::eval::Calibration::SelfReported);
+        assert_eq!(resp.answers["yn0"].as_yes_no(), Some(0.9));
+        assert_eq!(resp.answers["pick"].as_choice(), Some("a"));
+        assert_eq!(resp.answers["rate"].as_score(), Some(1.0));
+        assert_eq!(resp.rationale["pick"], "a");
+        assert_eq!(resp.model, "mock-model");
+        let usage = resp.usage.unwrap();
+        assert_eq!((usage.prompt_tokens, usage.total_tokens), (30, 36));
+    }
+
+    #[tokio::test]
+    async fn chat_emulation_runs_concurrently_but_capped() {
+        let judge = std::sync::Arc::new(MockJudge::new(None));
+        struct Shared(std::sync::Arc<MockJudge>);
+        #[async_trait]
+        impl Provider for Shared {
+            fn name(&self) -> &str {
+                "shared"
+            }
+            async fn chat(
+                &self,
+                messages: &[Message],
+                options: Option<&ChatOptions>,
+            ) -> Result<ChatResponse> {
+                self.0.chat(messages, options).await
+            }
+        }
+        let client = Client::from_provider(Box::new(Shared(judge.clone())));
+        client.eval("s", &mixed_questions(8)).await.unwrap();
+        assert_eq!(judge.prompts.lock().unwrap().len(), 10);
+        let peak = judge.peak.load(Ordering::SeqCst);
+        assert!(
+            peak > 1 && peak <= crate::eval_chat::MAX_IN_FLIGHT,
+            "peak {peak}"
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_emulation_failure_names_the_question() {
+        let client = Client::from_provider(Box::new(MockJudge::new(Some("rate it"))));
+        let err = format!(
+            "{:#}",
+            client.eval("s", &mixed_questions(1)).await.unwrap_err()
+        );
+        assert!(err.contains("'rate'") && err.contains("boom"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn eval_one_returns_the_single_answer() {
+        let client = Client::from_provider(Box::new(MockJudge::new(None)));
+        let answer = client
+            .eval_one("s", crate::eval::Question::yes_no("ok?"))
+            .await
+            .unwrap();
+        assert_eq!(answer.as_yes_no(), Some(0.9));
+    }
+
+    #[tokio::test]
+    async fn eval_rejects_invalid_questions_before_calling() {
+        let judge = MockJudge::new(None);
+        let client = Client::from_provider(Box::new(judge));
+        let err = client
+            .eval("s", &crate::eval::Questions::new())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("at least one question"), "{err}");
+    }
 
     #[test]
     fn test_client_builder_missing_kind() {
