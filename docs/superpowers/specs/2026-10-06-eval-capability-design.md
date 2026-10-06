@@ -24,6 +24,7 @@ single rename (Noul is called `YesNo` in ailloy).
 | Yes/no type name | `YesNo` (wire value `noul` for TypeSafe) |
 | Chat-model backend | Structured JSON output with model-reported probabilities, flagged `Calibration::SelfReported`. No logprobs. |
 | Library architecture | New `Provider::evaluate` method whose default implementation emulates eval over `chat`; the TypeSafe provider overrides it natively |
+| Batching | TypeSafe nodes send all questions in one request; chat nodes send one call per question, concurrently (max 4 in flight). Decided from measurement, see section 2. |
 | CLI shape | Inline flags for one question of any type, plus a `--questions` file for batches |
 | Compatibility | Breaking changes accepted for both library and CLI; released as 3.0.0 |
 
@@ -91,6 +92,10 @@ Answer helpers:
   uniformly.
 - `Answer::as_yes_no()`, `as_choice()`, `as_score()` accessors returning
   `Option<...>`.
+- `Answer::normalized_score() -> Option<f64>` for Score: `score / (levels - 1)`,
+  in 0..1, so scores on different level counts are comparable. Together with
+  the YesNo probability and the Choice top probability this gives one tracked
+  0..1 number per answer type, as in TypeSafe's parallel-questions cookbook.
 
 Confidence formulas (used by chat emulation; TypeSafe returns its own values),
 taken from TypeSafe's Confidence documentation so both backends are comparable:
@@ -122,6 +127,8 @@ taken from TypeSafe's Confidence documentation so both backends are comparable:
   indexes) to a `Vec<f64>` in level order. `calibration = Measured`, `rationale`
   empty, `usage` from the response.
 - State with attachments is rejected: Jev accepts text only.
+- Request timeout 120 s (as in TypeSafe's cookbooks), since large documents
+  take longer than short chat turns.
 - Retries: HTTP 429 and 529 retry with exponential backoff, up to 3 attempts,
   honoring `retry-after` when present.
 - Errors, all actionable. Verified live on 2026-10-06, the error body is always
@@ -153,14 +160,37 @@ taken from TypeSafe's Confidence documentation so both backends are comparable:
 
 Every provider that implements `chat` gets eval through the default method:
 
-- One chat call per `evaluate()`, with a system prompt explaining the task and a
-  JSON schema generated from the questions:
+- One chat call **per question**, run concurrently with at most 4 in flight
+  (`futures::stream::buffer_unordered`). Each call carries a system prompt
+  explaining the task and a JSON schema for that single question:
   - YesNo: `{probability: number 0..1, rationale: string}`
   - Choice: `{probabilities: {<every option key>: number}, rationale: string}`
     with every option key required and no additional keys
-  - Score: `{probabilities: array of exactly n numbers, rationale: string}`
+  - Score: `{probabilities: {"0": number, ..., "<n-1>": number}, rationale:
+    string}`, an object keyed by level index (mirrors TypeSafe's response and
+    avoids `minItems`/`maxItems`, which strict structured output may not
+    support)
 - The user message contains the state (string as-is; JSON pretty-printed) and
-  each question with its ID, instructions and criteria.
+  the one question with its instructions and criteria.
+- Why not one call for all questions: measured on 2026-10-06 against
+  `gpt-5.6-luna` (6 related questions about one ticket, 3 runs each of batched
+  forward order, batched reversed order, and one question per call):
+  - Question order alone moved answers by several times the run-to-run noise
+    (`priority` normalized score 0.47 forward vs 0.57 reversed; `frustration`
+    0.46 vs 0.54), which is cross-question influence.
+  - Batching flattened distributions (`team` top probability 0.54 to 0.58
+    batched vs 0.70 alone), which would change confidence-gated outcomes
+    depending on what else is in the request.
+  - Choice winners did not change (18 of 18 picked the same option).
+
+  TypeSafe's parallel-questions cookbook shows Jev has no such effect, so Jev
+  keeps one request for all questions. On chat nodes the state is billed once
+  per question; documentation points users with large documents and many
+  questions to a TypeSafe node.
+- Usage is summed across the per-question calls; `model` is taken from the
+  first response.
+- If any per-question call fails, `evaluate()` fails with that error, naming
+  the question ID (no partial results).
 - Code, never the model, computes derived values: probabilities are clamped to
   [0, 1] and normalized to sum to 1 (uniform if all zero); the Choice winner is
   the most probable option (ties broken by option order); Score is
@@ -322,7 +352,10 @@ Unit tests, no network:
   401/422/429/529 handling and retry behavior (mocked HTTP).
 - Chat emulation: schema generation, normalization (out-of-range, not summing to
   1, all zeros), Choice winner and ties, Score value, confidence formulas against
-  hand-computed values, missing and extra IDs or option keys.
+  hand-computed values, missing and extra IDs or option keys, one call per
+  question (a mock provider records calls), usage summed across calls, one
+  failing question failing the whole evaluation with its ID in the error.
+- `normalized_score()` for 2-level and 10-level Scores.
 - Routing: `defaults.eval`, fallback to the default chat node, TypeSafe node
   rejecting `chat`.
 - CLI: mode exclusivity, `--option key=desc` and bare-key parsing, questions
@@ -342,6 +375,11 @@ Updated in the same change:
 - `README.md`: rewritten eval section, TypeSafe provider, 3.0 version snippets.
 - `src/doc/ai-reference.md`: full `ailloy eval` reference, questions file format,
   exit codes, TypeSafe node setup.
+- Threshold guidance (README and ai-reference): answers vary slightly between
+  runs, so gates should not sit right at a typical value. Jev is mostly
+  identical run to run (cookbook std dev 0 to about 0.008); chat models varied
+  by 0.01 to 0.12 in the 2026-10-06 measurement. Batching is free on TypeSafe
+  nodes and costs one call per question on chat nodes.
 - `src/commands/skill.rs`: skill description and eval cheat-sheet lines.
 - `CLAUDE.md`: `typesafe.rs` and eval types in the architecture map, the
   eval routing rule, the chat-emulation pattern, `TYPESAFE_API_KEY`.
