@@ -124,13 +124,30 @@ taken from TypeSafe's Confidence documentation so both backends are comparable:
 - State with attachments is rejected: Jev accepts text only.
 - Retries: HTTP 429 and 529 retry with exponential backoff, up to 3 attempts,
   honoring `retry-after` when present.
-- Errors, all actionable:
+- Errors, all actionable. Verified live on 2026-10-06, the error body is always
+  `{"detail": ...}` in one of three shapes, and the parser handles all three:
+  - object `{"error_type", "message"}` (seen on 401 `authentication_error` and
+    400 `api_usage_error`, e.g. "Unknown model: no-such-model");
+  - array of validation items `{"type", "loc", "msg"}` (422), where `loc` such
+    as `["body","questions","q","choice","criteria"]` names the question ID;
+  - plain string (400, e.g. "Too many score levels. Must have at most 10
+    levels.").
+
+  Mapped messages:
   - 401: "TypeSafe rejected the API key for node '<id>'. Check TYPESAFE_API_KEY or
     run 'ailloy ai config set-key <id>'."
-  - 422: includes the offending field from the response body and the question ID
-    when identifiable.
+  - 400 unknown model: names the model and suggests `jev-latest`.
+  - 400/422 validation: the message plus the question ID taken from `loc`.
   - 429/529 after retries: says the rate limit or overload persisted and to retry
     later.
+
+  Every error includes the `x-typesafe-request-id` response header when present,
+  for support requests.
+- Live observations that shape the implementation: a three-question request
+  answered in about 0.26 s using 462 input tokens; Choice `probabilities` keys come
+  back alphabetically sorted (not in request order), so mapping is by key; the
+  server accepted a one-level Score that its docs say needs two, so ailloy's
+  client-side limits (2 to 10 levels) stay the source of truth.
 
 ### Chat emulation (default `Provider::evaluate`)
 
