@@ -184,8 +184,8 @@ fn run_set_key(id_or_alias: &str) -> Result<()> {
     Ok(())
 }
 
-/// Ping every configured node: 1-token chat for chat-capable nodes, a tiny
-/// embed for embedding-capable ones. Exit code 1 when any node fails.
+/// Ping every configured node: 1-token chat for chat-capable nodes, a one-question
+/// eval for eval-only nodes (TypeSafe), a tiny embed for embedding-capable ones. Exit code 1 when any node fails.
 async fn run_test_all() -> Result<()> {
     use std::time::Instant;
     let config = Config::load()?;
@@ -216,6 +216,17 @@ async fn run_test_all() -> Result<()> {
                     .embed_one("ping")
                     .await
                     .map(|_| "embedding".to_string()),
+                Err(e) => Err(e),
+            }
+        } else if node.capabilities.contains(&Capability::Eval) {
+            match ailloy::Client::with_node(id) {
+                Ok(client) => client
+                    .eval_one(
+                        "The sky is blue.",
+                        ailloy::Question::yes_no("Does the text mention a color?"),
+                    )
+                    .await
+                    .map(|_| "eval".to_string()),
                 Err(e) => Err(e),
             }
         } else {

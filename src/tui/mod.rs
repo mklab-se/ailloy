@@ -195,12 +195,27 @@ async fn run_test(app: &mut App, node_id: &str, terminal: &mut Term) -> Result<(
         Some(node) => match Client::from_node(&node) {
             Err(e) => Err(format!("{e:#}")),
             Ok(client) => {
-                let messages = [Message::user("Say hello in one sentence.")];
-                let fut = client.chat(&messages);
-                match tokio::time::timeout(TEST_TIMEOUT, fut).await {
-                    Ok(Ok(resp)) => Ok(resp.content),
-                    Ok(Err(e)) => Err(format!("{e:#}")),
-                    Err(_) => Err(format!("timed out after {}s", TEST_TIMEOUT.as_secs())),
+                if node.provider == ProviderKind::TypeSafe {
+                    let fut = client.eval_one(
+                        "The sky is blue.",
+                        crate::eval::Question::yes_no("Does the text mention a color?"),
+                    );
+                    match tokio::time::timeout(TEST_TIMEOUT, fut).await {
+                        Ok(Ok(answer)) => Ok(format!(
+                            "eval works (p(yes) = {:.2})",
+                            answer.as_yes_no().unwrap_or_default()
+                        )),
+                        Ok(Err(e)) => Err(format!("{e:#}")),
+                        Err(_) => Err(format!("timed out after {}s", TEST_TIMEOUT.as_secs())),
+                    }
+                } else {
+                    let messages = [Message::user("Say hello in one sentence.")];
+                    let fut = client.chat(&messages);
+                    match tokio::time::timeout(TEST_TIMEOUT, fut).await {
+                        Ok(Ok(resp)) => Ok(resp.content),
+                        Ok(Err(e)) => Err(format!("{e:#}")),
+                        Err(_) => Err(format!("timed out after {}s", TEST_TIMEOUT.as_secs())),
+                    }
                 }
             }
         },

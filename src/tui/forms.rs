@@ -858,6 +858,53 @@ mod tests {
     }
 
     #[test]
+    fn typesafe_form_builds_node() {
+        let mut form = NodeForm::new();
+        form.provider = ProviderKind::TypeSafe;
+        form.rebuild();
+        let (id, node) = form.to_node().unwrap();
+        assert_eq!(id, "typesafe/jev-latest");
+        assert_eq!(node.provider, ProviderKind::TypeSafe);
+        assert_eq!(node.capabilities, vec![Capability::Eval]);
+        assert_eq!(node.auth, Some(Auth::Env("TYPESAFE_API_KEY".into())));
+        assert_eq!(node.model.as_deref(), Some("jev-latest"));
+        assert_eq!(node.endpoint, None, "default endpoint is not stored");
+    }
+
+    #[test]
+    fn typesafe_form_field_layout() {
+        let mut form = NodeForm::new();
+        form.provider = ProviderKind::TypeSafe;
+        form.rebuild();
+        assert_eq!(form.text_of(FieldKey::Model), "jev-latest");
+        assert_eq!(form.text_of(FieldKey::Endpoint), "");
+        let endpoint = form
+            .fields
+            .iter()
+            .find(|f| f.key == FieldKey::Endpoint)
+            .unwrap();
+        assert!(endpoint.label.contains("optional"));
+    }
+
+    #[test]
+    fn typesafe_custom_endpoint_is_kept_and_default_dropped() {
+        let mut form = NodeForm::new();
+        form.provider = ProviderKind::TypeSafe;
+        form.rebuild();
+        set_text(&mut form, FieldKey::Endpoint, "https://api.typesafe.ai/");
+        let (_, node) = form.to_node().unwrap();
+        assert_eq!(node.endpoint, None);
+        set_text(&mut form, FieldKey::Endpoint, "https://ts.example.com");
+        let (_, node) = form.to_node().unwrap();
+        assert_eq!(node.endpoint.as_deref(), Some("https://ts.example.com"));
+    }
+
+    #[test]
+    fn typesafe_is_offered_in_provider_order() {
+        assert!(PROVIDER_ORDER.contains(&ProviderKind::TypeSafe));
+    }
+
+    #[test]
     fn local_agent_builds_binary_id() {
         let mut form = NodeForm::new();
         form.provider = ProviderKind::LocalAgent;
