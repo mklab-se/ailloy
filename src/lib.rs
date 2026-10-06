@@ -32,6 +32,7 @@ pub mod config_tui;
 pub mod conversation;
 pub mod discover;
 pub mod error;
+pub mod eval;
 pub mod foundry;
 pub mod local_agent;
 mod mai_images;
@@ -52,6 +53,7 @@ pub use client::{Client, Provider};
 pub use config::{AiNode, Auth, Capability, EmbeddingMetadata};
 pub use conversation::{ChatHistory, Conversation, InMemoryHistory};
 pub use error::ClientError;
+pub use eval::{Answer, Calibration, EvalResponse, Question, Questions, YesNoCriteria};
 pub use types::{
     Background, ChatOptions, ChatResponse, ChatStream, ContentPart, EmbedOptions, EmbedResponse,
     ImageFormat, ImageOptions, ImageResponse, InputFidelity, Message, MessageContent, Moderation,
