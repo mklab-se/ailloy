@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Breaking changes
+
+#### Library
+
+| Change | Migration |
+|---|---|
+| `Capability::Eval` added | add an arm or `_ =>` to exhaustive matches |
+| `ProviderKind::TypeSafe` added | same |
+| `Task::Evaluation` added | same |
+| `Capability`, `ProviderKind` and `Task` are now `#[non_exhaustive]` | add `_ =>`; future additions are non-breaking |
+| `ProviderKind::supported_capabilities()` no longer always contains `Chat` (TypeSafe is eval-only) | check capabilities before calling `chat` |
+| `ALL_CAPABILITIES`, `ALL_TASKS` and `ALL_CAPABILITY_KEYS` include `eval` | none, or filter it out |
+| `Provider` gains `evaluate()` with a default (chat emulation) | override it to opt a custom provider out |
+
+#### CLI
+
+- `ailloy eval`: `-c/--criteria` and `--criteria-file` are removed; use `--yes-no "<question>"` or `--questions <file>`.
+- `--threshold` now gates the yes/no probability (default 0.5) instead of the judge's self-reported score; the judge's own pass/fail verdict is gone.
+- `--json` output changed: `{model, calibration, pass, answers: {<id>: {type, ..., confidence, normalized_score (score only), pass, outcome, rationale?}}, usage}`.
+- New exit code 4: gates passed but an answer is below `--min-confidence`.
+- Client and config construction errors (unknown `--node`, nothing configured, missing API key) exit 2; duplicate or empty option keys, more than 255 options and score `--min` greater than `--max` are usage errors (exit 2).
+
+### Added
+
+- `eval` capability: typed `YesNo`, `Choice` and `Score` questions over a state (`Client::eval`, `Client::eval_one`, blocking mirrors), with probabilities and confidence on every answer.
+- `typesafe` provider (TypeSafe Jev): calibrated probabilities, all questions in one request, `TYPESAFE_API_KEY` discovery, config dashboard support (new `Q` column in the node table).
+- Chat nodes serve `eval` too (one structured-output call per question, at most 4 at once; answers marked self-reported).
+- `ailloy eval --choice/--option/--expect`, `--score/--level/--min/--max`, `--questions <yaml|json>` (`.json` is JSON, anything else YAML), `--min-confidence`, `--yes-means/--no-means`.
+- A question the judge did not answer is reported as `FAIL  no answer returned for question '<id>'` (JSON: `{"pass": false, "outcome": "fail", "error": "no answer returned"}`).
+- `defaults.eval` routing, falling back to the default chat node.
+- `examples/eval.rs`.
+
 ## [2.2.1] - 2026-09-28
 
 ### Fixed

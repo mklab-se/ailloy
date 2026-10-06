@@ -118,32 +118,153 @@ Generate embeddings from text using the default (or specified) embedding node.
 | `--info` | Show embedding node metadata |
 | `--azure-vectorizer <NAME>` | Print Azure AI Search vectorizer JSON for the embedding node |
 
-### Eval (LLM-as-judge)
+### Eval (typed questions)
 
 ```
-ailloy eval [INPUT] [OPTIONS]
+ailloy eval [INPUT] (--yes-no Q | --choice Q | --score Q | --questions FILE) [OPTIONS]
 ```
 
-Evaluate input against plain-language criteria with an AI judge. Built for
-scripts and integration tests: exit code 0 = pass, 1 = fail, 2 = usage/config
-error, 3 = provider error.
+Ask typed questions about the input with an AI judge. Built for scripts and
+integration tests. Exactly one of `--yes-no`, `--choice`, `--score` or
+`--questions` is required. Input comes from the positional argument, `--file`,
+or stdin.
 
 | Flag | Description |
 |------|-------------|
-| `-c, --criteria <TEXT>` | Criteria the input must satisfy |
-| `--criteria-file <FILE>` | Read criteria from a file |
+| `--yes-no <Q>` | Ask a yes/no question |
+| `--yes-means <TEXT>` | What a yes means (with `--yes-no`) |
+| `--no-means <TEXT>` | What a no means (with `--yes-no`) |
+| `-t, --threshold <F>` | Pass when p(yes) >= threshold, 0.0-1.0 (default 0.5, with `--yes-no`) |
+| `--choice <Q>` | Ask a choice question |
+| `--option <KEY[=DESC]>` | A choice option, `key` or `key=description` (repeatable, 2-255) |
+| `--expect <KEY>` | Pass only when the chosen option is one of these (repeatable) |
+| `--score <Q>` | Ask a score question |
+| `--level <TEXT>` | A score level, lowest first (repeatable, 2-10) |
+| `--min <F>` | Fail when the score is below this |
+| `--max <F>` | Fail when the score is above this |
+| `--questions <FILE>` | Read several questions from a file (`.json` is JSON, anything else YAML) |
+| `--min-confidence <F>` | Exit 4 when an answer's confidence is below this (0.0-1.0) |
 | `-f, --file <FILE>` | Read the input to evaluate from a file |
 | `--context <TEXT>` | Extra context for the judge (what produced the input, expectations) |
-| `-n, --node <ID>` | Judge node (defaults to the default chat node) |
-| `-t, --threshold <F>` | Pass when score >= threshold (0.0-1.0) instead of the judge's verdict |
-| `--json` | Print the verdict as JSON |
-
-Input comes from the positional argument, `--file`, or stdin:
+| `-n, --node <ID>` | Judge node (defaults to `defaults.eval`, then the default chat node) |
+| `--json` | Print the answers as JSON |
 
 ```bash
-my-tool run | ailloy eval --criteria "output mentions the order id"
-ailloy eval "$output" -c "written in professional English" --threshold 0.8 --json
+my-tool run | ailloy eval --yes-no "Does the output mention the order id?"
+ailloy eval "$out" --yes-no "Is the tone polite?" --threshold 0.8
+ailloy eval -f ticket.txt --choice "Which team should handle this?" \
+  --option billing="payments, refunds" --option technical="bugs, outages" --expect billing
+ailloy eval "$reply" --score "How frustrated is the customer?" \
+  --level Calm --level Frustrated --level "Very angry" --max 1.0
+ailloy eval -f ticket.txt --questions checks.yaml --json
 ```
+
+Usage errors (exit 2): duplicate or empty option keys, more than 255 options,
+score `--min` greater than `--max`, an unknown `--node`, no judge configured, or
+a missing API key.
+
+#### Questions file
+
+```yaml
+questions:
+  mentions_order:
+    yes_no: "Does the output mention the order id?"
+    yes_means: "The order id appears verbatim"   # optional
+    no_means: "The order id is absent"            # optional
+    threshold: 0.8
+  team:
+    choice: "Which team should handle this?"
+    options: { billing: "payments, refunds", technical: "bugs, outages", other: null }
+    expect: [billing]
+  frustration:
+    score: "How frustrated is the customer?"
+    levels: [Calm, Frustrated, Very angry]
+    min: 0.2
+    max: 1.0
+    min_confidence: 0.6
+```
+
+Each entry has exactly one of `yes_no`, `choice` or `score`. Other fields:
+`yes_means`, `no_means`, `threshold` (yes/no); `options`, `expect` (choice);
+`levels`, `min`, `max` (score); `min_confidence` (any, overrides the global
+`--min-confidence`). All questions are sent in one evaluation.
+
+#### Output
+
+Text, one line per question (batches prefix each line with the question ID):
+
+```
+PASS  yes-no  p=0.93  confidence 0.86  (jev-1.13.0)
+PASS  choice  billing  p=0.88  confidence 0.81  (jev-1.13.0)
+        billing 0.88 · technical 0.12
+FAIL  score   1.05 of 0..2 (Frustrated)  confidence 0.92  max 1.0  (jev-1.13.0)
+```
+
+Chat judges show `(model, self-reported)` and print rationale lines.
+Answers below the confidence floor are labelled `UNSURE`. A question the judge
+did not answer shows `FAIL  no answer returned for question '<id>'`.
+
+`--json`:
+
+```json
+{
+  "model": "jev-1.13.0",
+  "calibration": "measured",
+  "pass": true,
+  "answers": {
+    "team": { "type": "choice", "choice": "billing",
+              "probabilities": {"billing": 0.88, "technical": 0.12},
+              "confidence": 0.81, "pass": true, "outcome": "pass" }
+  },
+  "usage": { "input_tokens": 318, "output_tokens": 34 }
+}
+```
+
+Each answer has `type`, the answer fields, `confidence`, `normalized_score`
+(score only), `pass`, `outcome` (`pass`, `fail` or `unsure`) and `rationale`
+(chat judges only). A missing answer is
+`{"pass": false, "outcome": "fail", "error": "no answer returned"}`.
+
+#### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | every gate passed and every answer met its confidence floor |
+| 1 | at least one gate failed (wins over 4) |
+| 2 | usage or config error |
+| 3 | provider error |
+| 4 | gates passed, but an answer is below the confidence floor |
+
+#### Judge nodes
+
+`--node`, else `defaults.eval`, else the default chat node. Chat nodes emulate
+eval with one structured-output call per question (at most 4 at once) and
+their answers are self-reported. A TypeSafe node gives calibrated
+probabilities and takes all questions in one request:
+
+```bash
+export TYPESAFE_API_KEY=...
+ailloy ai config     # add a TypeSafe node, or edit config.yaml:
+```
+
+```yaml
+nodes:
+  typesafe/jev-latest:
+    provider: typesafe
+    model: jev-latest
+    auth: { env: TYPESAFE_API_KEY }
+    capabilities: [eval]
+defaults:
+  eval: typesafe/jev-latest
+```
+
+**Threshold guidance.** Answers vary slightly between runs. Jev is mostly
+identical run to run (TypeSafe's cookbook measured a std dev of 0 to about
+0.008); chat models varied by 0.01 to 0.12 in our measurement. Keep gates away
+from typical values. Batching is free on TypeSafe nodes; on chat nodes each
+question is its own call, so large documents with many questions belong on a
+TypeSafe node. In the config dashboard the node table has a `Q` column for
+the eval capability.
 
 ### AI Management
 
@@ -368,8 +489,9 @@ ailloy chat "Extract the order" --schema order.schema.json  # Strict JSON Schema
 ### Judge output in scripts and tests
 
 ```bash
-my-tool run | ailloy eval -c "output mentions the order id"   # exit 0/1
-ailloy eval "$out" -c "polite tone" --threshold 0.8 --json    # scored, JSON verdict
+my-tool run | ailloy eval --yes-no "Does the output mention the order id?"   # exit 0/1/4
+ailloy eval "$out" --yes-no "Is the tone polite?" --threshold 0.8 --json      # probability gate, JSON
+ailloy eval -f in.txt --questions checks.yaml                                # several typed questions
 ```
 
 ### Store an API key in the OS keychain

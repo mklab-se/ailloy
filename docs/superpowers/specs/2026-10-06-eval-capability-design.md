@@ -126,7 +126,7 @@ taken from TypeSafe's Confidence documentation so both backends are comparable:
   `Answer::YesNo { probability }`, Score `probabilities` (string-keyed level
   indexes) to a `Vec<f64>` in level order. `calibration = Measured`, `rationale`
   empty, `usage` from the response.
-- State with attachments is rejected: Jev accepts text only.
+- Eval state is a JSON value (text or structured data), so binary attachments cannot reach TypeSafe; no extra check is needed.
 - Request timeout 120 s (as in TypeSafe's cookbooks), since large documents
   take longer than short chat turns.
 - Retries: HTTP 429 and 529 retry with exponential backoff, up to 3 attempts,
@@ -232,12 +232,14 @@ Exactly one of these is required (a clap argument group):
 
 | Mode | Extra flags | Gate (exit 0 or 1) |
 |---|---|---|
-| `--yes-no "<q>"` | `--true "<meaning>"`, `--false "<meaning>"` | pass when probability >= `--threshold` (default 0.5) |
+| `--yes-no "<q>"` | `--yes-means "<meaning>"`, `--no-means "<meaning>"` | pass when probability >= `--threshold` (default 0.5) |
 | `--choice "<q>"` | `--option key[=description]` (repeatable) | `--expect <key>` (repeatable, any match passes); no `--expect` means always pass |
 | `--score "<q>"` | `--level "<text>"` (repeatable, ordered) | `--min <f>` and/or `--max <f>` on the score; neither means always pass |
 | `--questions <file>` | none | every question's own gate must pass |
 
 All modes accept `--min-confidence <f>`, `--node <id>` and `--json`.
+
+Renamed from `--true`/`--false` during planning: an unquoted `true:` YAML key parses as a boolean.
 
 ### Questions file (YAML or JSON, detected by extension, YAML default)
 
@@ -245,7 +247,7 @@ All modes accept `--min-confidence <f>`, `--node <id>` and `--json`.
 questions:
   mentions_order:
     yes_no: "Does the output mention the order id?"
-    true: "The order id appears verbatim"   # optional
+    yes_means: "The order id appears verbatim"   # optional
     threshold: 0.8
   team:
     choice: "Which team should handle this?"

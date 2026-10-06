@@ -71,7 +71,7 @@ Add Ailloy to your project without CLI dependencies:
 
 ```toml
 [dependencies]
-ailloy = { version = "2.0", default-features = false }
+ailloy = { version = "3.0", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 anyhow = "1"
 ```
@@ -315,27 +315,89 @@ ailloy "A sunset over the ocean" -o sunset.png
 ailloy chat "List three Swedish cities as JSON" --json
 ```
 
-## Evaluate (LLM-as-judge)
+## Evaluate (typed questions)
 
-`ailloy eval` turns an AI model into a judge with script-friendly exit codes — built for integration tests of AI-powered tools. Traditional assertions cannot check non-deterministic output; an LLM judge can:
+`ailloy eval` asks typed questions about any input and turns the answers into script-friendly exit codes, built for integration tests of AI-powered tools. Traditional assertions cannot check non-deterministic output; a judge can. Three question types: yes/no, choice and score. Every answer carries probabilities and a confidence.
 
 ```bash
-# Judge any output against plain-language criteria (exit 0 pass, 1 fail)
+# Yes/no: exit 0 when p(yes) >= threshold (default 0.5)
 my-tool ask "Summarize the incident report" | ailloy eval \
-  --criteria "mentions the outage start time, the root cause, and a follow-up action"
+  --yes-no "Does it mention the outage start time and the root cause?"
+ailloy eval "$out" --yes-no "Is the tone polite?" --threshold 0.8
 
-# In a test script or CI job
-if ! echo "$output" | ailloy eval -c "written in professional English"; then
-  echo "quality gate failed"; exit 1
-fi
+# Choice: exit 1 unless the answer is one of --expect
+ailloy eval -f ticket.txt --choice "Which team should handle this?" \
+  --option billing="payments, refunds" --option technical="bugs, outages" \
+  --option other --expect billing
 
-# Machine-readable verdict, extra context, score threshold
-ailloy eval "$output" --criteria-file criteria.txt \
-  --context "input is a summary of incident INC-4711" \
-  --threshold 0.8 --json
+# Score: levels run lowest first; exit 1 when outside --min/--max
+ailloy eval "$reply" --score "How frustrated is the customer?" \
+  --level Calm --level Frustrated --level "Very angry" --max 1.0
+
+# Several questions over one input, JSON out
+ailloy eval -f ticket.txt --questions checks.yaml --json
 ```
 
-Options: `--criteria/-c` or `--criteria-file`, input as an argument, `--file`, or stdin, `--context` for background, `--node` to pick the judge, `--threshold` to gate on a 0.0–1.0 score, `--json` for structured output. Exit codes: `0` pass, `1` fail, `2` usage error, `3` provider error. See `examples/eval.sh` for the full pattern.
+A questions file (`.json` is read as JSON, anything else as YAML):
+
+```yaml
+questions:
+  mentions_order:
+    yes_no: "Does the output mention the order id?"
+    yes_means: "The order id appears verbatim"   # optional
+    threshold: 0.8
+  team:
+    choice: "Which team should handle this?"
+    options: { billing: "payments, refunds", technical: "bugs, outages", other: null }
+    expect: [billing]
+  frustration:
+    score: "How frustrated is the customer?"
+    levels: [Calm, Frustrated, Very angry]
+    max: 1.0
+    min_confidence: 0.6
+```
+
+Options: input as an argument, `--file`, or stdin; `--context` for background; `--node` to pick the judge (otherwise `defaults.eval`, then the default chat node); `--min-confidence` to flag shaky answers; `--json` for structured output. Exit codes: `0` pass, `1` a gate failed, `2` usage or config error, `3` provider error, `4` gates passed but an answer is below the confidence floor. See `examples/eval.sh` for the full pattern.
+
+**Threshold guidance.** Answers vary slightly between runs. Jev is mostly identical run to run (TypeSafe's cookbook measured a std dev of 0 to about 0.008); chat models varied by 0.01 to 0.12 in our measurement. Keep gates away from typical values. Batching is free on TypeSafe nodes; on chat nodes each question is its own call, so large documents with many questions belong on a TypeSafe node.
+
+### TypeSafe (recommended judge)
+
+The `typesafe` provider (TypeSafe Jev) is eval-only and gives calibrated probabilities, with all questions in one request:
+
+```bash
+export TYPESAFE_API_KEY=...
+ailloy ai config        # discovers the key and proposes typesafe/jev-latest
+```
+
+or in `config.yaml`:
+
+```yaml
+nodes:
+  typesafe/jev-latest:
+    provider: typesafe
+    model: jev-latest
+    auth: { env: TYPESAFE_API_KEY }
+    capabilities: [eval]
+defaults:
+  eval: typesafe/jev-latest
+```
+
+From Rust:
+
+```rust
+use ailloy::{Client, Question, Questions};
+
+let mut questions = Questions::new();
+questions.insert("urgent".into(), Question::yes_no("Does the customer need a response today?"));
+let client = Client::for_capability("eval")?;
+let response = client.eval(ticket_text, &questions).await?;
+for (id, answer) in &response.answers {
+    println!("{id}: confidence {:.2}", answer.confidence());
+}
+```
+
+See `examples/eval.rs` for all three question types.
 
 ## Providers
 
@@ -349,6 +411,7 @@ Options: `--criteria/-c` or `--criteria-file`, input as an argument, `--file`, o
 | Ollama | `ollama` | yes | yes | — | — | None |
 | LM Studio | `openai` | yes | yes | — | — | None |
 | Local Agent | `local-agent` | yes | yes | — | — | None |
+| TypeSafe | `typesafe` | no (eval only) | no | no | no | API key (`TYPESAFE_API_KEY`) |
 
 **LM Studio** uses the OpenAI-compatible API (`http://localhost:1234` by default). **Local Agent** delegates to CLI tools installed on your system: `claude`, `codex`, or `copilot`.
 
@@ -439,7 +502,7 @@ dashboard's Defaults editor — see below).
 | `ailloy image <prompt>` | Generate an image |
 | `ailloy video <prompt>` | Generate a video (sora-2, Azure OpenAI / Microsoft Foundry) |
 | `ailloy embed <text>` | Generate embeddings |
-| `ailloy eval <input> -c <criteria>` | LLM-as-judge evaluation (exit 0 pass, 1 fail) |
+| `ailloy eval <input> --yes-no <question>` | Typed evaluation: yes/no, choice, score (exit 0 pass, 1 fail, 4 unsure) |
 | `ailloy ai` | Show AI status (includes model retirement warnings) |
 | `ailloy ai config` | Full-screen node configuration dashboard (TUI) |
 | `ailloy ai config list-nodes` | List configured AI nodes |
@@ -489,19 +552,19 @@ Ailloy uses feature flags to keep the library lean:
 Library users should disable default features. To get the interactive config dashboard without the full CLI:
 
 ```toml
-ailloy = { version = "2.0", default-features = false, features = ["config-tui"] }
+ailloy = { version = "3.0", default-features = false, features = ["config-tui"] }
 ```
 
 For a pure library with no TUI deps:
 
 ```toml
-ailloy = { version = "2.0", default-features = false }
+ailloy = { version = "3.0", default-features = false }
 ```
 
 Add `keychain` to either of the above to read `auth: keychain` nodes without the CLI:
 
 ```toml
-ailloy = { version = "2.0", default-features = false, features = ["keychain"] }
+ailloy = { version = "3.0", default-features = false, features = ["keychain"] }
 ```
 
 ## Development

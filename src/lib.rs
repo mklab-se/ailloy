@@ -5,7 +5,7 @@
 //! let each user configure the AI path they already have.
 //!
 //! Supported options include OpenAI, Anthropic, Azure OpenAI, Microsoft Foundry,
-//! Google Vertex AI, Ollama, and local CLI agents (Claude, Codex, Copilot).
+//! Google Vertex AI, Ollama, TypeSafe (eval), and local CLI agents (Claude, Codex, Copilot).
 //!
 //! # Quick start
 //!

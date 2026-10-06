@@ -20,7 +20,7 @@ command details without bloating the skill file itself.
 
 const SKILL_MARKDOWN: &str = r#"---
 name: ailloy
-description: Use the user's own configured AI providers (OpenAI, Anthropic, Azure, Foundry, Ollama, local agents) from the CLI — chat, image generation, video generation, embeddings, and LLM-as-judge evaluation with script-friendly exit codes. Use when the user wants THEIR models/deployments to do the work, needs a capability you lack (e.g. video), or needs pass/fail output checks in scripts and tests.
+description: Use the user's own configured AI providers (OpenAI, Anthropic, Azure, Foundry, Ollama, TypeSafe, local agents) from the CLI: chat, image generation, video generation, embeddings, and typed evaluation (yes/no, choice, score; LLM or TypeSafe judge) with script-friendly exit codes. Use when the user wants THEIR models/deployments to do the work, needs a capability you lack (e.g. video), or needs pass/fail output checks in scripts and tests.
 ---
 
 # ailloy — Vendor-Flexible AI CLI
@@ -37,7 +37,7 @@ Reach for ailloy when:
   yourself — or they want it produced by *their* configured model/deployment
   (e.g. their Azure/Foundry gpt-image or sora deployment).
 - Output must be **scored or gate-checked in a script, test, or CI** —
-  `ailloy eval` gives deterministic pass/fail exit codes and JSON verdicts.
+  `ailloy eval` gives deterministic pass/fail exit codes and JSON answers.
 - **Embedding vectors** are needed.
 - A prompt should run against a **specific provider or model the user
   configured** (a local Ollama model, their Azure deployment, a local agent)
@@ -88,15 +88,16 @@ Generation:
 
 Judge / test:
 
-- `cmd | ailloy eval -c "criteria"` — LLM-as-judge; exit 0 pass, 1 fail (`--json` for verdict)
+- `cmd | ailloy eval --yes-no "question"`: judge; exit 0 pass, 1 fail, 4 unsure (`--threshold`, `--min-confidence`, `--json`)
+- `ailloy eval -f in.txt --choice "q" --option a --option b --expect a` / `--score "q" --level lo --level hi --max 1` / `--questions checks.yaml`
 - `ailloy ai test --all` — ping every configured node; exit 1 if any fails
 
 Configuration:
 
-- `ailloy ai status` — show configured defaults per capability (chat, image, video, embedding)
+- `ailloy ai status`: show configured defaults per capability (chat, image, video, embedding, eval)
 - `ailloy ai config` — full-screen node configuration dashboard (TTY)
 - `ailloy ai config list-nodes` / `show-node ID` — inspect nodes non-interactively
-- `ailloy ai config set-default NODE --task chat|image|video|embedding` — set defaults
+- `ailloy ai config set-default NODE --task chat|image|video|embedding|eval`: set defaults
 
 Nodes can carry per-node default parameters (e.g. `image.quality`,
 `video.seconds`, `chat.temperature`) under a `defaults:` map; explicit flags

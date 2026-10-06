@@ -20,7 +20,8 @@ Single crate with feature-flagged CLI, similar to how `clap` separates derive fe
 ```
 src/
   lib.rs              # Public library API — always compiled
-  config.rs           # Config types (AiNode, Capability, Auth, ProviderKind, Config,
+  config.rs           # Config types (AiNode, Capability (incl. Eval), Auth, ProviderKind (incl.
+                      #   TypeSafe), Config, default_eval_node,
                       #   EmbeddingMetadata), load/save, local config merge, node CRUD,
                       #   alias resolution, capability filtering, ALL_CAPABILITIES constant,
                       #   Azure AI Search vectorizer export, programmatic config API
@@ -71,6 +72,12 @@ src/
   openai_images.rs    # Shared OpenAI-family image request/response builder (private) — JSON
                       #   generations body vs multipart edits form, per-flavor (GptImage/DallE/
                       #   AzureGptImage) validation; consumed by openai.rs, azure.rs, foundry.rs
+  eval.rs             # Public eval types: Question (YesNo/Choice/Score), Answer, Calibration,
+                      #   EvalResponse, validation, TypeSafe-compatible confidence math
+  eval_chat.rs        # Chat emulation of eval (private): one strict-JSON-schema chat call per
+                      #   question, max 4 in flight, code computes winner/score/confidence
+  typesafe.rs         # TypeSafe System One client (Jev): POST /v1/systemone, YesNo maps to noul,
+                      #   120 s timeout, 429/529 retries, three error-body shapes, request id in errors
   anthropic.rs        # Anthropic client — chat, stream (SSE), prompted JSON output
   azure.rs            # Azure OpenAI client — chat, stream (SSE), image gen (openai_images),
                       #   video jobs (video_jobs), embedding; defaults to unified /openai/v1/
@@ -103,7 +110,7 @@ src/
     video.rs          # `ailloy video` — video generation (sora-2 jobs), progress spinner,
                       #   --size/--seconds/--variants, variant file naming
     embed.rs          # `ailloy embed` — embedding generation, metadata, Azure vectorizer export
-    eval.rs           # `ailloy eval` — LLM-as-judge evaluation, exit codes 0/1/2/3
+    eval.rs           # `ailloy eval`: typed eval with gates, questions file, exit codes 0/1/2/3/4
     config_cmd.rs     # Non-interactive config commands: `show/set/get/unset`
     skill.rs          # `ailloy ai skill` — skill setup guide, emit skill markdown, reference docs
     completion.rs     # `ailloy completion` — shell completions
@@ -123,8 +130,8 @@ examples/
 - `cli` — enables `config-tui`, clap, clap_complete, inquire, tracing-subscriber, semver, and tokio runtime features
 - `keychain` — OS keychain storage for API keys via the `keyring` crate (service `ailloy`, account = node ID); without it, `Auth::Keychain` nodes fail with an actionable error
 - `config-tui` — enables the ratatui config dashboard, status display, enable/disable (colored, crossterm, ratatui); consumer projects use this without pulling in clap. `inquire` is now a `cli`-only dependency (used by `ai config set-key`), not part of `config-tui`
-- Library users (pure): `ailloy = { version = "2.0", default-features = false }`
-- Library users (with TUI): `ailloy = { version = "2.0", default-features = false, features = ["config-tui"] }`
+- Library users (pure): `ailloy = { version = "3.0", default-features = false }`
+- Library users (with TUI): `ailloy = { version = "3.0", default-features = false, features = ["config-tui"] }`
 - Library users needing keychain auth: add `"keychain"` to `features`
 - CLI users: `cargo install ailloy` (uses default features)
 
@@ -132,7 +139,7 @@ examples/
 
 - Feature-flagged single crate: library code always compiles, CLI code gated behind `cli` feature via `required-features` on `[[bin]]`
 - **AI Nodes**: atomic config units representing a specific model from a specific provider with connection details and capability tags; node IDs follow `{provider}/{model|deployment|binary}` pattern with optional `alias` for shorthand
-- **Provider trait** (`client.rs`): unified `async_trait` with default methods returning `Unsupported` — `name()`, `chat()`, `chat_stream()`, `generate_image()`/`generate_images()`, `embed()`, `generate_video()`/`create_video_job()`/`get_video_job()`/`download_video()`/`delete_video_job()`
+- **Provider trait** (`client.rs`): unified `async_trait` with default methods returning `Unsupported`: `name()`, `chat()`, `chat_stream()`, `generate_image()`/`generate_images()`, `embed()`, `evaluate()` (default = chat emulation), `generate_video()`/`create_video_job()`/`get_video_job()`/`download_video()`/`delete_video_job()`
 - **Client** wraps `Box<dyn Provider>` — constructed via `from_config()`, `with_node()`, `for_capability()`, `from_node()`, `builder()`, or direct constructors (`Client::openai()`, `Client::anthropic()`, etc.)
 - **Streaming**: SSE parsing for OpenAI/Anthropic/Azure/Vertex via `futures_util::stream::unfold`, NDJSON for Ollama, line-buffered for local agents
 - **Config**: `nodes` map of `AiNode` structs; `defaults` map routes capability names (chat, image, video, embedding) to node IDs; `Auth` enum supports `env`, `api_key`, `keychain`, `azure_cli`, `gcloud_cli`; all config maps use `BTreeMap` for deterministic serialization
@@ -141,6 +148,7 @@ examples/
 - **Structured output**: `ChatOptions.response_format` (`ResponseFormat::JsonObject` / `JsonSchema`, builder `.json()` / `.json_schema(name, schema)`); native on OpenAI-family/Ollama (`response_format`/`format`) and Vertex (`response_mime_type`/`response_schema`), prompted JSON on Anthropic
 - **Multimodal messages**: `Message.content` is `MessageContent`, `#[serde(untagged)]` over `Text(String)` / `Parts(Vec<ContentPart>)` — a plain-text message still serializes as a bare string, byte-identical to pre-2.0 histories; only attachment-bearing messages serialize to the tagged-array shape. `Message::user_with_attachments(text, &[PathBuf])` infers media type from extension (images/PDF/text); `.text()`/`.as_text()`/`.has_attachments()` read content without matching. Per-provider mapping: OpenAI-family → content-part arrays, Anthropic → image/document blocks, Vertex → `inline_data` parts, Ollama → `images` array (text files inlined into the prompt), local agents → `Unsupported`
 - **Image generation**: `ImageOptions` carries the full gpt-image parameter surface (`output_format`, `compression`, `n`, `background`, `moderation`, `input_fidelity`, `reference_images`, `mask`) validated client-side with actionable errors; non-empty `reference_images` switches the request from JSON `images/generations` to multipart `images/edits` (shared builder in `openai_images.rs`, used by `openai.rs`/`azure.rs`/`foundry.rs`). `Provider::generate_images` returns `Vec<ImageResponse>`; `generate_image`/`generate_image_with` are default-method wrappers around it (the latter `#[deprecated]`)
+- **Eval capability**: `Capability::Eval` (config key `eval`) with typed `Question`s (YesNo/Choice/Score) answered with probabilities and a confidence. `Provider::evaluate` defaults to chat emulation (one call per question, because batching changes chat answers, measured 2026-10-06); the `typesafe` provider batches everything in one request. Routing: `defaults.eval`, then the default chat node. `Capability`, `ProviderKind`, `Task`, `Question` and `Answer` are `#[non_exhaustive]`
 - **Video generation**: `Capability::Video`/`Task::VideoGeneration` (config key `video`), implemented only for Azure OpenAI and Microsoft Foundry via the shared OpenAI-style Videos API in `video_jobs.rs` (`POST/GET/DELETE {base}/openai/v1/videos[/{id}][/content]`; the legacy `.../video/generations/jobs` surface is a 404 on current Foundry resources). Follows the same v1-vs-dated endpoint rule as chat/images: no `api_version` on the node → v1 surface with **no** `?api-version`; explicit `api_version` → append `?api-version={v}`. Create body is `{model, prompt, size:"WxH" (default 720x1280), seconds:"<string>" (default "4")}` — `seconds` is a wire **string**; sizes/durations are model-dependent (commonly 4/8/12s). The Videos API has no multi-variant field, so `--variants`/`opts.variants > 1` issues N create POSTs and returns one `VideoJob` whose `id` is the per-video ids joined with `+`; `get`/`delete` split on `+` and fan out, aggregating status (all completed → Succeeded; any failed → Failed with that video's error; else Running/Queued). `Provider::generate_video` (default method) creates a job, polls `get_video_job` (2s→10s backoff, 15-min timeout), and downloads every generation via `download_video`; video/content artifacts expire ~24h after completion; other providers return `Unsupported`
 - **Node-level default parameters**: `AiNode.node_defaults` (`defaults:` map under a node in YAML, `BTreeMap<String, String>`) holds dotted keys (`image.quality`, `video.seconds`, `chat.temperature`, `embedding.dimensions`, ...) defined in `params.rs`. Resolution order applied in the `Client` construction path (so library consumers get it for free): explicit call options > node defaults > provider defaults; explicit `*Options` structs passed to `*_with` calls are never mutated by this — merging happens where the client already knows its node
 - **Parameter registry** (`params.rs`): static `PARAMS: &[ParamDef]` table is the single source of truth for recognized `node_defaults` keys — key, capability, value shape (`ParamKind::Enum`/`UInt`/`Float`/`Size`), provider applicability, informational default. `params_for(provider, caps)` filters what's editable for a given node; `validate_value()`/`lookup()` back both request-time resolution and the TUI's Defaults editor
@@ -164,7 +172,7 @@ examples/
 - Error handling: `anyhow` for CLI commands, `thiserror` for `ClientError` in library code. **All error messages must be actionable** — tell the user what went wrong, what resource/config is involved, and what to do next (e.g. "run 'az login'", "run 'ailloy config'"). Never show raw API errors like "Resource not found" without context.
 - Config: `~/.config/ailloy/config.yaml` (via `dirs::config_dir()`)
 - Update checker: background task, cached at `~/.cache/ailloy/`, skip with `AILLOY_NO_UPDATE_CHECK=1`
-- Environment variable support: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` as fallback for providers
+- Environment variable support: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` as fallback for providers; `TYPESAFE_API_KEY` for the TypeSafe eval provider
 
 ## Releasing
 

@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "ailloy",
     version,
-    about = "Vendor-flexible AI — chat, images, video, and embeddings from your terminal",
+    about = "Vendor-flexible AI: chat, images, video, embeddings, and evaluation from your terminal",
     after_help = "\
 Examples:
   # Quick chat with the default model
