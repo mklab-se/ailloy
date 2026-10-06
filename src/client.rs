@@ -1338,6 +1338,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chat_emulation_stops_launching_calls_after_a_failure() {
+        let judge = std::sync::Arc::new(MockJudge::new(Some("question 0?")));
+        struct Shared(std::sync::Arc<MockJudge>);
+        #[async_trait]
+        impl Provider for Shared {
+            fn name(&self) -> &str {
+                "shared"
+            }
+            async fn chat(
+                &self,
+                messages: &[Message],
+                options: Option<&ChatOptions>,
+            ) -> Result<ChatResponse> {
+                self.0.chat(messages, options).await
+            }
+        }
+        let client = Client::from_provider(Box::new(Shared(judge.clone())));
+        let qs = mixed_questions(12);
+        let total = qs.len();
+        let err = format!("{:#}", client.eval("s", &qs).await.unwrap_err());
+        assert!(err.contains("'yn0'") && err.contains("boom"), "{err}");
+        let calls = judge.prompts.lock().unwrap().len();
+        assert!(
+            calls <= crate::eval_chat::MAX_IN_FLIGHT + 1 && calls < total,
+            "{calls} calls for {total} questions"
+        );
+    }
+
+    #[tokio::test]
     async fn eval_one_returns_the_single_answer() {
         let client = Client::from_provider(Box::new(MockJudge::new(None)));
         let answer = client

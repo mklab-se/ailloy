@@ -228,6 +228,7 @@ impl Answer {
 /// Where an answer's probabilities come from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Calibration {
     /// Calibrated probabilities from a judgment model (TypeSafe Jev).
     Measured,
@@ -236,7 +237,8 @@ pub enum Calibration {
 }
 
 /// The answers to one evaluation request.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct EvalResponse {
     pub answers: BTreeMap<String, Answer>,
     pub model: String,
@@ -244,6 +246,26 @@ pub struct EvalResponse {
     pub calibration: Calibration,
     /// Per-question rationale; filled by chat backends, empty for TypeSafe.
     pub rationale: BTreeMap<String, String>,
+}
+
+impl EvalResponse {
+    /// Build a response; the struct is `#[non_exhaustive]`, so downstream
+    /// crates construct it through this.
+    pub fn new(
+        answers: BTreeMap<String, Answer>,
+        model: impl Into<String>,
+        usage: Option<Usage>,
+        calibration: Calibration,
+        rationale: BTreeMap<String, String>,
+    ) -> Self {
+        Self {
+            answers,
+            model: model.into(),
+            usage,
+            calibration,
+            rationale,
+        }
+    }
 }
 
 fn is_blank(value: &Value) -> bool {
@@ -566,6 +588,29 @@ mod tests {
         let a = choice_answer(p);
         assert_eq!(a.as_choice(), Some("billing"));
         assert!(approx(a.confidence(), choice_confidence(&[0.4, 0.4, 0.2])));
+    }
+
+    #[test]
+    fn eval_response_new_and_serialize() {
+        let mut answers = BTreeMap::new();
+        answers.insert("q".to_string(), Answer::YesNo { probability: 0.5 });
+        let usage = Usage {
+            prompt_tokens: 1,
+            completion_tokens: 2,
+            total_tokens: 3,
+        };
+        let resp = EvalResponse::new(
+            answers,
+            "m",
+            Some(usage),
+            Calibration::Measured,
+            BTreeMap::new(),
+        );
+        let v = serde_json::to_value(&resp).unwrap();
+        assert_eq!(v["model"], "m");
+        assert_eq!(v["calibration"], "measured");
+        assert_eq!(v["usage"]["total_tokens"], 3);
+        assert_eq!(v["answers"]["q"]["type"], "yes_no");
     }
 
     #[test]

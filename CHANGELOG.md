@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | `ProviderKind::supported_capabilities()` no longer always contains `Chat` (TypeSafe is eval-only) | check capabilities before calling `chat` |
 | `ALL_CAPABILITIES`, `ALL_TASKS` and `ALL_CAPABILITY_KEYS` include `eval` | none, or filter it out |
 | `Provider` gains `evaluate()` with a default (chat emulation) | override it to opt a custom provider out |
+| `Calibration` and `EvalResponse` are `#[non_exhaustive]` | add `_ =>` to matches on `Calibration`; build responses with `EvalResponse::new(...)` |
+
+#### Config files
+
+- A config that contains a `typesafe` node, the `eval` capability or `defaults.eval` cannot be read by tools built on ailloy 2.x (they fail with "unknown variant"). Upgrade every tool that shares `~/.config/ailloy/config.yaml` to ailloy 3.0.
 
 #### CLI
 
@@ -27,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--threshold` now gates the yes/no probability (default 0.5) instead of the judge's self-reported score; the judge's own pass/fail verdict is gone.
 - `--json` output changed: `{model, calibration, pass, answers: {<id>: {type, ..., confidence, normalized_score (score only), pass, outcome, rationale?}}, usage}`.
 - New exit code 4: gates passed but an answer is below `--min-confidence`.
+- Question validation errors (for example an empty question text) are detected before any client is built and exit 2.
 - Client and config construction errors (unknown `--node`, nothing configured, missing API key) exit 2; duplicate or empty option keys, more than 255 options and score `--min` greater than `--max` are usage errors (exit 2).
 
 ### Added
@@ -34,10 +40,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `eval` capability: typed `YesNo`, `Choice` and `Score` questions over a state (`Client::eval`, `Client::eval_one`, blocking mirrors), with probabilities and confidence on every answer.
 - `typesafe` provider (TypeSafe Jev): calibrated probabilities, all questions in one request, `TYPESAFE_API_KEY` discovery, config dashboard support (new `Q` column in the node table).
 - Chat nodes serve `eval` too (one structured-output call per question, at most 4 at once; answers marked self-reported).
-- `ailloy eval --choice/--option/--expect`, `--score/--level/--min/--max`, `--questions <yaml|json>` (`.json` is JSON, anything else YAML), `--min-confidence`, `--yes-means/--no-means`.
+- `ailloy eval --choice/--option/--expect`, `--score/--level/--min/--max`, `--questions <yaml|json>` (YAML or JSON), `--min-confidence`, `--yes-means/--no-means`.
 - A question the judge did not answer is reported as `FAIL  no answer returned for question '<id>'` (JSON: `{"pass": false, "outcome": "fail", "error": "no answer returned"}`).
 - `defaults.eval` routing, falling back to the default chat node.
 - `examples/eval.rs`.
+- `EvalResponse` and `Usage` derive `Serialize`, and `EvalResponse::new(...)` constructs a response.
+- `ailloy eval --questions` output (text and JSON) follows the order of the questions file, not alphabetical order.
+- Chat-emulated eval stops starting new calls after the first failing question and tolerates prose around the JSON answer; TypeSafe's own `choice` is used when present, and 429/529 errors include TypeSafe's message.
 
 ## [2.2.1] - 2026-09-28
 

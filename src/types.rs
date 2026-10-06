@@ -528,7 +528,7 @@ pub struct ChatResponse {
 }
 
 /// Token usage information.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Usage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,

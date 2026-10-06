@@ -154,8 +154,20 @@ pub fn print_ai_status(app_name: &str, capabilities: &[&str]) -> Result<()> {
 
         if cap_key == "eval"
             && !config.defaults.contains_key("eval")
-            && let Ok((chat_id, _)) = config.default_chat_node()
+            && let Ok((chat_id, chat_node)) = config.default_chat_node()
         {
+            if chat_node.provider == crate::config::ProviderKind::LocalAgent {
+                println!(
+                    "  {} {}: {} {}",
+                    "⚠".yellow().bold(),
+                    label,
+                    chat_id.bold(),
+                    "(default chat node is a local agent and cannot serve eval; set \
+                     defaults.eval to a TypeSafe or API chat node)"
+                        .yellow()
+                );
+                continue;
+            }
             println!(
                 "  {} {}: {} {}",
                 "✓".green().bold(),

@@ -223,7 +223,8 @@ pub fn items_from_flags(args: &EvalArgs) -> Result<Vec<Item>, String> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct QuestionsFile {
-    questions: BTreeMap<String, FileQuestion>,
+    // An order-preserving map: batch output follows the file's order.
+    questions: serde_yaml::Mapping,
 }
 
 #[derive(Deserialize)]
@@ -243,22 +244,29 @@ struct FileQuestion {
     min_confidence: Option<f64>,
 }
 
-/// Parse a `--questions` file (YAML, or JSON when `json` is true).
+/// Parse a `--questions` file (YAML or JSON; JSON is valid YAML). Items keep
+/// the file's order.
 pub fn parse_questions_file(
     text: &str,
-    json: bool,
     global_min_confidence: Option<f64>,
 ) -> Result<Vec<Item>, String> {
-    let file: QuestionsFile = if json {
-        serde_json::from_str(text).map_err(|e| format!("invalid questions file: {e}"))?
-    } else {
-        serde_yaml::from_str(text).map_err(|e| format!("invalid questions file: {e}"))?
-    };
+    let file: QuestionsFile =
+        serde_yaml::from_str(text).map_err(|e| format!("invalid questions file: {e}"))?;
     if file.questions.is_empty() {
         return Err("the questions file has no questions under `questions:`".to_string());
     }
     let mut items = Vec::new();
-    for (id, q) in file.questions {
+    for (key, value) in file.questions {
+        let id = match key {
+            serde_yaml::Value::String(s) => s,
+            other => {
+                return Err(format!(
+                    "invalid questions file: question IDs must be strings, got {other:?}"
+                ));
+            }
+        };
+        let q: FileQuestion = serde_yaml::from_value(value)
+            .map_err(|e| format!("invalid questions file: question '{id}': {e}"))?;
         let kinds = [q.yes_no.is_some(), q.choice.is_some(), q.score.is_some()]
             .iter()
             .filter(|b| **b)
@@ -410,7 +418,7 @@ pub fn render_json(resp: &EvalResponse, items: &[Item], outcomes: &[Outcome]) ->
 fn model_label(resp: &EvalResponse) -> String {
     match resp.calibration {
         Calibration::Measured => format!("({})", resp.model),
-        Calibration::SelfReported => format!("({}, self-reported)", resp.model),
+        _ => format!("({}, self-reported)", resp.model),
     }
 }
 
@@ -520,10 +528,6 @@ fn read_input(args: &EvalArgs) -> Result<Option<String>> {
     Ok(None)
 }
 
-fn is_json_path(path: &str) -> bool {
-    path.to_ascii_lowercase().ends_with(".json")
-}
-
 pub async fn run(args: EvalArgs) -> u8 {
     let items = match &args.questions {
         Some(path) => match std::fs::read_to_string(path) {
@@ -531,7 +535,7 @@ pub async fn run(args: EvalArgs) -> u8 {
                 if let Err(e) = check_unit("--min-confidence", args.min_confidence) {
                     return usage_error(&e);
                 }
-                parse_questions_file(&text, is_json_path(path), args.min_confidence)
+                parse_questions_file(&text, args.min_confidence)
             }
             Err(e) => Err(format!("cannot read questions file {path}: {e}")),
         },
@@ -549,6 +553,13 @@ pub async fn run(args: EvalArgs) -> u8 {
         }
         Err(e) => return usage_error(&format!("{e:#}")),
     };
+    let questions: Questions = items
+        .iter()
+        .map(|i| (i.id.clone(), i.question.clone()))
+        .collect();
+    if let Err(e) = ailloy::eval::validate_questions(&questions) {
+        return usage_error(&format!("{e:#}"));
+    }
     let client = match build_client(args.node.as_deref()) {
         Ok(client) => client,
         Err(e) => return usage_error(&format!("{e:#}")),
@@ -703,7 +714,7 @@ questions:
 
     #[test]
     fn questions_file_yaml() {
-        let items = parse_questions_file(FILE, false, Some(0.3)).unwrap();
+        let items = parse_questions_file(FILE, Some(0.3)).unwrap();
         let by_id: BTreeMap<_, _> = items.iter().map(|i| (i.id.as_str(), i)).collect();
         assert!(
             matches!(by_id["mentions_order"].gate, Gate::YesNo { threshold } if threshold == 0.8)
@@ -726,24 +737,24 @@ questions:
     #[test]
     fn questions_file_json() {
         let json = r#"{"questions": {"q": {"yes_no": "ok?"}}}"#;
-        let items = parse_questions_file(json, true, None).unwrap();
+        let items = parse_questions_file(json, None).unwrap();
         assert!(matches!(items[0].gate, Gate::YesNo { threshold } if threshold == 0.5));
     }
 
     #[test]
     fn questions_file_rejects_mixed_entry() {
         let bad = "questions:\n  q:\n    yes_no: \"ok?\"\n    choice: \"pick\"\n";
-        let err = parse_questions_file(bad, false, None).unwrap_err();
+        let err = parse_questions_file(bad, None).unwrap_err();
         assert!(err.contains("'q'") && err.contains("exactly one"), "{err}");
         let none = "questions:\n  q:\n    threshold: 0.5\n";
         assert!(
-            parse_questions_file(none, false, None)
+            parse_questions_file(none, None)
                 .unwrap_err()
                 .contains("'q'")
         );
         let stray = "questions:\n  q:\n    yes_no: \"ok?\"\n    options: {a: null, b: null}\n";
         assert!(
-            parse_questions_file(stray, false, None)
+            parse_questions_file(stray, None)
                 .unwrap_err()
                 .contains("'q'")
         );
@@ -752,22 +763,17 @@ questions:
     #[test]
     fn questions_file_rejects_unknown_expect() {
         let bad = "questions:\n  t:\n    choice: \"pick\"\n    options: {a: null, b: null}\n    expect: [c]\n";
-        let err = parse_questions_file(bad, false, None).unwrap_err();
+        let err = parse_questions_file(bad, None).unwrap_err();
         assert!(err.contains("'t'") && err.contains("'c'"), "{err}");
     }
 
     #[test]
     fn questions_file_rejects_unknown_fields_and_empty() {
         assert!(
-            parse_questions_file(
-                "questions:\n  q:\n    yes_no: x\n    bogus: 1\n",
-                false,
-                None
-            )
-            .is_err()
+            parse_questions_file("questions:\n  q:\n    yes_no: x\n    bogus: 1\n", None).is_err()
         );
         assert!(
-            parse_questions_file("questions: {}\n", false, None)
+            parse_questions_file("questions: {}\n", None)
                 .unwrap_err()
                 .contains("no questions")
         );
@@ -879,13 +885,13 @@ questions:
         answers.insert("q".to_string(), Answer::YesNo { probability: 0.9 });
         let mut rationale = BTreeMap::new();
         rationale.insert("q".to_string(), "clear".to_string());
-        EvalResponse {
+        EvalResponse::new(
             answers,
-            model: "gpt-x".into(),
-            usage: None,
-            calibration: ailloy::Calibration::SelfReported,
+            "gpt-x",
+            None,
+            ailloy::Calibration::SelfReported,
             rationale,
-        }
+        )
     }
 
     #[test]
@@ -945,11 +951,7 @@ questions:
         assert!(items_from_flags(&a).unwrap_err().contains("min"));
         let bad =
             "questions:\n  s:\n    score: x\n    levels: [a, b]\n    min: 1.0\n    max: 0.5\n";
-        assert!(
-            parse_questions_file(bad, false, None)
-                .unwrap_err()
-                .contains("'s'")
-        );
+        assert!(parse_questions_file(bad, None).unwrap_err().contains("'s'"));
     }
 
     #[test]
@@ -980,20 +982,35 @@ questions:
     }
 
     #[tokio::test]
-    async fn uppercase_json_extension_is_parsed_as_json() {
-        let dir = std::env::temp_dir().join(format!("ailloy-eval-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("q.JSON");
-        std::fs::write(&path, r#"{"questions": {"q": {"yes_no": "ok?"}}}"#).unwrap();
+    async fn empty_question_text_is_a_usage_error_before_any_client() {
         let mut a = args();
-        a.questions = Some(path.to_string_lossy().into_owned());
+        a.yes_no = Some(String::new());
         a.input = Some("text".into());
-        a.node = Some("no/such-node".into());
-        // Parsing as JSON succeeds, so we get past question validation to the
-        // client build, which fails with the usage exit code either way; check
-        // parse path directly through the helper used by run().
-        assert!(is_json_path(path.to_str().unwrap()));
         assert_eq!(run(a).await, EXIT_USAGE);
-        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn questions_keep_file_order_for_yaml_and_json() {
+        let yaml = "questions:\n  zeta:\n    yes_no: a?\n  alpha:\n    yes_no: b?\n";
+        let ids: Vec<_> = parse_questions_file(yaml, None)
+            .unwrap()
+            .into_iter()
+            .map(|i| i.id)
+            .collect();
+        assert_eq!(ids, ["zeta", "alpha"]);
+        let json = r#"{"questions": {"zeta": {"yes_no": "a?"}, "alpha": {"yes_no": "b?"}}}"#;
+        let ids: Vec<_> = parse_questions_file(json, None)
+            .unwrap()
+            .into_iter()
+            .map(|i| i.id)
+            .collect();
+        assert_eq!(ids, ["zeta", "alpha"]);
+    }
+
+    #[test]
+    fn unknown_field_error_names_the_question() {
+        let bad = "questions:\n  q:\n    yes_no: a?\n    bogus: 1\n";
+        let err = parse_questions_file(bad, None).unwrap_err();
+        assert!(err.contains("'q'") && err.contains("bogus"), "{err}");
     }
 }

@@ -55,7 +55,9 @@ impl TypeSafeClient {
             api_key: api_key.into(),
             model: model.into(),
             endpoint: endpoint
+                .filter(|e| !e.trim().is_empty())
                 .unwrap_or_else(|| DEFAULT_ENDPOINT.to_string())
+                .trim()
                 .trim_end_matches('/')
                 .to_string(),
             node_id: None,
@@ -137,6 +139,8 @@ enum WireAnswer {
     Choice {
         probabilities: BTreeMap<String, f64>,
         confidence: f64,
+        #[serde(default)]
+        choice: Option<String>,
     },
     Score {
         score: f64,
@@ -163,19 +167,28 @@ pub(crate) fn parse_response(body: &str, questions: &Questions) -> Result<EvalRe
                 WireAnswer::Choice {
                     probabilities,
                     confidence,
+                    choice: wire_choice,
                 },
-            ) => match choice_answer(probabilities.clone()) {
-                Answer::Choice {
-                    choice,
-                    probabilities,
-                    ..
-                } => Answer::Choice {
-                    choice,
-                    probabilities,
-                    confidence: *confidence,
-                },
-                other => other,
-            },
+            ) => {
+                if probabilities.is_empty() {
+                    bail!("TypeSafe returned no probabilities for choice question '{id}'");
+                }
+                match choice_answer(probabilities.clone()) {
+                    Answer::Choice {
+                        choice,
+                        probabilities,
+                        ..
+                    } => Answer::Choice {
+                        choice: wire_choice
+                            .clone()
+                            .filter(|c| probabilities.contains_key(c))
+                            .unwrap_or(choice),
+                        probabilities,
+                        confidence: *confidence,
+                    },
+                    other => other,
+                }
+            }
             (
                 Question::Score { levels, .. },
                 WireAnswer::Score {
@@ -237,6 +250,18 @@ pub(crate) fn format_error(
             "TypeSafe rejected the API key for node '{node}'. Check TYPESAFE_API_KEY or \
              run 'ailloy ai config set-key {node}'."
         ),
+        (429, _) | (529, _) => {
+            let msg = match &detail {
+                Some(Value::Object(obj)) => obj.get("message").and_then(Value::as_str),
+                Some(Value::String(s)) => Some(s.as_str()),
+                _ => None,
+            };
+            let extra = msg.map(|m| format!(": {m}")).unwrap_or_default();
+            format!(
+                "TypeSafe is rate limiting or overloaded (HTTP {status}{extra}) and retries \
+                 did not help; wait a moment and try again."
+            )
+        }
         (_, Some(Value::Object(obj))) => {
             let message = obj.get("message").and_then(Value::as_str).unwrap_or("");
             if message.starts_with("Unknown model") {
@@ -268,10 +293,6 @@ pub(crate) fn format_error(
         (_, Some(Value::String(s))) => {
             format!("TypeSafe rejected the request (HTTP {status}): {s}")
         }
-        (429, _) | (529, _) => format!(
-            "TypeSafe is rate limiting or overloaded (HTTP {status}) and retries did not \
-             help; wait a moment and try again."
-        ),
         _ => format!("TypeSafe error (HTTP {status}): {}", body.trim()),
     };
     match request_id {
@@ -551,6 +572,67 @@ mod tests {
         let body = r#"{"detail":"Too many score levels. Must have at most 10 levels."}"#;
         let msg = format_error(400, None, body, None, "jev-latest");
         assert!(msg.contains("Too many score levels"), "{msg}");
+    }
+
+    #[test]
+    fn rate_limit_guidance_includes_detail_message() {
+        let body = r#"{"detail":{"error_type":"rate_limit_error","message":"Too many requests"}}"#;
+        let msg = format_error(429, None, body, None, "jev-latest");
+        assert!(
+            msg.contains("rate limiting") && msg.contains("Too many requests"),
+            "{msg}"
+        );
+        let msg = format_error(
+            529,
+            None,
+            r#"{"detail":"Overloaded now"}"#,
+            None,
+            "jev-latest",
+        );
+        assert!(
+            msg.contains("rate limiting") && msg.contains("Overloaded now"),
+            "{msg}"
+        );
+        let msg = format_error(429, None, "nope", None, "jev-latest");
+        assert!(msg.contains("HTTP 429)"), "{msg}");
+    }
+
+    #[test]
+    fn wire_choice_wins_over_argmax_on_ties() {
+        let mut qs = Questions::new();
+        qs.insert(
+            "team".into(),
+            Question::choice("Which team?")
+                .option_bare("a")
+                .option_bare("b"),
+        );
+        let body = r#"{"model":"jev-latest","answers":{"team":{"type":"choice","choice":"b","probabilities":{"a":0.5,"b":0.5},"confidence":0.1}}}"#;
+        let resp = parse_response(body, &qs).unwrap();
+        assert_eq!(resp.answers["team"].as_choice(), Some("b"));
+        // A wire choice that is not a probability key falls back to argmax.
+        let body = body.replace("\"choice\":\"b\"", "\"choice\":\"zzz\"");
+        let resp = parse_response(&body, &qs).unwrap();
+        assert_eq!(resp.answers["team"].as_choice(), Some("a"));
+    }
+
+    #[test]
+    fn empty_choice_probabilities_error_names_question() {
+        let mut qs = Questions::new();
+        qs.insert("team".into(), Question::choice("Which?").option_bare("a"));
+        let body = r#"{"model":"m","answers":{"team":{"type":"choice","probabilities":{},"confidence":0.0}}}"#;
+        let err = parse_response(body, &qs).unwrap_err().to_string();
+        assert!(
+            err.contains("no probabilities") && err.contains("'team'"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn blank_endpoint_uses_default() {
+        for e in [Some(String::new()), Some("  ".to_string()), None] {
+            let c = TypeSafeClient::new("k", DEFAULT_MODEL, e);
+            assert_eq!(c.endpoint, DEFAULT_ENDPOINT);
+        }
     }
 
     #[test]

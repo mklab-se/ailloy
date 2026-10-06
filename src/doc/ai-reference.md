@@ -142,7 +142,7 @@ or stdin.
 | `--level <TEXT>` | A score level, lowest first (repeatable, 2-10) |
 | `--min <F>` | Fail when the score is below this |
 | `--max <F>` | Fail when the score is above this |
-| `--questions <FILE>` | Read several questions from a file (`.json` is JSON, anything else YAML) |
+| `--questions <FILE>` | Read several questions from a file (YAML or JSON; output follows the file's order) |
 | `--min-confidence <F>` | Exit 4 when an answer's confidence is below this (0.0-1.0) |
 | `-f, --file <FILE>` | Read the input to evaluate from a file |
 | `--context <TEXT>` | Extra context for the judge (what produced the input, expectations) |
@@ -197,7 +197,7 @@ Text, one line per question (batches prefix each line with the question ID):
 PASS  yes-no  p=0.93  confidence 0.86  (jev-1.13.0)
 PASS  choice  billing  p=0.88  confidence 0.81  (jev-1.13.0)
         billing 0.88 · technical 0.12
-FAIL  score   1.05 of 0..2 (Frustrated)  confidence 0.92  max 1.0  (jev-1.13.0)
+FAIL  score  1.05 of 0..2 (Frustrated)  confidence 0.92  (jev-1.13.0)
 ```
 
 Chat judges show `(model, self-reported)` and print rationale lines.

@@ -100,7 +100,7 @@ pub enum AiCommands {
         /// Message to send (default: "Say hello in one sentence.")
         message: Option<String>,
 
-        /// Test every configured node (chat and embedding pings)
+        /// Test every configured node (chat, embedding and eval pings)
         #[arg(long)]
         all: bool,
     },

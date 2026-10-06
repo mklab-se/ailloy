@@ -338,7 +338,7 @@ ailloy eval "$reply" --score "How frustrated is the customer?" \
 ailloy eval -f ticket.txt --questions checks.yaml --json
 ```
 
-A questions file (`.json` is read as JSON, anything else as YAML):
+A questions file (YAML or JSON; batch output follows the file's order):
 
 ```yaml
 questions:
@@ -367,7 +367,7 @@ The `typesafe` provider (TypeSafe Jev) is eval-only and gives calibrated probabi
 
 ```bash
 export TYPESAFE_API_KEY=...
-ailloy ai config        # discovers the key and proposes typesafe/jev-latest
+ailloy ai config        # add a node, pick TypeSafe: model jev-latest and env auth TYPESAFE_API_KEY are prefilled
 ```
 
 or in `config.yaml`:

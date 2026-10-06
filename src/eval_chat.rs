@@ -178,9 +178,20 @@ pub(crate) fn parse_chat_answer(
     question: &Question,
     raw: &str,
 ) -> Result<(Answer, String)> {
-    let root: Value = serde_json::from_str(strip_fences(raw)).with_context(|| {
-        format!("question '{id}': the model did not return valid JSON (got: {raw})")
-    })?;
+    let stripped = strip_fences(raw);
+    let root: Value = match serde_json::from_str(stripped) {
+        Ok(v) => v,
+        Err(first) => {
+            // Lenient fallback: the JSON object between the first '{' and last '}'.
+            let lenient = match (stripped.find('{'), stripped.rfind('}')) {
+                (Some(a), Some(b)) if a < b => serde_json::from_str(&stripped[a..=b]).ok(),
+                _ => None,
+            };
+            lenient.ok_or(first).with_context(|| {
+                format!("question '{id}': the model did not return valid JSON (got: {raw})")
+            })?
+        }
+    };
     let rationale = root
         .get("rationale")
         .and_then(Value::as_str)
@@ -251,7 +262,9 @@ async fn ask_question<P: Provider + ?Sized>(
 }
 
 /// Answer every question with its own chat call, at most [`MAX_IN_FLIGHT`]
-/// at once. Any failing question fails the whole evaluation.
+/// at once. The first failing question fails the whole evaluation: no further
+/// calls are started once a failure is seen (calls already in flight are
+/// dropped).
 pub(crate) async fn evaluate_via_chat<P: Provider + ?Sized>(
     provider: &P,
     state: &Value,
@@ -265,13 +278,10 @@ pub(crate) async fn evaluate_via_chat<P: Provider + ?Sized>(
         .iter()
         .map(|(id, question)| ask_question(provider, state, id, question).boxed())
         .collect();
-    let results: Vec<(String, QuestionOutcome)> = futures_util::stream::iter(pending)
-        .buffer_unordered(MAX_IN_FLIGHT)
-        .collect()
-        .await;
+    let mut stream = futures_util::stream::iter(pending).buffer_unordered(MAX_IN_FLIGHT);
 
     let mut ordered: BTreeMap<String, (Answer, String, String, Option<Usage>)> = BTreeMap::new();
-    for (id, outcome) in results {
+    while let Some((id, outcome)) = stream.next().await {
         ordered.insert(id, outcome?);
     }
     let mut response = EvalResponse {
@@ -366,6 +376,22 @@ mod tests {
         let raw = "```json\n{\"probability\": 1.4, \"rationale\": \"r\"}\n```";
         let (a, _) = parse_chat_answer("q", &Question::yes_no("ok?"), raw).unwrap();
         assert_eq!(a.as_yes_no(), Some(1.0), "clamped to 1");
+    }
+
+    #[test]
+    fn parses_json_surrounded_by_prose() {
+        let raw = "Sure, here is my answer: {\"probability\": 0.3, \"rationale\": \"r\"} Hope that helps!";
+        let (a, why) = parse_chat_answer("q", &Question::yes_no("ok?"), raw).unwrap();
+        assert_eq!(a.as_yes_no(), Some(0.3));
+        assert_eq!(why, "r");
+        let err = parse_chat_answer("q", &Question::yes_no("ok?"), "no braces here")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("'q'"), "{err}");
+        let err = parse_chat_answer("q", &Question::yes_no("ok?"), "} oops {")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("'q'"), "{err}");
     }
 
     #[test]
