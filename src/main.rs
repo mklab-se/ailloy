@@ -74,17 +74,7 @@ async fn main() -> Result<()> {
     let result = match cli.command {
         Commands::Chat(args) => commands::chat::run(args, quiet).await,
         Commands::Eval(args) => {
-            let code = commands::eval::run(commands::eval::EvalArgs {
-                criteria: args.criteria,
-                criteria_file: args.criteria_file,
-                input: args.input,
-                file: args.file,
-                context: args.context,
-                node: args.node,
-                threshold: args.threshold,
-                json: args.json,
-            })
-            .await;
+            let code = commands::eval::run(args).await;
             std::process::exit(code as i32);
         }
         Commands::Image(args) => commands::image::run(args, quiet).await,
