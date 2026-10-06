@@ -46,6 +46,7 @@ pub mod terminal;
 #[cfg(feature = "config-tui")]
 pub(crate) mod tui;
 pub mod types;
+pub mod typesafe;
 pub mod vertex;
 mod video_jobs;
 

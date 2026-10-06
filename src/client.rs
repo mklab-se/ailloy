@@ -838,6 +838,11 @@ impl ClientBuilder {
         self
     }
 
+    pub fn typesafe(mut self) -> Self {
+        self.kind = Some(ProviderKind::TypeSafe);
+        self
+    }
+
     pub fn anthropic(mut self) -> Self {
         self.kind = Some(ProviderKind::Anthropic);
         self
@@ -933,6 +938,20 @@ impl ClientBuilder {
                     .context("API key required for Anthropic")?;
                 let model = self.model.unwrap_or_else(|| "claude-sonnet-5".to_string());
                 Box::new(crate::anthropic::AnthropicClient::new(api_key, model))
+            }
+            ProviderKind::TypeSafe => {
+                let api_key = self
+                    .api_key
+                    .or_else(|| std::env::var(crate::typesafe::ENV_VAR).ok())
+                    .context("API key required for TypeSafe (set TYPESAFE_API_KEY)")?;
+                let model = self
+                    .model
+                    .unwrap_or_else(|| crate::typesafe::DEFAULT_MODEL.to_string());
+                Box::new(crate::typesafe::TypeSafeClient::new(
+                    api_key,
+                    model,
+                    self.endpoint,
+                ))
             }
             ProviderKind::AzureOpenAi => {
                 let endpoint = self
@@ -1087,6 +1106,25 @@ pub fn create_provider_from_node(node_id: &str, node: &AiNode) -> Result<Box<dyn
             Ok(Box::new(crate::anthropic::AnthropicClient::new(
                 api_key, model,
             )))
+        }
+        ProviderKind::TypeSafe => {
+            let api_key = match &node.auth {
+                Some(auth) => resolve_auth_api_key(auth, node_id)?,
+                None => std::env::var(crate::typesafe::ENV_VAR).with_context(|| {
+                    format!(
+                        "No auth configured for TypeSafe node '{node_id}'. Set TYPESAFE_API_KEY \
+                         or run `ailloy ai config set-key {node_id}`."
+                    )
+                })?,
+            };
+            let model = node
+                .model
+                .clone()
+                .unwrap_or_else(|| crate::typesafe::DEFAULT_MODEL.to_string());
+            Ok(Box::new(
+                crate::typesafe::TypeSafeClient::new(api_key, model, node.endpoint.clone())
+                    .with_node_id(node_id),
+            ))
         }
         ProviderKind::AzureOpenAi => {
             let endpoint = node
@@ -2087,5 +2125,24 @@ mod tests {
         ) -> Result<EmbedResponse> {
             self.0.embed(texts, options).await
         }
+    }
+
+    #[test]
+    fn typesafe_node_builds_a_provider() {
+        let mut node = AiNode::new(ProviderKind::TypeSafe);
+        node.auth = Some(Auth::ApiKey("k".into()));
+        let provider = create_provider_from_node("typesafe/jev-latest", &node).unwrap();
+        assert_eq!(provider.name(), "typesafe");
+    }
+
+    #[test]
+    fn typesafe_node_without_key_has_actionable_error() {
+        unsafe { std::env::remove_var("TYPESAFE_API_KEY") };
+        let node = AiNode::new(ProviderKind::TypeSafe);
+        let err = match create_provider_from_node("typesafe/jev-latest", &node) {
+            Ok(_) => panic!("expected an error"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("TYPESAFE_API_KEY"), "{err}");
     }
 }

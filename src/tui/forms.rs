@@ -52,8 +52,8 @@ impl Editor {
     }
 }
 
-/// The seven configurable provider kinds, in display order.
-pub const PROVIDER_ORDER: [ProviderKind; 7] = [
+/// The eight configurable provider kinds, in display order.
+pub const PROVIDER_ORDER: [ProviderKind; 8] = [
     ProviderKind::OpenAi,
     ProviderKind::Anthropic,
     ProviderKind::AzureOpenAi,
@@ -61,6 +61,7 @@ pub const PROVIDER_ORDER: [ProviderKind; 7] = [
     ProviderKind::VertexAi,
     ProviderKind::Ollama,
     ProviderKind::LocalAgent,
+    ProviderKind::TypeSafe,
 ];
 
 /// The default Ollama endpoint offered when adding an Ollama node.
@@ -165,7 +166,7 @@ impl FormField {
 /// The auth options offered for a provider (empty = no auth field).
 fn auth_options(provider: &ProviderKind) -> Vec<String> {
     match provider {
-        ProviderKind::OpenAi | ProviderKind::Anthropic => {
+        ProviderKind::OpenAi | ProviderKind::Anthropic | ProviderKind::TypeSafe => {
             vec!["env".into(), "api_key".into(), "keychain".into()]
         }
         ProviderKind::AzureOpenAi | ProviderKind::MicrosoftFoundry => {
@@ -180,7 +181,7 @@ fn auth_options(provider: &ProviderKind) -> Vec<String> {
 fn default_auth_index(provider: &ProviderKind) -> usize {
     match provider {
         // env is the recommended default for the hosted API providers.
-        ProviderKind::OpenAi | ProviderKind::Anthropic => 0,
+        ProviderKind::OpenAi | ProviderKind::Anthropic | ProviderKind::TypeSafe => 0,
         // azure_cli (index 2) is recommended for Azure/Foundry.
         ProviderKind::AzureOpenAi | ProviderKind::MicrosoftFoundry => 2,
         _ => 0,
@@ -191,6 +192,7 @@ fn default_auth_index(provider: &ProviderKind) -> usize {
 fn env_var_for(provider: &ProviderKind) -> &'static str {
     match provider {
         ProviderKind::Anthropic => "ANTHROPIC_API_KEY",
+        ProviderKind::TypeSafe => "TYPESAFE_API_KEY",
         _ => "OPENAI_API_KEY",
     }
 }
@@ -335,6 +337,16 @@ impl NodeForm {
                 node.endpoint = (!endpoint.is_empty()).then_some(endpoint);
                 format!("openai/{model}")
             }
+            ProviderKind::TypeSafe => {
+                let model = self.require(FieldKey::Model, "model (e.g. jev-latest)")?;
+                node.model = Some(model.clone());
+                let endpoint = self.text_of(FieldKey::Endpoint);
+                node.endpoint = (!endpoint.is_empty()
+                    && endpoint.trim_end_matches('/') != crate::typesafe::DEFAULT_ENDPOINT)
+                    .then_some(endpoint);
+                format!("typesafe/{model}")
+            }
+
             ProviderKind::Anthropic => {
                 let model = self.require(FieldKey::Model, "model")?;
                 node.model = Some(model.clone());
@@ -516,6 +528,23 @@ fn build_fields_with_auth(
                 endpoint.unwrap_or_default(),
             ));
         }
+        ProviderKind::TypeSafe => {
+            fields.push(FormField::text(
+                FieldKey::Model,
+                "model",
+                if model.is_empty() {
+                    crate::typesafe::DEFAULT_MODEL.to_string()
+                } else {
+                    model.clone()
+                },
+            ));
+            fields.push(FormField::text(
+                FieldKey::Endpoint,
+                "endpoint (optional, blank = https://api.typesafe.ai)",
+                endpoint.unwrap_or_default(),
+            ));
+        }
+
         ProviderKind::Anthropic => {
             fields.push(FormField::text(FieldKey::Model, "model", model.clone()));
         }
@@ -612,7 +641,9 @@ fn build_fields_with_auth(
     let initial: Vec<Capability> = match prefill {
         Some(n) => n.capabilities.clone(),
         None => {
-            if model.is_empty() {
+            if *provider == ProviderKind::TypeSafe {
+                vec![Capability::Eval]
+            } else if model.is_empty() {
                 vec![Capability::Chat]
             } else {
                 capabilities_for_deployment(&model)

@@ -28,6 +28,8 @@ pub enum ProviderKind {
     Ollama,
     #[serde(rename = "local-agent")]
     LocalAgent,
+    #[serde(rename = "typesafe")]
+    TypeSafe,
 }
 
 impl std::str::FromStr for ProviderKind {
@@ -41,8 +43,9 @@ impl std::str::FromStr for ProviderKind {
             "vertex-ai" => Ok(Self::VertexAi),
             "ollama" => Ok(Self::Ollama),
             "local-agent" => Ok(Self::LocalAgent),
+            "typesafe" => Ok(Self::TypeSafe),
             _ => Err(format!(
-                "Unknown provider kind '{}'. Valid: openai, anthropic, azure-openai, microsoft-foundry, vertex-ai, ollama, local-agent",
+                "Unknown provider kind '{}'. Valid: openai, anthropic, azure-openai, microsoft-foundry, vertex-ai, ollama, local-agent, typesafe",
                 s
             )),
         }
@@ -59,6 +62,7 @@ impl std::fmt::Display for ProviderKind {
             Self::VertexAi => write!(f, "vertex-ai"),
             Self::Ollama => write!(f, "ollama"),
             Self::LocalAgent => write!(f, "local-agent"),
+            Self::TypeSafe => write!(f, "typesafe"),
         }
     }
 }
@@ -68,12 +72,19 @@ impl ProviderKind {
     pub fn supports_task(&self, task: &str) -> bool {
         matches!(
             (self, task),
-            (_, "chat")
-                | (
-                    Self::OpenAi | Self::AzureOpenAi | Self::VertexAi | Self::MicrosoftFoundry,
-                    "image"
-                )
-                | (Self::AzureOpenAi | Self::MicrosoftFoundry, "video")
+            (
+                Self::OpenAi
+                    | Self::Anthropic
+                    | Self::AzureOpenAi
+                    | Self::MicrosoftFoundry
+                    | Self::VertexAi
+                    | Self::Ollama
+                    | Self::LocalAgent,
+                "chat"
+            ) | (
+                Self::OpenAi | Self::AzureOpenAi | Self::VertexAi | Self::MicrosoftFoundry,
+                "image"
+            ) | (Self::AzureOpenAi | Self::MicrosoftFoundry, "video")
                 | (
                     Self::OpenAi
                         | Self::AzureOpenAi
@@ -88,7 +99,8 @@ impl ProviderKind {
                         | Self::AzureOpenAi
                         | Self::MicrosoftFoundry
                         | Self::VertexAi
-                        | Self::Ollama,
+                        | Self::Ollama
+                        | Self::TypeSafe,
                     "eval"
                 )
         )
@@ -1999,5 +2011,22 @@ mod local_config_tests {
         // assert it matches the global config exactly.
         let global = Config::load_global().unwrap();
         assert_eq!(config.consents, global.consents);
+    }
+
+    #[test]
+    fn typesafe_provider_kind() {
+        assert_eq!(
+            "typesafe".parse::<ProviderKind>().unwrap(),
+            ProviderKind::TypeSafe
+        );
+        assert_eq!(ProviderKind::TypeSafe.to_string(), "typesafe");
+        assert_eq!(
+            ProviderKind::TypeSafe.supported_capabilities(),
+            vec![Capability::Eval]
+        );
+        assert!(!ProviderKind::TypeSafe.supports_task("chat"));
+        let yaml = "provider: typesafe\nmodel: jev-latest\n";
+        let node: AiNode = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(node.provider, ProviderKind::TypeSafe);
     }
 }

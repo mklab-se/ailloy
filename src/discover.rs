@@ -64,6 +64,18 @@ pub fn discover_env_keys() -> Vec<DiscoveredNode> {
         });
     }
 
+    if std::env::var(crate::typesafe::ENV_VAR).is_ok() {
+        let mut node = AiNode::new(ProviderKind::TypeSafe);
+        node.capabilities = vec![Capability::Eval];
+        node.auth = Some(Auth::Env(crate::typesafe::ENV_VAR.to_string()));
+        node.model = Some(crate::typesafe::DEFAULT_MODEL.to_string());
+        results.push(DiscoveredNode {
+            suggested_id: format!("typesafe/{}", crate::typesafe::DEFAULT_MODEL),
+            node,
+            description: "TYPESAFE_API_KEY is set".to_string(),
+        });
+    }
+
     results
 }
 
