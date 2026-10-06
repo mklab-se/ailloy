@@ -839,6 +839,7 @@ mod tests {
 
     #[test]
     fn eval_criteria_flag_is_gone() {
-        assert!(eval_args(&["t", "-c", "x"]).is_err());
+        assert!(eval_args(&["t", "--yes-no", "q", "-c", "x"]).is_err());
+        assert!(eval_args(&["t", "--yes-no", "q", "--criteria", "x"]).is_err());
     }
 }

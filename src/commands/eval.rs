@@ -89,6 +89,23 @@ fn choice_item(
             "choice '{id}' needs at least 2 options (use {option_hint})"
         ));
     }
+    if options.len() > 255 {
+        return Err(format!(
+            "choice '{id}' has {} options, the maximum is 255",
+            options.len()
+        ));
+    }
+    if options.iter().any(|(k, _)| k.is_empty()) {
+        return Err(format!(
+            "choice '{id}' has an empty option key (use {option_hint})"
+        ));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    if let Some((dup, _)) = options.iter().find(|(k, _)| !seen.insert(k.as_str())) {
+        return Err(format!(
+            "choice '{id}' has the option '{dup}' more than once; option keys must be unique"
+        ));
+    }
     let keys: Vec<&str> = options.iter().map(|(k, _)| k.as_str()).collect();
     if let Some(bad) = expect.iter().find(|e| !keys.contains(&e.as_str())) {
         return Err(format!(
@@ -123,6 +140,13 @@ fn score_item(
     if !(2..=10).contains(&levels.len()) {
         return Err(format!(
             "score '{id}' needs 2 to 10 levels, lowest first (use {level_hint})"
+        ));
+    }
+    if let (Some(lo), Some(hi)) = (min, max)
+        && lo > hi
+    {
+        return Err(format!(
+            "score '{id}': min ({lo}) is greater than max ({hi}), so no score can pass"
         ));
     }
     Ok(Item {
@@ -350,6 +374,10 @@ pub fn render_json(resp: &EvalResponse, items: &[Item], outcomes: &[Outcome]) ->
     let mut answers = serde_json::Map::new();
     for (item, outcome) in items.iter().zip(outcomes) {
         let Some(answer) = resp.answers.get(&item.id) else {
+            answers.insert(
+                item.id.clone(),
+                json!({"pass": false, "outcome": "fail", "error": "no answer returned"}),
+            );
             continue;
         };
         let mut entry = serde_json::to_value(answer).unwrap_or(Value::Null);
@@ -432,6 +460,11 @@ pub fn render_text(
     let model = model_label(resp);
     for (item, outcome) in items.iter().zip(outcomes) {
         let Some(answer) = resp.answers.get(&item.id) else {
+            out.push_str(&format!(
+                "{}  no answer returned for question '{}'\n",
+                "FAIL".red().bold(),
+                item.id
+            ));
             continue;
         };
         let status = match outcome {
@@ -487,6 +520,10 @@ fn read_input(args: &EvalArgs) -> Result<Option<String>> {
     Ok(None)
 }
 
+fn is_json_path(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".json")
+}
+
 pub async fn run(args: EvalArgs) -> u8 {
     let items = match &args.questions {
         Some(path) => match std::fs::read_to_string(path) {
@@ -494,7 +531,7 @@ pub async fn run(args: EvalArgs) -> u8 {
                 if let Err(e) = check_unit("--min-confidence", args.min_confidence) {
                     return usage_error(&e);
                 }
-                parse_questions_file(&text, path.ends_with(".json"), args.min_confidence)
+                parse_questions_file(&text, is_json_path(path), args.min_confidence)
             }
             Err(e) => Err(format!("cannot read questions file {path}: {e}")),
         },
@@ -512,7 +549,11 @@ pub async fn run(args: EvalArgs) -> u8 {
         }
         Err(e) => return usage_error(&format!("{e:#}")),
     };
-    match evaluate(&args, &items, &input).await {
+    let client = match build_client(args.node.as_deref()) {
+        Ok(client) => client,
+        Err(e) => return usage_error(&format!("{e:#}")),
+    };
+    match evaluate(&client, &args, &items, &input).await {
         Ok(code) => code,
         Err(e) => {
             eprintln!("{} {e:#}", "error:".red().bold());
@@ -521,11 +562,15 @@ pub async fn run(args: EvalArgs) -> u8 {
     }
 }
 
-async fn evaluate(args: &EvalArgs, items: &[Item], input: &str) -> Result<u8> {
-    let client = match &args.node {
+/// Build the judge client. Failures here are config errors (exit 2).
+fn build_client(node: Option<&str>) -> Result<Client> {
+    Ok(match node {
         Some(node) => Client::with_node(node)?,
         None => Client::for_capability("eval")?,
-    };
+    })
+}
+
+async fn evaluate(client: &Client, args: &EvalArgs, items: &[Item], input: &str) -> Result<u8> {
     let questions: Questions = items
         .iter()
         .map(|i| (i.id.clone(), i.question.clone()))
@@ -866,5 +911,89 @@ questions:
         assert!(text.contains("PASS") && text.contains("p=0.90"), "{text}");
         assert!(text.contains("(gpt-x, self-reported)"), "{text}");
         assert!(text.contains("clear"), "{text}");
+    }
+
+    #[test]
+    fn duplicate_and_empty_option_keys_rejected() {
+        let mut a = args();
+        a.choice = Some("team?".into());
+        a.option = vec!["billing".into(), "billing=again".into()];
+        assert!(items_from_flags(&a).unwrap_err().contains("more than once"));
+        a.option = vec!["=desc".into(), "b".into()];
+        assert!(
+            items_from_flags(&a)
+                .unwrap_err()
+                .contains("empty option key")
+        );
+    }
+
+    #[test]
+    fn too_many_options_rejected() {
+        let mut a = args();
+        a.choice = Some("team?".into());
+        a.option = (0..256).map(|i| format!("k{i}")).collect();
+        assert!(items_from_flags(&a).unwrap_err().contains("255"));
+    }
+
+    #[test]
+    fn score_min_above_max_rejected() {
+        let mut a = args();
+        a.score = Some("mood?".into());
+        a.level = vec!["Calm".into(), "Angry".into()];
+        a.min = Some(0.8);
+        a.max = Some(0.2);
+        assert!(items_from_flags(&a).unwrap_err().contains("min"));
+        let bad =
+            "questions:\n  s:\n    score: x\n    levels: [a, b]\n    min: 1.0\n    max: 0.5\n";
+        assert!(
+            parse_questions_file(bad, false, None)
+                .unwrap_err()
+                .contains("'s'")
+        );
+    }
+
+    #[test]
+    fn missing_answer_is_reported_as_fail() {
+        colored::control::set_override(false);
+        let mut resp = response();
+        resp.answers.clear();
+        let items = vec![item(Gate::YesNo { threshold: 0.5 }, None)];
+        let text = render_text(&resp, &items, &[Outcome::Fail], false);
+        assert!(
+            text.contains("no answer returned for question 'q'"),
+            "{text}"
+        );
+        let v = render_json(&resp, &items, &[Outcome::Fail]);
+        assert_eq!(v["answers"]["q"]["pass"], false);
+        assert_eq!(v["answers"]["q"]["outcome"], "fail");
+        assert_eq!(v["answers"]["q"]["error"], "no answer returned");
+        assert_eq!(v["pass"], false);
+    }
+
+    #[tokio::test]
+    async fn unknown_node_is_a_usage_error() {
+        let mut a = args();
+        a.yes_no = Some("ok?".into());
+        a.input = Some("text".into());
+        a.node = Some("no/such-node".into());
+        assert_eq!(run(a).await, EXIT_USAGE);
+    }
+
+    #[tokio::test]
+    async fn uppercase_json_extension_is_parsed_as_json() {
+        let dir = std::env::temp_dir().join(format!("ailloy-eval-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("q.JSON");
+        std::fs::write(&path, r#"{"questions": {"q": {"yes_no": "ok?"}}}"#).unwrap();
+        let mut a = args();
+        a.questions = Some(path.to_string_lossy().into_owned());
+        a.input = Some("text".into());
+        a.node = Some("no/such-node".into());
+        // Parsing as JSON succeeds, so we get past question validation to the
+        // client build, which fails with the usage exit code either way; check
+        // parse path directly through the helper used by run().
+        assert!(is_json_path(path.to_str().unwrap()));
+        assert_eq!(run(a).await, EXIT_USAGE);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
