@@ -614,21 +614,38 @@ fn pane_block(title: &str, focused: bool) -> Block<'static> {
     }
 }
 
+/// Header labels of the node table: ID, Provider, then one single-letter
+/// label per entry of [`CAPABILITY_COLUMNS`] (C, I, E, V, Q for Eval; "E" is
+/// already Embedding).
+const NODE_TABLE_HEADERS: &[&str] = &["ID", "Provider", "C", "I", "E", "V", "Q"];
+
+/// Column widths of the node table, one per header.
+fn node_table_widths() -> Vec<Constraint> {
+    let mut widths = vec![Constraint::Min(10), Constraint::Length(16)];
+    for i in 0..CAPABILITY_COLUMNS.len() {
+        // The last capability column is widened by 1 so its cell (and its
+        // header above it) never sit flush against the table's right
+        // border: otherwise terminals clip the ambiguous-width star glyph to
+        // a single cell there while the other columns' trailing spacing cell
+        // lets it render full-size. The extra cell stays blank; header
+        // positions stay aligned above their data cells.
+        let w = if i + 1 == CAPABILITY_COLUMNS.len() {
+            2
+        } else {
+            1
+        };
+        widths.push(Constraint::Length(w));
+    }
+    widths
+}
+
 /// The left pane: a table of nodes with per-capability cells.
 fn draw_node_table(frame: &mut Frame, app: &App, area: Rect) {
     let focused = app.focus == Focus::NodeList;
     let block = pane_block("Nodes", focused);
 
     let node_ids = app.node_ids();
-    let header = Row::new(vec![
-        Cell::from("ID"),
-        Cell::from("Provider"),
-        Cell::from("C"),
-        Cell::from("I"),
-        Cell::from("E"),
-        Cell::from("V"),
-    ])
-    .style(
+    let header = Row::new(NODE_TABLE_HEADERS.iter().map(|h| Cell::from(*h))).style(
         Style::default()
             .fg(Color::Gray)
             .add_modifier(Modifier::BOLD),
@@ -660,20 +677,7 @@ fn draw_node_table(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let widths = [
-        Constraint::Min(10),
-        Constraint::Length(16),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        // The last capability column is widened by 1 so its cell (and the
-        // header "V" above it) never sit flush against the table's right
-        // border — otherwise terminals clip the ambiguous-width ★ glyph to a
-        // single cell there while the other columns' trailing spacing cell
-        // lets it render full-size. The extra cell stays blank; C/I/E/V
-        // header positions stay aligned above their data cells.
-        Constraint::Length(2),
-    ];
+    let widths = node_table_widths();
 
     if node_ids.is_empty() {
         let empty = Paragraph::new("No nodes configured. Press 'a' to add one.")
@@ -854,6 +858,13 @@ fn draw_footer(frame: &mut Frame, area: Rect) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn node_table_header_and_widths_cover_every_capability_column() {
+        assert_eq!(NODE_TABLE_HEADERS.len(), 2 + CAPABILITY_COLUMNS.len());
+        assert_eq!(node_table_widths().len(), NODE_TABLE_HEADERS.len());
+        assert_eq!(NODE_TABLE_HEADERS.last(), Some(&"Q"));
+    }
+
     use super::*;
     use crate::config::{AiNode, Config, ProviderKind};
     use ratatui::Terminal;
@@ -1083,18 +1094,18 @@ mod tests {
 
     #[test]
     fn draw_node_table_leaves_space_before_border_after_last_column_star() {
-        // Regression test: the last capability column (V) sat directly against
+        // Regression test: the last capability column (Q, Eval) sat directly against
         // the table's right border, so terminals clipped the ambiguous-width
-        // ★ glyph to one cell there while C/I/E stars bled into their trailing
+        // ★ glyph to one cell there while the other stars bled into their trailing
         // spacing cell and rendered full-size. There must be a blank cell
         // between a default-marker star in the last column and the border.
         let mut config = Config::default();
-        let mut sora = node_with_caps(ProviderKind::OpenAi, vec![Capability::Video]);
+        let mut sora = node_with_caps(ProviderKind::OpenAi, vec![Capability::Eval]);
         sora.model = Some("sora-2".to_string());
         config.nodes.insert("openai/sora-2".to_string(), sora);
         config
             .defaults
-            .insert("video".to_string(), "openai/sora-2".to_string());
+            .insert("eval".to_string(), "openai/sora-2".to_string());
 
         let app = App::new(config, "ailloy");
         let backend = TestBackend::new(120, 30);
@@ -1104,7 +1115,7 @@ mod tests {
         let text = buffer_to_string(&terminal);
         assert!(
             text.contains("★ ┃"),
-            "the V column's default star must have a blank cell before the border, not be clipped against it: {text}"
+            "the Q column's default star must have a blank cell before the border, not be clipped against it: {text}"
         );
     }
 
