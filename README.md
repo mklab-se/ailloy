@@ -17,9 +17,7 @@
 <p align="center">
   <strong>ailloy 3</strong> is here: typed evaluation (yes/no, choice and score questions with
   probabilities) and the TypeSafe provider.<br>
-  <a href="CHANGELOG.md"><strong>What's new</strong></a> &middot;
-  <a href="MIGRATION.md">Upgrading from v2</a> &middot;
-  <a href="examples/eval.rs">Eval example</a>
+  <a href="CHANGELOG.md"><strong>What's new</strong></a>
 </p>
 
 ---
