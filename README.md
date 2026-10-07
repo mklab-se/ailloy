@@ -14,6 +14,14 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
+<p align="center">
+  <strong>ailloy 3</strong> is here: typed evaluation (yes/no, choice and score questions with
+  probabilities) and the TypeSafe provider.<br>
+  <a href="CHANGELOG.md"><strong>What's new</strong></a> &middot;
+  <a href="MIGRATION.md">Upgrading from v2</a> &middot;
+  <a href="examples/eval.rs">Eval example</a>
+</p>
+
 ---
 
 If you build Rust tools for other people, Ailloy is for you.
