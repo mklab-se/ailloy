@@ -1,3 +1,84 @@
+# Migrating from ailloy 2.x to 3.0
+
+This section is for maintainers of Rust tools that depend on `ailloy`. 3.0 adds
+the `eval` capability and the `typesafe` provider; the breaks are all in enums
+and structs that gained variants or fields. Most dependents only need a
+version bump plus a few `_ =>` arms.
+
+## 1. Bump the requirement
+
+```toml
+ailloy = { version = "3.0", default-features = false, features = ["config-tui"] }
+```
+
+**Upgrade every tool that shares `~/.config/ailloy/config.yaml` together.** A
+config that contains a `typesafe` node, the `eval` capability or a
+`defaults.eval` entry cannot be read by tools built on ailloy 2.x (they fail
+with "unknown variant").
+
+## 2. Exhaustive matches on `Capability`, `ProviderKind` and `Task`
+
+New variants: `Capability::Eval`, `ProviderKind::TypeSafe` and
+`Task::Evaluation`. All three enums are now `#[non_exhaustive]`, so a `match`
+outside the crate needs a wildcard arm, and future variants will no longer be
+breaking:
+
+```rust
+// Before (2.x)
+match cap {
+    Capability::Chat => ..,
+    Capability::Image => ..,
+    Capability::Video => ..,
+    Capability::Embedding => ..,
+}
+
+// After (3.0)
+match cap {
+    Capability::Chat => ..,
+    Capability::Image => ..,
+    Capability::Video => ..,
+    Capability::Embedding => ..,
+    _ => .., // Eval, and anything added later
+}
+```
+
+## 3. Not every provider can chat any more
+
+`ProviderKind::supported_capabilities()` no longer always contains `Chat`:
+TypeSafe is eval-only. Code that assumes "any configured node can chat"
+(for example, picking the first node in the config) should check
+`supported_capabilities()` or route through `Client::for_capability("chat")`.
+
+## 4. Capability lists include `eval`
+
+`ALL_CAPABILITIES`, `ALL_TASKS` and `ALL_CAPABILITY_KEYS` now contain `eval`.
+If you iterate them to build UI (pickers, status tables, help text), either
+show `eval` or filter it out.
+
+## 5. Eval types and custom providers
+
+- `Calibration` and `EvalResponse` are `#[non_exhaustive]`: add `_ =>` to
+  matches on `Calibration`, and build responses with `EvalResponse::new(...)`
+  instead of a struct literal.
+- The `Provider` trait gains `evaluate()`, with a default implementation that
+  emulates eval over chat. Custom providers compile unchanged; override it only
+  to opt out or to supply native eval.
+
+## 6. `ailloy eval` CLI (scripts and tests)
+
+If a tool's tests or scripts shell out to `ailloy eval`:
+
+- `-c/--criteria` and `--criteria-file` are gone: use `--yes-no "<question>"`
+  or `--questions <file>`.
+- `--threshold` gates the yes/no probability (default 0.5), not a
+  self-reported score.
+- `--json` output has a new shape (`answers: {<id>: {...}}`); see
+  `ailloy eval --help`.
+- New exit code 4: gates passed but an answer is below `--min-confidence`.
+  Usage and configuration errors exit 2.
+
+---
+
 # Migrating from ailloy 1.x to 2.0
 
 This guide is for maintainers of Rust tools that depend on `ailloy`. It covers
