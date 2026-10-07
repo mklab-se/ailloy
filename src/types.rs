@@ -1246,10 +1246,10 @@ mod tests {
     #[test]
     fn message_content_yaml_roundtrip_text() {
         let msg = Message::assistant("yaml me");
-        let yaml = serde_yaml::to_string(&msg).unwrap();
+        let yaml = serde_norway::to_string(&msg).unwrap();
         // content renders as a bare scalar, not a mapping/sequence.
         assert!(yaml.contains("content: yaml me"), "yaml was: {yaml}");
-        let back: Message = serde_yaml::from_str(&yaml).unwrap();
+        let back: Message = serde_norway::from_str(&yaml).unwrap();
         assert_eq!(back.content.text(), "yaml me");
     }
 
@@ -1278,8 +1278,8 @@ mod tests {
         assert_eq!(back, content);
 
         // YAML round-trip too (history/config can be YAML).
-        let yaml = serde_yaml::to_string(&content).unwrap();
-        let back_yaml: MessageContent = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = serde_norway::to_string(&content).unwrap();
+        let back_yaml: MessageContent = serde_norway::from_str(&yaml).unwrap();
         assert_eq!(back_yaml, content);
     }
 

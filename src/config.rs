@@ -675,7 +675,7 @@ impl Config {
         }
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("Failed to read config from {}", path.display()))?;
-        let config: Config = serde_yaml::from_str(&content)
+        let config: Config = serde_norway::from_str(&content)
             .with_context(|| format!("Failed to parse config from {}", path.display()))?;
         Ok(config)
     }
@@ -689,7 +689,7 @@ impl Config {
                 let content = std::fs::read_to_string(&path).with_context(|| {
                     format!("Failed to read local config from {}", path.display())
                 })?;
-                let config: Config = serde_yaml::from_str(&content).with_context(|| {
+                let config: Config = serde_norway::from_str(&content).with_context(|| {
                     format!("Failed to parse local config from {}", path.display())
                 })?;
                 return Ok(Some((config, path)));
@@ -733,7 +733,7 @@ impl Config {
         let dir = Self::config_dir()?;
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("Failed to create config directory {}", dir.display()))?;
-        let content = serde_yaml::to_string(self)?;
+        let content = serde_norway::to_string(self)?;
         std::fs::write(&path, content)
             .with_context(|| format!("Failed to write config to {}", path.display()))?;
         Ok(())
@@ -1035,8 +1035,8 @@ mod tests {
             consents: BTreeMap::new(),
         };
 
-        let yaml = serde_yaml::to_string(&config).unwrap();
-        let parsed: Config = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = serde_norway::to_string(&config).unwrap();
+        let parsed: Config = serde_norway::from_str(&yaml).unwrap();
 
         assert_eq!(parsed.defaults.get("chat").unwrap(), "openai/gpt-5.4-mini");
         assert!(parsed.nodes.contains_key("openai/gpt-5.4-mini"));
@@ -1222,7 +1222,7 @@ mod tests {
     #[test]
     fn test_provider_kind_serde() {
         let yaml = "provider: openai\nmodel: gpt-4o\ncapabilities: [chat]\n";
-        let parsed: AiNode = serde_yaml::from_str(yaml).unwrap();
+        let parsed: AiNode = serde_norway::from_str(yaml).unwrap();
         assert_eq!(parsed.provider, ProviderKind::OpenAi);
     }
 
@@ -1230,7 +1230,7 @@ mod tests {
     fn test_provider_kind_serde_alias() {
         // Old kebab-case format should still parse via alias
         let yaml = "provider: open-ai\nmodel: gpt-4o\ncapabilities: [chat]\n";
-        let parsed: AiNode = serde_yaml::from_str(yaml).unwrap();
+        let parsed: AiNode = serde_norway::from_str(yaml).unwrap();
         assert_eq!(parsed.provider, ProviderKind::OpenAi);
     }
 
@@ -1242,7 +1242,7 @@ mod tests {
         struct Wrapper {
             capabilities: Vec<Capability>,
         }
-        let parsed: Wrapper = serde_yaml::from_str(yaml).unwrap();
+        let parsed: Wrapper = serde_norway::from_str(yaml).unwrap();
         assert_eq!(
             parsed.capabilities,
             vec![Capability::Chat, Capability::Image]
@@ -1294,31 +1294,31 @@ mod tests {
     #[test]
     fn test_auth_serde_env() {
         let yaml = "env: OPENAI_API_KEY\n";
-        let parsed: Auth = serde_yaml::from_str(yaml).unwrap();
+        let parsed: Auth = serde_norway::from_str(yaml).unwrap();
         assert_eq!(parsed, Auth::Env("OPENAI_API_KEY".to_string()));
 
-        let serialized = serde_yaml::to_string(&parsed).unwrap();
+        let serialized = serde_norway::to_string(&parsed).unwrap();
         assert!(serialized.contains("env: OPENAI_API_KEY"));
     }
 
     #[test]
     fn test_auth_serde_api_key() {
         let yaml = "api_key: sk-test\n";
-        let parsed: Auth = serde_yaml::from_str(yaml).unwrap();
+        let parsed: Auth = serde_norway::from_str(yaml).unwrap();
         assert_eq!(parsed, Auth::ApiKey("sk-test".to_string()));
     }
 
     #[test]
     fn test_auth_serde_azure_cli() {
         let yaml = "azure_cli: true\n";
-        let parsed: Auth = serde_yaml::from_str(yaml).unwrap();
+        let parsed: Auth = serde_norway::from_str(yaml).unwrap();
         assert_eq!(parsed, Auth::AzureCli(true));
     }
 
     #[test]
     fn test_auth_serde_gcloud_cli() {
         let yaml = "gcloud_cli: true\n";
-        let parsed: Auth = serde_yaml::from_str(yaml).unwrap();
+        let parsed: Auth = serde_norway::from_str(yaml).unwrap();
         assert_eq!(parsed, Auth::GcloudCli(true));
     }
 
@@ -1360,8 +1360,8 @@ mod tests {
             ]),
         };
 
-        let yaml = serde_yaml::to_string(&config).unwrap();
-        let parsed: Config = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = serde_norway::to_string(&config).unwrap();
+        let parsed: Config = serde_norway::from_str(&yaml).unwrap();
 
         assert_eq!(parsed.consents.get("azure-cli"), Some(&true));
         assert_eq!(parsed.consents.get("gcloud-cli"), Some(&false));
@@ -1371,7 +1371,7 @@ mod tests {
     fn test_consents_backward_compat() {
         // YAML without any known fields should parse to empty config.
         let yaml = "something_old: true\n";
-        let parsed: Config = serde_yaml::from_str(yaml).unwrap();
+        let parsed: Config = serde_norway::from_str(yaml).unwrap();
         assert!(parsed.consents.is_empty());
         assert!(parsed.nodes.is_empty());
     }
@@ -1379,7 +1379,7 @@ mod tests {
     #[test]
     fn test_consents_skip_serializing_when_empty() {
         let config = Config::default();
-        let yaml = serde_yaml::to_string(&config).unwrap();
+        let yaml = serde_norway::to_string(&config).unwrap();
         assert!(!yaml.contains("consents"));
     }
 
@@ -1507,7 +1507,7 @@ defaults:
 consents:
   azure-cli: true
 "#;
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let config: Config = serde_norway::from_str(yaml).unwrap();
 
         assert_eq!(config.nodes.len(), 2);
         assert_eq!(
@@ -1911,13 +1911,69 @@ mod programmatic_api_tests {
         let mut n = node();
         n.auth = Some(Auth::Keychain(true));
         c.ensure_node("openai/x".into(), n);
-        let yaml = serde_yaml::to_string(&c).unwrap();
+        let yaml = serde_norway::to_string(&c).unwrap();
         assert!(yaml.contains("keychain: true"), "{yaml}");
-        let back: Config = serde_yaml::from_str(&yaml).unwrap();
+        let back: Config = serde_norway::from_str(&yaml).unwrap();
         assert!(matches!(
             back.nodes["openai/x"].auth,
             Some(Auth::Keychain(true))
         ));
+    }
+
+    #[test]
+    fn saved_config_yaml_is_stable() {
+        let mut c = Config::default();
+        let mut chat = node();
+        chat.alias = Some("yes".into());
+        chat.endpoint = Some("https://example.openai.azure.com/".into());
+        chat.auth = Some(Auth::Env("OPENAI_API_KEY".into()));
+        chat.node_defaults = Some(BTreeMap::from([
+            ("temperature".to_string(), "0.2".to_string()),
+            (
+                "system".to_string(),
+                "Line one\nline two: \"quoted\"".to_string(),
+            ),
+        ]));
+        c.ensure_node("openai/x".into(), chat);
+        let mut kc = AiNode::new(ProviderKind::Anthropic);
+        kc.model = Some("claude-sonnet-5-5".into());
+        kc.capabilities = vec![Capability::Chat, Capability::Embedding];
+        kc.auth = Some(Auth::Keychain(true));
+        c.ensure_node("anthropic/y".into(), kc);
+        c.set_default_for("chat", "openai/x").unwrap();
+        c.consents.insert("azure-cli".into(), true);
+        let yaml = serde_norway::to_string(&c).unwrap();
+        // Byte-for-byte what serde_yaml 0.9 wrote before the serde_norway swap:
+        // saved configs must not change shape.
+        let expected = r#"nodes:
+  anthropic/y:
+    provider: anthropic
+    capabilities:
+    - chat
+    - embedding
+    auth:
+      keychain: true
+    model: claude-sonnet-5-5
+  openai/x:
+    provider: openai
+    alias: yes
+    capabilities:
+    - chat
+    auth:
+      env: OPENAI_API_KEY
+    model: gpt-5.4-mini
+    endpoint: https://example.openai.azure.com/
+    defaults:
+      system: |-
+        Line one
+        line two: "quoted"
+      temperature: '0.2'
+defaults:
+  chat: openai/x
+consents:
+  azure-cli: true
+"#;
+        assert_eq!(yaml, expected);
     }
 }
 
@@ -2026,7 +2082,7 @@ mod local_config_tests {
         );
         assert!(!ProviderKind::TypeSafe.supports_task("chat"));
         let yaml = "provider: typesafe\nmodel: jev-latest\n";
-        let node: AiNode = serde_yaml::from_str(yaml).unwrap();
+        let node: AiNode = serde_norway::from_str(yaml).unwrap();
         assert_eq!(node.provider, ProviderKind::TypeSafe);
     }
 }

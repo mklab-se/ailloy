@@ -224,7 +224,7 @@ pub fn items_from_flags(args: &EvalArgs) -> Result<Vec<Item>, String> {
 #[serde(deny_unknown_fields)]
 struct QuestionsFile {
     // An order-preserving map: batch output follows the file's order.
-    questions: serde_yaml::Mapping,
+    questions: serde_norway::Mapping,
 }
 
 #[derive(Deserialize)]
@@ -251,21 +251,21 @@ pub fn parse_questions_file(
     global_min_confidence: Option<f64>,
 ) -> Result<Vec<Item>, String> {
     let file: QuestionsFile =
-        serde_yaml::from_str(text).map_err(|e| format!("invalid questions file: {e}"))?;
+        serde_norway::from_str(text).map_err(|e| format!("invalid questions file: {e}"))?;
     if file.questions.is_empty() {
         return Err("the questions file has no questions under `questions:`".to_string());
     }
     let mut items = Vec::new();
     for (key, value) in file.questions {
         let id = match key {
-            serde_yaml::Value::String(s) => s,
+            serde_norway::Value::String(s) => s,
             other => {
                 return Err(format!(
                     "invalid questions file: question IDs must be strings, got {other:?}"
                 ));
             }
         };
-        let q: FileQuestion = serde_yaml::from_value(value)
+        let q: FileQuestion = serde_norway::from_value(value)
             .map_err(|e| format!("invalid questions file: question '{id}': {e}"))?;
         let kinds = [q.yes_no.is_some(), q.choice.is_some(), q.score.is_some()]
             .iter()
