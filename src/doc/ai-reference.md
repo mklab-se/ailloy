@@ -29,7 +29,7 @@ Send a message to the configured AI provider.
 | `-o, --output <FILE>` | Save response to file (image extensions trigger image gen, `.mp4` triggers video gen) |
 | `-i, --interactive` | Interactive conversation mode |
 | `--raw` | Output only raw model response |
-| `--attach <FILE>` | Attach a file (image, pdf, or text) — repeatable |
+| `--attach <FILE>` | Attach a file (image, pdf, or text), repeatable |
 
 Reads from stdin when piped. Running `ailloy "message"` is shorthand for `ailloy chat "message"`.
 `--attach` accepts images (png, jpg, jpeg, gif, webp), pdf, and text files (txt, md, csv, json,
@@ -55,7 +55,7 @@ Generate an image from a text description.
 | `-i, --interactive` | AI helps describe the image |
 | `--size <WxH>` | Image size (e.g. 1024x1024) |
 | `--quality <Q>` | Image quality: `low`, `medium`, `high`, `auto` (gpt-image models; DALL·E takes `hd`/`standard`) |
-| `--style <S>` | Image style (natural, vivid) — DALL·E only, ignored by gpt-image models |
+| `--style <S>` | Image style (natural, vivid), DALL·E only, ignored by gpt-image models |
 | `--format <F>` | Output image format (png, jpeg, webp) |
 | `--compression <0-100>` | Compression level (only with `--format` jpeg or webp) |
 | `--variants <1-10>` | Number of image variants to generate |
@@ -339,10 +339,10 @@ the form. A connectivity test blocks the UI briefly while it runs.
 
 Two modes:
 
-- **Static** — `ailloy completion <bash|zsh|fish|powershell>` writes a script
+- **Static**: `ailloy completion <bash|zsh|fish|powershell>` writes a script
   covering commands, flag names, and known flag values (e.g. `image --quality`
   completes low/medium/high/auto/hd/standard).
-- **Dynamic** (recommended) — register ailloy's built-in completer so `--node`
+- **Dynamic** (recommended): register ailloy's built-in completer so `--node`
   and node-id positionals (`ai config set-default|edit-node|delete-node|show-node|set-key`)
   complete from your configured nodes, each annotated with its provider and
   model. New nodes appear immediately, no regeneration:

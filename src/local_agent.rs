@@ -20,7 +20,7 @@ use crate::types::{ChatOptions, ChatResponse, ChatStream, Message, StreamEvent};
 fn ensure_no_attachments(messages: &[Message]) -> Result<()> {
     if messages.iter().any(|m| m.content.has_attachments()) {
         return Err(ClientError::Unsupported(
-            "attachments (local agents accept text only — use an API node for attachments)"
+            "attachments (local agents accept text only; use an API node for attachments)"
                 .to_string(),
         )
         .into());

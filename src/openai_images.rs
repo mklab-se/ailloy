@@ -2,7 +2,7 @@
 //! (OpenAI, Azure OpenAI, Microsoft Foundry).
 //!
 //! This module builds request bodies/multipart forms and parses responses;
-//! it performs no HTTP itself — callers (`openai.rs`, `azure.rs`,
+//! it performs no HTTP itself: callers (`openai.rs`, `azure.rs`,
 //! `foundry.rs`) own the transport.
 //!
 //! Consumed by `openai.rs` and `azure.rs` (Tasks 1.5); `foundry.rs` wires in
@@ -250,7 +250,7 @@ struct ImagesApiData {
 ///   `num_input_image_tokens`, `num_output_tokens` (no total)
 ///
 /// Usage is informational, so an unrecognized shape must never fail the
-/// whole response — the image bytes are what the caller asked for.
+/// whole response, because the image bytes are what the caller asked for.
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct ImagesApiUsage {
@@ -494,7 +494,7 @@ mod tests {
     #[test]
     fn dalle_rejects_compression() {
         // compression can only be set together with output_format (validate()
-        // enforces jpeg/webp), so the error must name BOTH offending params —
+        // enforces jpeg/webp), so the error must name BOTH offending params:
         // compression must not be masked by output_format.
         let opts = ImageOptions::builder()
             .output_format(ImageFormat::Jpeg)

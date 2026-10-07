@@ -14,7 +14,7 @@
 
 - Edition 2024, MSRV 1.88; no new crate dependencies (everything needed is already in `Cargo.toml`).
 - CI gate after every task: `cargo fmt --all -- --check && cargo clippy -- -D warnings && cargo test`; library-only build must also pass: `cargo build --no-default-features --lib`.
-- No em-dashes (`—`) in any text you write: code comments, docs, help text, errors, commit messages. Before every commit, after `git add`, run the em-dash check `git diff --cached -U0 | grep '^+' | grep '—'`; it must print nothing (pre-existing `—` on untouched lines are out of scope).
+- No em-dashes (U+2014) in any text you write: code comments, docs, help text, errors, commit messages. Before every commit, after `git add`, run the em-dash check `git diff --cached -U0 | grep '^+' | grep -P '\x{2014}'`; it must print nothing (pre-existing em-dashes on untouched lines are out of scope).
 - All error messages must be actionable: say what went wrong, which node/question/file is involved, and what to do next.
 - Config maps use `BTreeMap` (deterministic serialization).
 - Question type names in ailloy: `YesNo`, `Choice`, `Score`. Wire value for YesNo on TypeSafe is `noul`.
@@ -675,7 +675,7 @@ Expected: all green.
 
 ```bash
 git add src/eval.rs src/lib.rs
-git diff --cached -U0 | grep '^+' | grep '—'   # must print nothing
+git diff --cached -U0 | grep '^+' | grep -P '\x{2014}'   # must print nothing
 git commit -m "feat(eval): question/answer types, validation and confidence math
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -939,7 +939,7 @@ Run: `cargo fmt --all && cargo clippy -- -D warnings && cargo test && cargo buil
 
 ```bash
 git add -A src
-git diff --cached -U0 | grep '^+' | grep '—'   # must print nothing
+git diff --cached -U0 | grep '^+' | grep -P '\x{2014}'   # must print nothing
 git commit -m "feat(eval): eval capability, evaluation task, non-exhaustive enums
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -1657,7 +1657,7 @@ Run: `cargo fmt --all && cargo clippy -- -D warnings && cargo test && cargo buil
 
 ```bash
 git add -A src
-git diff --cached -U0 | grep '^+' | grep '—'   # must print nothing
+git diff --cached -U0 | grep '^+' | grep -P '\x{2014}'   # must print nothing
 git commit -m "feat(eval): Provider::evaluate with per-question chat emulation, Client::eval
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -2439,7 +2439,7 @@ Expected: PASS.
 
 ```bash
 git add -A src
-git diff --cached -U0 | grep '^+' | grep '—'   # must print nothing
+git diff --cached -U0 | grep '^+' | grep -P '\x{2014}'   # must print nothing
 git commit -m "feat(typesafe): TypeSafe provider with native eval, retries and actionable errors
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -2604,7 +2604,7 @@ Run: `cargo run -- ai config`, press `a`, cycle the provider selector to TypeSaf
 
 ```bash
 git add -A src
-git diff --cached -U0 | grep '^+' | grep '—'   # must print nothing
+git diff --cached -U0 | grep '^+' | grep -P '\x{2014}'   # must print nothing
 git commit -m "feat(typesafe): config dashboard, connectivity test and ai test --all support
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -3635,7 +3635,7 @@ Expected: the first three print one result line each with `(gpt-5.6-luna, self-r
 
 ```bash
 git add src/cli.rs src/main.rs
-git diff --cached -U0 | grep '^+' | grep '—'   # must print nothing
+git diff --cached -U0 | grep '^+' | grep -P '\x{2014}'   # must print nothing
 git commit -m "feat(cli)!: ailloy eval takes --yes-no/--choice/--score/--questions
 
 BREAKING CHANGE: -c/--criteria and --criteria-file are removed.
@@ -3643,7 +3643,7 @@ BREAKING CHANGE: -c/--criteria and --criteria-file are removed.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01KrAcYXk575873KEAeYSvSA"
 git add src/commands/eval.rs
-git diff --cached -U0 | grep '^+' | grep '—'   # must print nothing
+git diff --cached -U0 | grep '^+' | grep -P '\x{2014}'   # must print nothing
 git commit -m "feat(cli)!: rebuild ailloy eval on the eval capability with gates and exit code 4
 
 BREAKING CHANGE: --threshold gates the yes/no probability and the JSON output shape changed.
@@ -3776,7 +3776,7 @@ Expected: success.
 
 ```bash
 git add examples Cargo.toml
-git diff --cached -U0 | grep '^+' | grep '—'   # must print nothing
+git diff --cached -U0 | grep '^+' | grep -P '\x{2014}'   # must print nothing
 git commit -m "docs(examples): eval library example and rewritten eval.sh
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -3889,7 +3889,7 @@ cargo run -q -- ai skill | grep -n "eval"
 
 ```bash
 git add -A
-git diff --cached -U0 | grep '^+' | grep '—'   # must print nothing
+git diff --cached -U0 | grep '^+' | grep -P '\x{2014}'   # must print nothing
 git commit -m "docs: eval capability and TypeSafe provider, 3.0.0 changelog and version
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

@@ -24,7 +24,7 @@ the user describe the perfect image they want to create.
 Ask about: subject, style (photorealistic, illustration, oil painting, etc.), \
 mood, lighting, colors, composition, and any specific details.
 
-Keep your questions focused and concise — one or two questions at a time.
+Keep your questions focused and concise: one or two questions at a time.
 
 When you and the user have agreed on a description, output the final prompt \
 wrapped exactly like this:
@@ -81,7 +81,7 @@ async fn run_interactive(args: ImageArgs, config: Config, quiet: bool) -> Result
     let (_, chat_node) = config.get_node(&chat_node_id).unwrap();
     let chat_provider = create_provider_from_node(&chat_node_id, chat_node)?;
 
-    // The interview conversation uses the chat node — honor its per-node
+    // The interview conversation uses the chat node, so honor its per-node
     // chat defaults (e.g. chat.temperature) for every stream below.
     let interview_options = {
         let mut opts = ChatOptions::default();
@@ -93,7 +93,7 @@ async fn run_interactive(args: ImageArgs, config: Config, quiet: bool) -> Result
 
     let version = env!("CARGO_PKG_VERSION");
     eprintln!(
-        "{} v{} — {} ({})",
+        "{} v{}: {} ({})",
         "ailloy image".bold(),
         version,
         chat_node_id.bold(),
@@ -190,12 +190,12 @@ async fn run_interactive(args: ImageArgs, config: Config, quiet: bool) -> Result
             "/help" => {
                 eprintln!("{}", "Commands:".bold());
                 eprintln!(
-                    "  {} — Generate image from last suggested prompt",
+                    "  {}: Generate image from last suggested prompt",
                     "/generate".bold()
                 );
-                eprintln!("  {} — Exit the session", "/quit".bold());
-                eprintln!("  {} — Clear conversation history", "/clear".bold());
-                eprintln!("  {} — Show this help", "/help".bold());
+                eprintln!("  {}: Exit the session", "/quit".bold());
+                eprintln!("  {}: Clear conversation history", "/clear".bold());
+                eprintln!("  {}: Show this help", "/help".bold());
                 continue;
             }
             _ if input.starts_with('/') => {

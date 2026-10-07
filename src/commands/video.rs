@@ -166,7 +166,7 @@ pub(crate) fn build_video_options(args: &VideoArgs) -> Result<VideoOptions> {
 }
 
 /// Parse a `WxH` size string (e.g. `"1280x720"`), validating only the format
-/// — not whether the API currently supports the given dimensions, since the
+/// (not whether the API currently supports the given dimensions), since the
 /// set of supported sizes may evolve independently of this CLI. Known
 /// supported dimensions as of writing: 480x480, 854x480, 480x854, 720x720,
 /// 1280x720, 720x1280, 1080x1080, 1920x1080, 1080x1920.
@@ -182,7 +182,7 @@ pub(crate) fn parse_size(s: &str) -> Result<(u32, u32)> {
     anyhow::bail!(
         "Invalid video size '{}': expected WxH (e.g. 1280x720). Known supported dimensions: \
          480x480, 854x480, 720x720, 1280x720, 1080x1080, 1920x1080 (and their portrait \
-         counterparts) — other sizes may work depending on provider support.",
+         counterparts). Other sizes may work depending on provider support.",
         s
     )
 }

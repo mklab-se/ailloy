@@ -114,7 +114,7 @@ pub enum AiCommands {
     /// Show AI status (same as running `ailloy ai` without a subcommand)
     Status,
 
-    /// AI agent skill information — helps set up Claude Code skills for ailloy
+    /// AI agent skill information: helps set up Claude Code skills for ailloy
     Skill {
         /// Output the skill markdown content (ready to save as a skill file)
         #[arg(long)]
@@ -370,7 +370,7 @@ pub struct ChatArgs {
     #[arg(long)]
     pub raw: bool,
 
-    /// Attach a file (image, pdf, or text) — repeatable
+    /// Attach a file (image, pdf, or text), repeatable
     #[arg(long = "attach", value_name = "FILE")]
     pub attach: Vec<String>,
 }
@@ -418,7 +418,7 @@ pub struct ImageArgs {
     #[arg(short, long)]
     pub output: Option<String>,
 
-    /// Interactive mode — AI helps you describe the image
+    /// Interactive mode: AI helps you describe the image
     #[arg(short, long)]
     pub interactive: bool,
 
@@ -431,7 +431,7 @@ pub struct ImageArgs {
         ["low", "medium", "high", "auto", "hd", "standard"]))]
     pub quality: Option<String>,
 
-    /// Image style — DALL·E models only, ignored by gpt-image models
+    /// Image style, DALL·E models only, ignored by gpt-image models
     #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(
         ["natural", "vivid"]))]
     pub style: Option<String>,
@@ -515,7 +515,7 @@ pub struct VideoArgs {
     #[arg(long)]
     pub size: Option<String>,
 
-    /// Clip duration in seconds (typically 4, 8, or 12 — model-dependent)
+    /// Clip duration in seconds (typically 4, 8, or 12, model-dependent)
     #[arg(long)]
     pub seconds: Option<u32>,
 
@@ -674,7 +674,7 @@ pub(crate) fn candidates_from(config: &ailloy::config::Config) -> Vec<Completion
             .or(node.deployment.as_deref())
             .or(node.binary.as_deref());
         let help = match detail {
-            Some(d) => format!("{} — {}", node.provider, d),
+            Some(d) => format!("{}: {}", node.provider, d),
             None => node.provider.to_string(),
         };
         out.push(CompletionCandidate::new(id.clone()).help(Some(help.into())));
@@ -690,7 +690,7 @@ pub(crate) fn candidates_from(config: &ailloy::config::Config) -> Vec<Completion
 }
 
 /// Completer for `--node`/node-id arguments: reads the merged local+global
-/// config and returns node id and alias candidates. Never panics or prints —
+/// config and returns node id and alias candidates. Never panics or prints:
 /// on any load error it yields no candidates (completion stays silent).
 pub(crate) fn complete_node_ids() -> Vec<CompletionCandidate> {
     match ailloy::config::Config::load() {
@@ -759,12 +759,12 @@ mod completion_tests {
             ]
         );
 
-        // Node id help = "<provider> — <detail>".
+        // Node id help = "<provider>: <detail>".
         let id_cand = cands
             .iter()
             .find(|c| value_of(c) == "openai/gpt-5.4-mini")
             .unwrap();
-        assert_eq!(help_of(id_cand).as_deref(), Some("openai — gpt-5.4-mini"));
+        assert_eq!(help_of(id_cand).as_deref(), Some("openai: gpt-5.4-mini"));
 
         // Deployment used as detail when model is absent.
         let dep_cand = cands
@@ -773,7 +773,7 @@ mod completion_tests {
             .unwrap();
         assert_eq!(
             help_of(dep_cand).as_deref(),
-            Some("microsoft-foundry — gpt-image-2")
+            Some("microsoft-foundry: gpt-image-2")
         );
 
         // Alias help points back to the id.

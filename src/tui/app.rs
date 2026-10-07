@@ -3,7 +3,7 @@
 //! [`App`] holds all UI state. [`App::handle_key`] is a pure reducer: it takes
 //! a key event, mutates state, and returns an optional [`Effect`] for the event
 //! loop in [`super::mod`] to execute (side effects like saving or quitting live
-//! there, not here — keeping this unit-testable without a terminal).
+//! there, not here, keeping this unit-testable without a terminal).
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -31,7 +31,7 @@ pub enum ConfirmAction {
     DeleteNode { id: String },
 }
 
-/// The current interaction mode — a small state machine layered over
+/// The current interaction mode: a small state machine layered over
 /// [`Focus`]. Browse is the resting state; the others are transient editors
 /// and prompts.
 pub enum Mode {

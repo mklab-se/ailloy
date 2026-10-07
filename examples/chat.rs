@@ -6,7 +6,7 @@ use ailloy::{ChatOptions, Client, Message};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Uses ~/.config/ailloy/config.yaml — run `ailloy ai config` once to set up.
+    // Uses ~/.config/ailloy/config.yaml; run `ailloy ai config` once to set up.
     let client = Client::from_config()?;
 
     // Plain chat

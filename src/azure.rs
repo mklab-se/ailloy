@@ -48,7 +48,7 @@ pub struct AzureOpenAiClient {
     deployment: String,
     /// Dated `api-version` for the legacy per-deployment endpoints.
     /// `None` (the default) uses the unified `/openai/v1/` surface that
-    /// Microsoft recommends since August 2025 — no api-version at all.
+    /// Microsoft recommends since August 2025, with no api-version at all.
     api_version: Option<String>,
     auth: AzureAuth,
 }

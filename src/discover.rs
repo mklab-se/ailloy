@@ -1,6 +1,6 @@
-//! AI node discovery — detect available providers and models.
+//! AI node discovery: detect available providers and models.
 //!
-//! These functions return discovered nodes as data only — no I/O prompting,
+//! These functions return discovered nodes as data only, with no I/O prompting,
 //! no config mutation. The CLI layer handles user interaction.
 
 use anyhow::Result;

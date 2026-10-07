@@ -372,7 +372,7 @@ async fn run_interactive(
 
     let version = env!("CARGO_PKG_VERSION");
     eprintln!(
-        "{} v{} — {} ({})",
+        "{} v{}: {} ({})",
         "ailloy".bold(),
         version,
         node_id.bold(),
@@ -472,9 +472,9 @@ async fn run_interactive(
             }
             "/help" => {
                 eprintln!("{}", "Commands:".bold());
-                eprintln!("  {} — Exit the session", "/quit".bold());
-                eprintln!("  {} — Clear conversation history", "/clear".bold());
-                eprintln!("  {} — Show this help", "/help".bold());
+                eprintln!("  {}: Exit the session", "/quit".bold());
+                eprintln!("  {}: Clear conversation history", "/clear".bold());
+                eprintln!("  {}: Show this help", "/help".bold());
                 continue;
             }
             _ if input.starts_with('/') => {

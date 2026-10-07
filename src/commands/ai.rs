@@ -158,7 +158,7 @@ pub async fn run_legacy_nodes(cmd: NodeCommands) -> Result<()> {
 fn run_set_key(id_or_alias: &str) -> Result<()> {
     let mut config = Config::load_global()?;
     let (node_id, _) = config.get_node(id_or_alias).with_context(|| {
-        format!("unknown node '{id_or_alias}' — see `ailloy ai config list-nodes`")
+        format!("unknown node '{id_or_alias}', see `ailloy ai config list-nodes`")
     })?;
     let node_id = node_id.to_string();
 
@@ -168,7 +168,7 @@ fn run_set_key(id_or_alias: &str) -> Result<()> {
         .prompt()
         .context("cancelled")?;
     if secret.trim().is_empty() {
-        anyhow::bail!("empty key — nothing stored");
+        anyhow::bail!("empty key, nothing stored");
     }
 
     ailloy::config::set_keychain_secret(&node_id, secret.trim())?;
@@ -242,7 +242,7 @@ async fn run_test_all() -> Result<()> {
             ),
             Err(e) => {
                 failures += 1;
-                println!("  {} {} — {e:#}", "✗".red().bold(), id.bold());
+                println!("  {} {}: {e:#}", "✗".red().bold(), id.bold());
             }
         }
     }
@@ -282,7 +282,7 @@ fn run_init_local(extends_global: bool) -> Result<()> {
     };
     std::fs::write(path, content)?;
     println!(
-        "{} wrote .ailloy.yaml ({}) — commit it to share the setup, or add it to .gitignore to keep it personal",
+        "{} wrote .ailloy.yaml ({}). Commit it to share the setup, or add it to .gitignore to keep it personal",
         "✓".green().bold(),
         if extends_global {
             "extends global"

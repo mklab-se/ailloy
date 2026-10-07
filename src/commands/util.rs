@@ -37,7 +37,7 @@ impl Spinner {
 
     pub fn stop(self) {
         let _ = self.cancel.send(true);
-        // Don't block — the task will clean up on its own
+        // Don't block: the task will clean up on its own
         drop(self.handle);
     }
 }
@@ -52,7 +52,7 @@ pub fn strip_think_blocks(text: &str) -> String {
         if let Some(end) = remaining[start..].find("</think>") {
             remaining = &remaining[start + end + "</think>".len()..];
         } else {
-            // Unclosed <think> — strip everything after it
+            // Unclosed <think>: strip everything after it
             return result;
         }
     }
@@ -97,7 +97,7 @@ impl ThinkFilter {
                     self.strip_next_newline = true;
                     continue;
                 }
-                // Might have a partial "</think" at the end — keep buffering
+                // Might have a partial "</think" at the end, keep buffering
                 if self.pending.len() > "</think>".len() {
                     // Safe to discard everything except the last few chars that could be a partial tag
                     let keep = "</think>".len() - 1;
@@ -111,7 +111,7 @@ impl ThinkFilter {
                 if self.pending.starts_with('\n') {
                     self.pending = self.pending[1..].to_string();
                 } else if self.pending.is_empty() {
-                    // Newline might arrive in next delta — keep waiting
+                    // Newline might arrive in next delta, keep waiting
                     return output;
                 }
                 self.strip_next_newline = false;
@@ -140,7 +140,7 @@ impl ThinkFilter {
                 output.push_str(&self.pending[..safe]);
                 self.pending = self.pending[safe..].to_string();
             } else {
-                // No partial match — emit everything
+                // No partial match: emit everything
                 output.push_str(&self.pending);
                 self.pending.clear();
             }
@@ -152,7 +152,7 @@ impl ThinkFilter {
     pub fn flush(&mut self) -> String {
         let remaining = std::mem::take(&mut self.pending);
         if self.inside_think {
-            // Unclosed think block — don't emit
+            // Unclosed think block: don't emit
             String::new()
         } else {
             remaining

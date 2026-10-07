@@ -234,7 +234,7 @@ impl FoundryClient {
 
     /// Image generation URL. Unlike `chat_url`/`embed_url`, the legacy dated
     /// surface for images uses the `/openai/deployments/{model}/...` path
-    /// (like Azure OpenAI), not `/models/...` — Foundry's image API is
+    /// (like Azure OpenAI), not `/models/...`, since Foundry's image API is
     /// exposed through the Azure OpenAI-compatible surface, with the model
     /// field doubling as the deployment name.
     fn image_url(&self) -> String {

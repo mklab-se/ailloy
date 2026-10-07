@@ -618,7 +618,7 @@ impl Provider for OpenAiClient {
             }
             if options.and_then(|o| o.n).is_some_and(|n| n > 1) {
                 anyhow::bail!(
-                    "use a dedicated image model (gpt-image-*) for multiple variants — chat models return a single image."
+                    "use a dedicated image model (gpt-image-*) for multiple variants; chat models return a single image."
                 );
             }
             let image = self

@@ -3,7 +3,7 @@
 //! [`draw`] renders the read-only Browse view: a header bar, a two-pane split
 //! (a node table on the left, a detail pane for the selected node on the
 //! right), an optional status line, and a footer key legend. It reads only
-//! from [`App`] — all mutation happens in the reducer.
+//! from [`App`]; all mutation happens in the reducer.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -33,10 +33,10 @@ const DOT: &str = "·";
 
 /// Renders the marker for a single capability cell in the node table.
 ///
-/// * `★` — the node has the capability **and** is the configured default for it
+/// * `★`: the node has the capability **and** is the configured default for it
 ///   (`config.defaults[cap.config_key()] == node_id`).
-/// * `✓` — the node has the capability but is not the default.
-/// * `·` — the node does not have the capability.
+/// * `✓`: the node has the capability but is not the default.
+/// * `·`: the node does not have the capability.
 pub(crate) fn capability_cell(
     config: &Config,
     node_id: &str,
@@ -563,7 +563,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
             format!("{} ai config", app.app_name),
             Style::default().add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!(" — {path}"), Style::default().fg(Color::DarkGray)),
+        Span::styled(format!(" ({path})"), Style::default().fg(Color::DarkGray)),
     ];
 
     if crate::config_tui::is_ai_active(&app.app_name) {
@@ -800,7 +800,7 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
     }
     // Registry params for this node's capabilities that params_for excluded
     // (provider-filtered, e.g. image.format on Vertex). Shown as dimmed,
-    // non-selectable hints — detail_selected only ranges over `params`.
+    // non-selectable hints: detail_selected only ranges over `params`.
     for def in crate::params::PARAMS {
         if node.capabilities.contains(&def.capability) && !params.iter().any(|p| p.key == def.key) {
             lines.push(Line::styled(

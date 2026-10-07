@@ -19,7 +19,7 @@ Single crate with feature-flagged CLI, similar to how `clap` separates derive fe
 
 ```
 src/
-  lib.rs              # Public library API — always compiled
+  lib.rs              # Public library API: always compiled
   config.rs           # Config types (AiNode, Capability (incl. Eval), Auth, ProviderKind (incl.
                       #   TypeSafe), Config, default_eval_node,
                       #   EmbeddingMetadata), load/save, local config merge, node CRUD,
@@ -27,13 +27,13 @@ src/
                       #   Azure AI Search vectorizer export, programmatic config API
                       #   (AiNode::new, ensure_node, upsert_node, set_default_for),
                       #   keychain helpers (keychain_secret, set_keychain_secret,
-                      #   delete_keychain_secret — gated on "keychain" feature)
-  config_tui.rs       # Shared config entry points (requires "config-tui" feature) —
+                      #   delete_keychain_secret, gated on "keychain" feature)
+  config_tui.rs       # Shared config entry points (requires "config-tui" feature):
                       #   consent helpers, enable/disable/is_ai_active, status/node
                       #   printing, test chat, reset; add_node_interactive/
                       #   edit_node_interactive/run_interactive_config are thin wrappers
                       #   over the ratatui dashboard in src/tui/ (inquire flows removed)
-  tui/                # Full-screen ratatui config dashboard (requires "config-tui") —
+  tui/                # Full-screen ratatui config dashboard (requires "config-tui"):
                       #   mod (event loop, TerminalGuard, Effect executor: Save/RunTest/
                       #   StoreKeychain/Discover/Quit; run_single_form; az-CLI discovery
                       #   + connectivity test run inline), app (App/Mode/Effect reducer),
@@ -41,7 +41,7 @@ src/
                       #   toggles, to_node/from_node), ui (table/detail/form/popups),
                       #   actions (upsert_node/delete_node/set_capability_default/
                       #   set_node_default)
-  azure_discover.rs   # Azure CLI wrappers (requires "config-tui" feature) —
+  azure_discover.rs   # Azure CLI wrappers (requires "config-tui" feature):
                       #   list subscriptions, resources, deployments via `az` CLI
   types.rs            # Message, MessageContent (Text/Parts, untagged), ContentPart
                       #   (Text/Image/File), Role, ChatResponse, ChatOptions (incl.
@@ -51,25 +51,25 @@ src/
                       #   n/background/moderation/input_fidelity/reference_images/mask),
                       #   VideoOptions, VideoJob, VideoJobStatus, VideoResponse, ProgressFn,
                       #   EmbedResponse, EmbedOptions, Task, Usage, sampling-rejection detection
-  params.rs           # Static per-capability parameter registry (no feature gate) — ParamDef/
+  params.rs           # Static per-capability parameter registry (no feature gate): ParamDef/
                       #   ParamKind, PARAMS table, params_for()/validate_value()/lookup(); single
                       #   source of truth for node_defaults keys, used by Client defaults
                       #   resolution and the config TUI's Defaults editor
-  error.rs            # ClientError enum (thiserror) — Http, Api, Json, NotConfigured,
+  error.rs            # ClientError enum (thiserror): Http, Api, Json, NotConfigured,
                       #   BinaryNotFound, NodeNotFound, Unsupported, Other
   client.rs           # Provider trait, Client struct, ClientBuilder, create_provider_from_node(),
                       #   node-defaults resolution (explicit options > node defaults > provider
                       #   defaults) for image/video/chat/embed request construction
   conversation.rs     # ChatHistory trait, InMemoryHistory, Conversation
   blocking.rs         # Sync client wrapper (internal tokio current-thread runtime)
-  discover.rs         # Discovery library API — discover_env_keys(), discover_local(),
+  discover.rs         # Discovery library API: discover_env_keys(), discover_local(),
                       #   discover_ollama(), DiscoveredNode struct
-  openai.rs           # OpenAI client — chat, stream (SSE), image gen (via openai_images), embedding
+  openai.rs           # OpenAI client: chat, stream (SSE), image gen (via openai_images), embedding
   mai_images.rs       # MAI-Image-2.x request builders (private): Foundry deployments named
                       #   *MAI-Image* go to /mai/v1/images/{generations,edits} (not /openai/v1/),
                       #   width/height ints, PNG only, one image per request (n = N calls),
                       #   `image` multipart fields; validate() rejects gpt-image-only params
-  openai_images.rs    # Shared OpenAI-family image request/response builder (private) — JSON
+  openai_images.rs    # Shared OpenAI-family image request/response builder (private): JSON
                       #   generations body vs multipart edits form, per-flavor (GptImage/DallE/
                       #   AzureGptImage) validation; consumed by openai.rs, azure.rs, foundry.rs
   eval.rs             # Public eval types: Question (YesNo/Choice/Score), Answer, Calibration,
@@ -79,21 +79,21 @@ src/
                       #   code computes winner/score/confidence
   typesafe.rs         # TypeSafe System One client (Jev): POST /v1/systemone, YesNo maps to noul,
                       #   120 s timeout, 429/529 retries, three error-body shapes, request id in errors
-  anthropic.rs        # Anthropic client — chat, stream (SSE), prompted JSON output
-  azure.rs            # Azure OpenAI client — chat, stream (SSE), image gen (openai_images),
+  anthropic.rs        # Anthropic client: chat, stream (SSE), prompted JSON output
+  azure.rs            # Azure OpenAI client: chat, stream (SSE), image gen (openai_images),
                       #   video jobs (video_jobs), embedding; defaults to unified /openai/v1/
                       #   surface, dated api-version = legacy
-  foundry.rs          # Microsoft Foundry client — chat, stream (SSE), image gen (gpt-image-2
+  foundry.rs          # Microsoft Foundry client: chat, stream (SSE), image gen (gpt-image-2
                       #   via openai_images, MAI-Image via mai_images), video jobs (video_jobs),
                       #   embedding; defaults to unified /openai/v1/ surface, dated
                       #   api-version = legacy
-  video_jobs.rs       # Shared Azure/Foundry video (sora-2) request logic (private) — OpenAI-style
+  video_jobs.rs       # Shared Azure/Foundry video (sora-2) request logic (private): OpenAI-style
                       #   Videos API (POST/GET/DELETE /openai/v1/videos[/{id}][/content]); no
                       #   ?api-version on v1 surface, appended only for dated nodes;
                       #   create/get/download/delete wire types; '+'-joined multi-id for --variants
-  vertex.rs           # Vertex AI client — Gemini chat/stream, Imagen, embedding
-  ollama.rs           # Ollama client — chat, stream (NDJSON), embedding
-  local_agent.rs      # Local CLI agent (claude, codex, copilot) — chat, stream (line-buffered)
+  vertex.rs           # Vertex AI client: Gemini chat/stream, Imagen, embedding
+  ollama.rs           # Ollama client: chat, stream (NDJSON), embedding
+  local_agent.rs      # Local CLI agent (claude, codex, copilot): chat, stream (line-buffered)
   retirement.rs       # Static model retirement table + retirement_warning() for
                       #   `ailloy ai status` warnings
   main.rs             # CLI entry point (requires "cli" feature)
@@ -102,24 +102,24 @@ src/
   update.rs           # Background update checker via crates.io (requires "cli" feature)
   commands/
     mod.rs            # Command module exports
-    ai.rs             # `ailloy ai` — unified AI management dispatcher, backward-compat
+    ai.rs             # `ailloy ai`: unified AI management dispatcher, backward-compat
                       #   handlers, `set-key` (keychain), `test --all` (ping all nodes)
-    chat.rs           # `ailloy chat` — chat, streaming, image/video/SVG gen via -o routing,
+    chat.rs           # `ailloy chat`: chat, streaming, image/video/SVG gen via -o routing,
                       #   interactive, stdin, --attach
-    image.rs          # `ailloy image` — image generation (full gpt-image param surface,
+    image.rs          # `ailloy image`: image generation (full gpt-image param surface,
                       #   --ref/--mask edits routing, --variants), direct and interactive modes
-    video.rs          # `ailloy video` — video generation (sora-2 jobs), progress spinner,
+    video.rs          # `ailloy video`: video generation (sora-2 jobs), progress spinner,
                       #   --size/--seconds/--variants, variant file naming
-    embed.rs          # `ailloy embed` — embedding generation, metadata, Azure vectorizer export
+    embed.rs          # `ailloy embed`: embedding generation, metadata, Azure vectorizer export
     eval.rs           # `ailloy eval`: typed eval with gates, questions file, exit codes 0/1/2/3/4
     config_cmd.rs     # Non-interactive config commands: `show/set/get/unset`
-    skill.rs          # `ailloy ai skill` — skill setup guide, emit skill markdown, reference docs
-    completion.rs     # `ailloy completion` — shell completions
+    skill.rs          # `ailloy ai skill`: skill setup guide, emit skill markdown, reference docs
+    completion.rs     # `ailloy completion`: shell completions
     util.rs           # Shared CLI utilities: Spinner, ThinkFilter, file_hyperlink
   doc/
     ai-reference.md   # Full CLI reference documentation, embedded via include_str!
 examples/
-  chat.rs             # Library quickstart — chat + structured JSON output
+  chat.rs             # Library quickstart: chat + structured JSON output
   configure.rs        # Programmatic config for dependent tools (ensure_node, node_defaults,
                       #   keychain)
   eval.sh             # LLM-as-judge integration-test pattern with `ailloy eval`
@@ -127,10 +127,10 @@ examples/
 
 ## Feature Flags
 
-- `default = ["cli", "keychain"]` — CLI binary, all CLI dependencies, and OS keychain support
-- `cli` — enables `config-tui`, clap, clap_complete, inquire, tracing-subscriber, semver, and tokio runtime features
-- `keychain` — OS keychain storage for API keys via the `keyring` crate (service `ailloy`, account = node ID); without it, `Auth::Keychain` nodes fail with an actionable error
-- `config-tui` — enables the ratatui config dashboard, status display, enable/disable (colored, crossterm, ratatui); consumer projects use this without pulling in clap. `inquire` is now a `cli`-only dependency (used by `ai config set-key`), not part of `config-tui`
+- `default = ["cli", "keychain"]`: CLI binary, all CLI dependencies, and OS keychain support
+- `cli`: enables `config-tui`, clap, clap_complete, inquire, tracing-subscriber, semver, and tokio runtime features
+- `keychain`: OS keychain storage for API keys via the `keyring` crate (service `ailloy`, account = node ID); without it, `Auth::Keychain` nodes fail with an actionable error
+- `config-tui`: enables the ratatui config dashboard, status display, enable/disable (colored, crossterm, ratatui); consumer projects use this without pulling in clap. `inquire` is now a `cli`-only dependency (used by `ai config set-key`), not part of `config-tui`
 - Library users (pure): `ailloy = { version = "3.0", default-features = false }`
 - Library users (with TUI): `ailloy = { version = "3.0", default-features = false, features = ["config-tui"] }`
 - Library users needing keychain auth: add `"keychain"` to `features`
@@ -141,26 +141,26 @@ examples/
 - Feature-flagged single crate: library code always compiles, CLI code gated behind `cli` feature via `required-features` on `[[bin]]`
 - **AI Nodes**: atomic config units representing a specific model from a specific provider with connection details and capability tags; node IDs follow `{provider}/{model|deployment|binary}` pattern with optional `alias` for shorthand
 - **Provider trait** (`client.rs`): unified `async_trait` with default methods returning `Unsupported`: `name()`, `chat()`, `chat_stream()`, `generate_image()`/`generate_images()`, `embed()`, `evaluate()` (default = chat emulation), `generate_video()`/`create_video_job()`/`get_video_job()`/`download_video()`/`delete_video_job()`
-- **Client** wraps `Box<dyn Provider>` — constructed via `from_config()`, `with_node()`, `for_capability()`, `from_node()`, `builder()`, or direct constructors (`Client::openai()`, `Client::anthropic()`, etc.)
+- **Client** wraps `Box<dyn Provider>`, constructed via `from_config()`, `with_node()`, `for_capability()`, `from_node()`, `builder()`, or direct constructors (`Client::openai()`, `Client::anthropic()`, etc.)
 - **Streaming**: SSE parsing for OpenAI/Anthropic/Azure/Vertex via `futures_util::stream::unfold`, NDJSON for Ollama, line-buffered for local agents
 - **Config**: `nodes` map of `AiNode` structs; `defaults` map routes capability names (chat, image, video, embedding) to node IDs; `Auth` enum supports `env`, `api_key`, `keychain`, `azure_cli`, `gcloud_cli`; all config maps use `BTreeMap` for deterministic serialization
-- **Programmatic config API**: dependent tools build nodes with `AiNode::new(provider)` and install them via `Config::ensure_node` (never overwrites existing user config), `Config::upsert_node`, and `Config::set_default_for`; secrets go through `ailloy::config::{keychain_secret, set_keychain_secret, delete_keychain_secret}` — see `examples/configure.rs`
+- **Programmatic config API**: dependent tools build nodes with `AiNode::new(provider)` and install them via `Config::ensure_node` (never overwrites existing user config), `Config::upsert_node`, and `Config::set_default_for`; secrets go through `ailloy::config::{keychain_secret, set_keychain_secret, delete_keychain_secret}` (see `examples/configure.rs`)
 - **Azure/Foundry endpoint rule**: no `api_version` on the node (the default) → unified `/openai/v1/` surface, model field = deployment name; explicit `api_version` in config → legacy dated endpoints (`/openai/deployments/...` for Azure, `/models/...` for Foundry). `AzureOpenAiClient::new`/`FoundryClient::new` build v1 clients; `with_api_version` builds legacy ones; `Client::azure`/`Client::foundry` take `Option<String>` api_version
 - **Structured output**: `ChatOptions.response_format` (`ResponseFormat::JsonObject` / `JsonSchema`, builder `.json()` / `.json_schema(name, schema)`); native on OpenAI-family/Ollama (`response_format`/`format`) and Vertex (`response_mime_type`/`response_schema`), prompted JSON on Anthropic
-- **Multimodal messages**: `Message.content` is `MessageContent`, `#[serde(untagged)]` over `Text(String)` / `Parts(Vec<ContentPart>)` — a plain-text message still serializes as a bare string, byte-identical to pre-2.0 histories; only attachment-bearing messages serialize to the tagged-array shape. `Message::user_with_attachments(text, &[PathBuf])` infers media type from extension (images/PDF/text); `.text()`/`.as_text()`/`.has_attachments()` read content without matching. Per-provider mapping: OpenAI-family → content-part arrays, Anthropic → image/document blocks, Vertex → `inline_data` parts, Ollama → `images` array (text files inlined into the prompt), local agents → `Unsupported`
+- **Multimodal messages**: `Message.content` is `MessageContent`, `#[serde(untagged)]` over `Text(String)` / `Parts(Vec<ContentPart>)`: a plain-text message still serializes as a bare string, byte-identical to pre-2.0 histories; only attachment-bearing messages serialize to the tagged-array shape. `Message::user_with_attachments(text, &[PathBuf])` infers media type from extension (images/PDF/text); `.text()`/`.as_text()`/`.has_attachments()` read content without matching. Per-provider mapping: OpenAI-family → content-part arrays, Anthropic → image/document blocks, Vertex → `inline_data` parts, Ollama → `images` array (text files inlined into the prompt), local agents → `Unsupported`
 - **Image generation**: `ImageOptions` carries the full gpt-image parameter surface (`output_format`, `compression`, `n`, `background`, `moderation`, `input_fidelity`, `reference_images`, `mask`) validated client-side with actionable errors; non-empty `reference_images` switches the request from JSON `images/generations` to multipart `images/edits` (shared builder in `openai_images.rs`, used by `openai.rs`/`azure.rs`/`foundry.rs`). `Provider::generate_images` returns `Vec<ImageResponse>`; `generate_image`/`generate_image_with` are default-method wrappers around it (the latter `#[deprecated]`)
 - **Eval capability**: `Capability::Eval` (config key `eval`) with typed `Question`s (YesNo/Choice/Score) answered with probabilities and a confidence. `Provider::evaluate` defaults to chat emulation (one call per question, because batching changes chat answers, measured 2026-10-06); the `typesafe` provider batches everything in one request. Routing: `defaults.eval`, then the default chat node. `Capability`, `ProviderKind`, `Task`, `Question`, `Answer`, `Calibration` and `EvalResponse` are `#[non_exhaustive]` (build responses with `EvalResponse::new`; `EvalResponse`/`Usage` derive `Serialize`). `ailloy eval --questions` keeps the file's order
-- **Video generation**: `Capability::Video`/`Task::VideoGeneration` (config key `video`), implemented only for Azure OpenAI and Microsoft Foundry via the shared OpenAI-style Videos API in `video_jobs.rs` (`POST/GET/DELETE {base}/openai/v1/videos[/{id}][/content]`; the legacy `.../video/generations/jobs` surface is a 404 on current Foundry resources). Follows the same v1-vs-dated endpoint rule as chat/images: no `api_version` on the node → v1 surface with **no** `?api-version`; explicit `api_version` → append `?api-version={v}`. Create body is `{model, prompt, size:"WxH" (default 720x1280), seconds:"<string>" (default "4")}` — `seconds` is a wire **string**; sizes/durations are model-dependent (commonly 4/8/12s). The Videos API has no multi-variant field, so `--variants`/`opts.variants > 1` issues N create POSTs and returns one `VideoJob` whose `id` is the per-video ids joined with `+`; `get`/`delete` split on `+` and fan out, aggregating status (all completed → Succeeded; any failed → Failed with that video's error; else Running/Queued). `Provider::generate_video` (default method) creates a job, polls `get_video_job` (2s→10s backoff, 15-min timeout), and downloads every generation via `download_video`; video/content artifacts expire ~24h after completion; other providers return `Unsupported`
-- **Node-level default parameters**: `AiNode.node_defaults` (`defaults:` map under a node in YAML, `BTreeMap<String, String>`) holds dotted keys (`image.quality`, `video.seconds`, `chat.temperature`, `embedding.dimensions`, ...) defined in `params.rs`. Resolution order applied in the `Client` construction path (so library consumers get it for free): explicit call options > node defaults > provider defaults; explicit `*Options` structs passed to `*_with` calls are never mutated by this — merging happens where the client already knows its node
-- **Parameter registry** (`params.rs`): static `PARAMS: &[ParamDef]` table is the single source of truth for recognized `node_defaults` keys — key, capability, value shape (`ParamKind::Enum`/`UInt`/`Float`/`Size`), provider applicability, informational default. `params_for(provider, caps)` filters what's editable for a given node; `validate_value()`/`lookup()` back both request-time resolution and the TUI's Defaults editor
-- **Sampling guard**: all HTTP providers retry once without `temperature` when the model rejects sampling params (`is_sampling_rejection` in types.rs) — covers gpt-5.x/o-series, newest Claude, Gemini 3
+- **Video generation**: `Capability::Video`/`Task::VideoGeneration` (config key `video`), implemented only for Azure OpenAI and Microsoft Foundry via the shared OpenAI-style Videos API in `video_jobs.rs` (`POST/GET/DELETE {base}/openai/v1/videos[/{id}][/content]`; the legacy `.../video/generations/jobs` surface is a 404 on current Foundry resources). Follows the same v1-vs-dated endpoint rule as chat/images: no `api_version` on the node → v1 surface with **no** `?api-version`; explicit `api_version` → append `?api-version={v}`. Create body is `{model, prompt, size:"WxH" (default 720x1280), seconds:"<string>" (default "4")}`. `seconds` is a wire **string**; sizes/durations are model-dependent (commonly 4/8/12s). The Videos API has no multi-variant field, so `--variants`/`opts.variants > 1` issues N create POSTs and returns one `VideoJob` whose `id` is the per-video ids joined with `+`; `get`/`delete` split on `+` and fan out, aggregating status (all completed → Succeeded; any failed → Failed with that video's error; else Running/Queued). `Provider::generate_video` (default method) creates a job, polls `get_video_job` (2s→10s backoff, 15-min timeout), and downloads every generation via `download_video`; video/content artifacts expire ~24h after completion; other providers return `Unsupported`
+- **Node-level default parameters**: `AiNode.node_defaults` (`defaults:` map under a node in YAML, `BTreeMap<String, String>`) holds dotted keys (`image.quality`, `video.seconds`, `chat.temperature`, `embedding.dimensions`, ...) defined in `params.rs`. Resolution order applied in the `Client` construction path (so library consumers get it for free): explicit call options > node defaults > provider defaults; explicit `*Options` structs passed to `*_with` calls are never mutated by this; merging happens where the client already knows its node
+- **Parameter registry** (`params.rs`): static `PARAMS: &[ParamDef]` table is the single source of truth for recognized `node_defaults` keys: key, capability, value shape (`ParamKind::Enum`/`UInt`/`Float`/`Size`), provider applicability, informational default. `params_for(provider, caps)` filters what's editable for a given node; `validate_value()`/`lookup()` back both request-time resolution and the TUI's Defaults editor
+- **Sampling guard**: all HTTP providers retry once without `temperature` when the model rejects sampling params (`is_sampling_rejection` in types.rs), covering gpt-5.x/o-series, newest Claude, Gemini 3
 - **Model retirements**: static prefix table in `retirement.rs`; `ailloy ai status` warns on configured models with scheduled/past retirement dates and suggests replacements
-- **Interactive config TUI**: `ailloy ai config` opens a full-screen ratatui dashboard (`src/tui/`) — a two-pane node table + detail view with keys `a`/`e`/`x`/`d`/`k`/`t` (add/edit/delete/set-default/keychain/test); a provider-selector form with dynamic per-provider fields and capability toggles (`ProviderKind::supported_capabilities()` constrains them). All state lives in `app::App` with a pure reducer returning `Effect`s executed by the event loop in `tui::mod`. `config_tui.rs` keeps the stable non-UI API (status/print/consent/test) plus thin wrappers over the dashboard
+- **Interactive config TUI**: `ailloy ai config` opens a full-screen ratatui dashboard (`src/tui/`): a two-pane node table + detail view with keys `a`/`e`/`x`/`d`/`k`/`t` (add/edit/delete/set-default/keychain/test); a provider-selector form with dynamic per-provider fields and capability toggles (`ProviderKind::supported_capabilities()` constrains them). All state lives in `app::App` with a pure reducer returning `Effect`s executed by the event loop in `tui::mod`. `config_tui.rs` keeps the stable non-UI API (status/print/consent/test) plus thin wrappers over the dashboard
 - **Discovery**: `discover.rs` library provides `discover_env_keys()`, `discover_local()`, `discover_ollama()` returning data only; Azure/Foundry discovery is in `azure_discover.rs` (library level, gated on `config-tui`), driven inline by the dashboard's add-node `[ Discover via az CLI ]` action behind a consent modal
 - **Local config**: `.ailloy.yaml` in current or parent directories, merged with global config (nodes/defaults merge, consents are global-only)
 - **CLI tool consent**: `consents` map in config tracks user permission for external tools (`azure-cli`, `gcloud-cli`); security decisions use global config only (not overridable by local `.ailloy.yaml`)
 - **Azure auto-discovery**: `azure_discover.rs` wraps `az` CLI for subscription/resource/deployment listing; discovers both `kind=='OpenAI'` and `kind=='AIServices'` resources; the `ailloy ai config` dashboard uses it when the user consents
-- **Blocking wrapper**: `blocking::Client` with internal `tokio::runtime::Builder::new_current_thread()` — mirrors async Client API
+- **Blocking wrapper**: `blocking::Client` with internal `tokio::runtime::Builder::new_current_thread()`, mirrors async Client API
 - **Conversation**: `Conversation` struct with pluggable `ChatHistory` trait and `InMemoryHistory` default
 - CLI built with `clap` derive macros + `clap_complete` for shell completions
 - Default command pre-parsing: `ailloy "msg"` → `ailloy chat "msg"`
@@ -170,7 +170,7 @@ examples/
 - Logging: `tracing` + `tracing-subscriber` (CLI only) with `-v`/`-vv` verbosity levels
 - Colored output via `colored` crate (respects `--no-color`)
 - Interactive prompts via `inquire` are `cli`-only now (backs `ai config set-key`'s key prompt); the config dashboard itself is ratatui/crossterm, gated on `config-tui`
-- Error handling: `anyhow` for CLI commands, `thiserror` for `ClientError` in library code. **All error messages must be actionable** — tell the user what went wrong, what resource/config is involved, and what to do next (e.g. "run 'az login'", "run 'ailloy config'"). Never show raw API errors like "Resource not found" without context.
+- Error handling: `anyhow` for CLI commands, `thiserror` for `ClientError` in library code. **All error messages must be actionable**: tell the user what went wrong, what resource/config is involved, and what to do next (e.g. "run 'az login'", "run 'ailloy config'"). Never show raw API errors like "Resource not found" without context.
 - Config: `~/.config/ailloy/config.yaml` (via `dirs::config_dir()`)
 - Update checker: background task, cached at `~/.cache/ailloy/`, skip with `AILLOY_NO_UPDATE_CHECK=1`
 - Environment variable support: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` as fallback for providers; `TYPESAFE_API_KEY` for the TypeSafe eval provider
@@ -193,16 +193,23 @@ updates the Homebrew tap (`mklab-se/homebrew-tap`), and publishes to crates.io.
 - Edition 2024, MSRV 1.88
 - `cargo clippy` with `-D warnings` (zero warnings policy)
 - `cargo fmt` enforced in CI
-- Building from source on Windows needs NASM and CMake on `PATH` — `aws-lc-rs` (reqwest's TLS crypto
+- Building from source on Windows needs NASM and CMake on `PATH`: `aws-lc-rs` (reqwest's TLS crypto
   backend) compiles optimized assembly routines at build time. macOS and Linux need nothing extra.
   The release workflow's Windows leg installs NASM via `ilammy/setup-nasm@v1`; CMake and MSVC are
   already on the `windows-latest` image.
 
+## Writing style
+
+- **No em-dashes (U+2014) anywhere:** docs, CHANGELOG, code comments, doc comments, CLI help text,
+  error messages, test strings and commit messages. Use a comma; otherwise a colon, parentheses or a
+  new sentence. CI (`No em-dashes` step in `ci.yml`) fails the build if one appears. Rust code that
+  genuinely needs the character at runtime writes the escape `\u{2014}`, never the literal.
+
 ## Dependency Policy
 
 We keep this tool's dependencies at their latest compatible versions, not just the versions that
-happen to still compile. Staying current is the default, not something we get to eventually —
-letting dependencies drift is how technical debt accumulates unnoticed until a security advisory or
+happen to still compile. Staying current is the default, not something we get to eventually.
+Letting dependencies drift is how technical debt accumulates unnoticed until a security advisory or
 a forced breaking upgrade makes it urgent. When a newer major is available and there's no concrete,
 documented reason not to take it (see any `# Stays on ...` comments in `Cargo.toml` for the current
 exceptions and why), take it during the next maintenance round rather than deferring it. The
@@ -214,15 +221,15 @@ mdeck + pidge + rigg + rusty-tmpl).
 ### Testing
 - **Always run the full test suite before declaring work complete:** `cargo test`
 - **Always run the full CI check before pushing:** `cargo fmt --all -- --check && cargo clippy -- -D warnings && cargo test`
-- Write unit tests for all new functionality — aim for high code coverage
+- Write unit tests for all new functionality, aiming for high code coverage
 - Test edge cases and error paths, not just the happy path
 - For code that interacts with external services (OpenAI, Ollama), test parsing/logic locally with mock data
 
 ### Documentation
 - **Before pushing or releasing, review all documentation for accuracy:**
-  - `README.md` — features, quick start, badges
-  - `INSTALL.md` — installation methods, shell completions
-  - `CHANGELOG.md` — new entries for every user-visible change
-  - `CLAUDE.md` — architecture, commands, patterns
+  - `README.md`: features, quick start, badges
+  - `INSTALL.md`: installation methods, shell completions
+  - `CHANGELOG.md`: new entries for every user-visible change
+  - `CLAUDE.md`: architecture, commands, patterns
 - When adding new commands, flags, or provider types, update all relevant docs in the same commit
 - `CHANGELOG.md` must be updated for every release with a dated entry following Keep a Changelog format

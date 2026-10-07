@@ -66,7 +66,7 @@ pub enum ContentPart {
 ///
 /// The representation is `#[serde(untagged)]`, so a text-only message
 /// serializes to (and deserializes from) exactly the bare-string form used in
-/// ailloy 1.x — `"content": "hello"`. Multi-part content serializes to a JSON
+/// ailloy 1.x: `"content": "hello"`. Multi-part content serializes to a JSON
 /// array of tagged part objects.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
@@ -226,7 +226,7 @@ impl Message {
                 "xml" => Kind::File("application/xml"),
                 "html" => Kind::File("text/html"),
                 other => anyhow::bail!(
-                    "unsupported attachment type '{}' for '{}' — supported: images (png, jpg, jpeg, gif, webp), pdf, and text files (txt, md, csv, json, yaml, yml, xml, html)",
+                    "unsupported attachment type '{}' for '{}'; supported: images (png, jpg, jpeg, gif, webp), pdf, and text files (txt, md, csv, json, yaml, yml, xml, html)",
                     if other.is_empty() {
                         "(no extension)"
                     } else {
@@ -238,7 +238,7 @@ impl Message {
 
             let data = std::fs::read(path).with_context(|| {
                 format!(
-                    "Failed to read attachment '{}' — check the path exists and is readable.",
+                    "Failed to read attachment '{}'. Check the path exists and is readable.",
                     path.display()
                 )
             })?;
@@ -272,7 +272,7 @@ impl Message {
 
 /// Build the OpenAI Chat Completions `messages` array from our [`Message`]s.
 ///
-/// A text-only message stays wire-compatible with ailloy 1.x — its `content`
+/// A text-only message stays wire-compatible with ailloy 1.x: its `content`
 /// is a bare JSON string, never an array. A message carrying attachment parts
 /// becomes a content array of typed blocks:
 /// - text → `{"type":"text","text":…}`
@@ -454,10 +454,10 @@ impl ResponseFormat {
     pub(crate) fn nudge_text(&self) -> String {
         match self {
             ResponseFormat::JsonObject => {
-                "\n\nRespond with a single valid JSON object and nothing else — no prose, no code fences.".to_string()
+                "\n\nRespond with a single valid JSON object and nothing else: no prose, no code fences.".to_string()
             }
             ResponseFormat::JsonSchema { schema, .. } => format!(
-                "\n\nRespond with a single valid JSON document matching this JSON Schema exactly — no prose, no code fences:\n{}",
+                "\n\nRespond with a single valid JSON document matching this JSON Schema exactly, no prose, no code fences:\n{}",
                 serde_json::to_string_pretty(schema).unwrap_or_default()
             ),
         }

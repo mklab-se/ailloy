@@ -198,7 +198,7 @@ impl std::str::FromStr for Capability {
 pub enum Auth {
     /// Read API key from an environment variable.
     Env(String),
-    /// Inline API key (discouraged — prefer env or keychain).
+    /// Inline API key (discouraged, prefer env or keychain).
     ApiKey(String),
     /// Read the API key from the OS keychain (service `ailloy`,
     /// account = the node id). Store with `ailloy ai config set-key <node>`
@@ -298,7 +298,7 @@ impl<'de> Deserialize<'de> for Auth {
 // AiNode
 // ---------------------------------------------------------------------------
 
-/// An AI node — the atomic configuration unit for a specific model from a
+/// An AI node: the atomic configuration unit for a specific model from a
 /// specific provider, with all connection details and capability tags.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiNode {
@@ -339,7 +339,7 @@ pub struct AiNode {
 }
 
 impl AiNode {
-    /// A bare node for the given provider — the starting point for
+    /// A bare node for the given provider, the starting point for
     /// programmatic configuration (fill in model/auth/capabilities and pass
     /// to [`Config::ensure_node`] / [`Config::upsert_node`]).
     pub fn new(provider: ProviderKind) -> Self {
@@ -359,7 +359,7 @@ impl AiNode {
         }
     }
 
-    /// Human-readable detail string — deployment, model, or binary name.
+    /// Human-readable detail string: deployment, model, or binary name.
     pub fn detail(&self) -> &str {
         self.deployment
             .as_deref()
@@ -464,7 +464,7 @@ pub struct EmbeddingMetadata {
 impl EmbeddingMetadata {
     /// Generate Azure AI Search vectorizer configuration JSON.
     ///
-    /// Works with Azure OpenAI and Microsoft Foundry nodes — both are backed
+    /// Works with Azure OpenAI and Microsoft Foundry nodes, both are backed
     /// by Azure AI Services resources that expose an OpenAI-compatible endpoint.
     /// For Foundry nodes, the `.services.ai.azure.com` endpoint is converted
     /// to the `.openai.azure.com` variant that Azure AI Search expects.
@@ -485,7 +485,7 @@ impl EmbeddingMetadata {
 
         // Azure AI Search expects the .openai.azure.com endpoint variant.
         // Foundry nodes use .services.ai.azure.com (or .cognitiveservices.azure.com),
-        // which is the same underlying resource — convert to the OpenAI endpoint.
+        // which is the same underlying resource, so convert to the OpenAI endpoint.
         let resource_uri = endpoint
             .replace(".services.ai.azure.com", ".openai.azure.com")
             .replace(".cognitiveservices.azure.com", ".openai.azure.com");
@@ -505,7 +505,7 @@ impl EmbeddingMetadata {
         });
 
         // Include API key if the node uses key-based auth.
-        // If using Azure CLI auth, omit the key — Azure AI Search will use
+        // If using Azure CLI auth, omit the key: Azure AI Search will use
         // its managed identity or system-assigned identity instead.
         match &self.auth {
             Some(Auth::ApiKey(key)) => {
@@ -516,7 +516,7 @@ impl EmbeddingMetadata {
                     params["apiKey"] = serde_json::json!(key);
                 }
             }
-            _ => {} // Azure CLI or no auth — no apiKey in vectorizer config
+            _ => {} // Azure CLI or no auth: no apiKey in vectorizer config
         }
 
         Ok(serde_json::json!({
@@ -552,9 +552,9 @@ pub const ALL_CAPABILITY_KEYS: &[&str] = &["chat", "image", "video", "embedding"
 
 /// Well-known consent keys for external CLI tools.
 pub mod consent_keys {
-    /// Azure CLI (`az`) — used for Azure OpenAI discovery and authentication.
+    /// Azure CLI (`az`), used for Azure OpenAI discovery and authentication.
     pub const AZURE_CLI: &str = "azure-cli";
-    /// Google Cloud CLI (`gcloud`) — used for Vertex AI authentication.
+    /// Google Cloud CLI (`gcloud`), used for Vertex AI authentication.
     pub const GCLOUD_CLI: &str = "gcloud-cli";
 }
 
@@ -610,7 +610,7 @@ pub struct Config {
     pub defaults: BTreeMap<String, String>,
 
     /// User consent for external CLI tools (e.g. "azure-cli" -> true).
-    /// Security decisions — not overridable by local `.ailloy.yaml`.
+    /// Security decisions, not overridable by local `.ailloy.yaml`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub consents: BTreeMap<String, bool>,
 }
@@ -715,7 +715,7 @@ impl Config {
             nodes.insert(k, v);
         }
 
-        // Consents are security decisions — always use global, never overridden by local config.
+        // Consents are security decisions: always use global, never overridden by local config.
         let consents = global.consents;
 
         Self {
@@ -1734,7 +1734,7 @@ consents:
 
     #[test]
     fn test_embedding_metadata_auto_dimensions() {
-        // No explicit defaults.dimensions — should auto-detect from model name
+        // No explicit defaults.dimensions, so it should auto-detect from model name
         let node = AiNode {
             provider: ProviderKind::MicrosoftFoundry,
             alias: None,
@@ -1994,7 +1994,7 @@ mod local_config_tests {
             &tmp.path().join(".ailloy.yaml"),
             "nodes:\n  outer/x:\n    provider: openai\n    model: outer\ndefaults:\n  chat: outer/x\n",
         );
-        // inner local config — the closest one from `deep`
+        // inner local config: the closest one from `deep`
         write(
             &tmp.path().join("project/.ailloy.yaml"),
             "nodes:\n  inner/y:\n    provider: anthropic\n    model: inner\ndefaults:\n  chat: inner/y\n",
@@ -2033,7 +2033,7 @@ mod local_config_tests {
         let config = Config::load_from_dir(tmp.path()).unwrap();
         assert!(config.nodes.contains_key("local/z"));
         assert!(matches!(config.source, ConfigSource::LocalExtendsGlobal(_)));
-        // global nodes (if any on this machine) are retained by merge — we
+        // global nodes (if any on this machine) are retained by merge, so we
         // can't assert machine state, but the source proves the merge path ran
         // and defaults from local won:
         assert_eq!(
@@ -2048,7 +2048,7 @@ mod local_config_tests {
         let deep = tmp.path().join("a/b/c");
         std::fs::create_dir_all(&deep).unwrap();
         // NOTE: walking up from a tempdir eventually hits $HOME only if tmp is
-        // under it — on macOS /var/folders is outside home, so this exercises
+        // under it. On macOS /var/folders is outside home, so this exercises
         // the pure-global fallback deterministically.
         let config = Config::load_from_dir(&deep).unwrap();
         assert!(matches!(config.source, ConfigSource::Global));
@@ -2063,7 +2063,7 @@ mod local_config_tests {
         );
         let config = Config::load_from_dir(tmp.path()).unwrap();
         // consents come from the GLOBAL config, so the local `azure-cli: true`
-        // must not appear unless the machine config already grants it — we
+        // must not appear unless the machine config already grants it, so we
         // assert it matches the global config exactly.
         let global = Config::load_global().unwrap();
         assert_eq!(config.consents, global.consents);

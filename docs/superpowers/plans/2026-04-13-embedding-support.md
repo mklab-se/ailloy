@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add embedding as a first-class capability — types, Provider trait method, five provider implementations, metadata/Azure-vectorizer export, blocking client, and CLI command.
+**Goal:** Add embedding as a first-class capability: types, Provider trait method, five provider implementations, metadata/Azure-vectorizer export, blocking client, and CLI command.
 
 **Architecture:** Follows the existing pattern: `Capability::Embedding` + `Task::Embedding` for config routing, `Provider::embed()` trait method with default `Unsupported`, per-provider HTTP implementations, `EmbeddingMetadata` struct for config export, `to_azure_search_vectorizer()` helper, and `ailloy embed` CLI command.
 
@@ -49,7 +49,7 @@ fn test_task_embedding_to_capability() {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cargo test --lib types::tests::test_embed_options_builder 2>&1 | tail -5`
-Expected: FAIL — `EmbedOptions` not defined, `Task::Embedding` not defined
+Expected: FAIL: `EmbedOptions` not defined, `Task::Embedding` not defined
 
 - [ ] **Step 3: Add EmbedResponse, EmbedOptions, EmbedOptionsBuilder, and Task::Embedding**
 
@@ -246,7 +246,7 @@ fn test_azure_search_vectorizer_non_azure_fails() {
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test --lib config::tests::test_capability_embedding 2>&1 | tail -5`
-Expected: FAIL — `Capability::Embedding` not defined
+Expected: FAIL: `Capability::Embedding` not defined
 
 - [ ] **Step 3: Add Capability::Embedding**
 
@@ -344,7 +344,7 @@ pub struct EmbeddingMetadata {
 impl EmbeddingMetadata {
     /// Generate Azure AI Search vectorizer configuration JSON.
     ///
-    /// Only works for Azure OpenAI nodes — Azure AI Search vectorizers
+    /// Only works for Azure OpenAI nodes, since Azure AI Search vectorizers
     /// only support Azure OpenAI as a connected embedding source.
     pub fn to_azure_search_vectorizer(&self, name: &str) -> Result<serde_json::Value> {
         if self.provider != ProviderKind::AzureOpenAi {
@@ -438,7 +438,7 @@ async fn test_unsupported_embed() {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cargo test --lib client::tests::test_unsupported_embed 2>&1 | tail -5`
-Expected: FAIL — `embed` method not found on `Client`
+Expected: FAIL: `embed` method not found on `Client`
 
 - [ ] **Step 3: Add Provider::embed() and Client methods**
 
@@ -580,7 +580,7 @@ mod tests {
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test --lib openai::tests 2>&1 | tail -5`
-Expected: FAIL — `EmbedRequest` / `EmbedApiResponse` not defined
+Expected: FAIL: `EmbedRequest` / `EmbedApiResponse` not defined
 
 - [ ] **Step 3: Add embedding types and Provider::embed implementation**
 
@@ -724,7 +724,7 @@ mod tests {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cargo test --lib azure::tests 2>&1 | tail -5`
-Expected: FAIL — `EmbedApiResponse` not defined
+Expected: FAIL: `EmbedApiResponse` not defined
 
 - [ ] **Step 3: Add embedding types and implementation**
 
@@ -875,7 +875,7 @@ mod tests {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cargo test --lib ollama::tests 2>&1 | tail -5`
-Expected: FAIL — `EmbedApiResponse` not defined
+Expected: FAIL: `EmbedApiResponse` not defined
 
 - [ ] **Step 3: Add embedding types and implementation**
 
@@ -991,7 +991,7 @@ mod tests {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cargo test --lib vertex::tests 2>&1 | tail -5`
-Expected: FAIL — `EmbedPredictResponse` not defined
+Expected: FAIL: `EmbedPredictResponse` not defined
 
 - [ ] **Step 3: Add embedding types and implementation**
 
@@ -1139,7 +1139,7 @@ mod tests {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cargo test --lib foundry::tests 2>&1 | tail -5`
-Expected: FAIL — `EmbedApiResponse` not defined
+Expected: FAIL: `EmbedApiResponse` not defined
 
 - [ ] **Step 3: Add embedding types and implementation**
 
@@ -1586,8 +1586,8 @@ git commit -m "chore: fix unsupported embed test and pass full CI checks"
 In the `Architecture` section file listing, add after the `commands/image.rs` entry:
 
 ```
-    image.rs          # `ailloy image` — image generation, direct and interactive modes
-    embed.rs          # `ailloy embed` — embedding generation, metadata, Azure vectorizer export
+    image.rs          # `ailloy image`: image generation, direct and interactive modes
+    embed.rs          # `ailloy embed`: embedding generation, metadata, Azure vectorizer export
 ```
 
 Update the `config.rs` description to mention `EmbeddingMetadata`:
@@ -1602,7 +1602,7 @@ Update the `config.rs` description to mention `EmbeddingMetadata`:
 In the `Key Patterns` section, update the **Provider trait** bullet to mention `embed()`:
 
 ```
-- **Provider trait** (`client.rs`): unified `async_trait` with default methods returning `Unsupported` — `name()`, `chat()`, `chat_stream()`, `generate_image()`, `embed()`
+- **Provider trait** (`client.rs`): unified `async_trait` with default methods returning `Unsupported`: `name()`, `chat()`, `chat_stream()`, `generate_image()`, `embed()`
 ```
 
 - [ ] **Step 2: Update CHANGELOG.md**

@@ -479,7 +479,7 @@ fn build_fields_with_auth(
 ) -> Vec<FormField> {
     let mut fields: Vec<FormField> = Vec::new();
 
-    // Provider selector (only when adding — editing keeps the provider fixed).
+    // Provider selector (only when adding; editing keeps the provider fixed).
     if !editing {
         let selected = PROVIDER_ORDER
             .iter()
@@ -494,7 +494,7 @@ fn build_fields_with_auth(
         ));
     }
 
-    // Discovery pseudo-field for Azure/Foundry (add-node only) — placed right
+    // Discovery pseudo-field for Azure/Foundry (add-node only), placed right
     // under the provider selector because it prefills everything below it.
     if !editing
         && matches!(
@@ -976,7 +976,7 @@ mod tests {
         form.provider = ProviderKind::AzureOpenAi;
         form.rebuild();
         assert!(form.field(FieldKey::Discover).is_some());
-        // Discovery sits directly beneath the provider selector — it prefills
+        // Discovery sits directly beneath the provider selector: it prefills
         // the rest of the form, so it must come first, not at the bottom.
         assert_eq!(form.fields[0].key, FieldKey::Provider);
         assert_eq!(form.fields[1].key, FieldKey::Discover);

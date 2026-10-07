@@ -8,7 +8,7 @@ use ailloy::Client;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Uses ~/.config/ailloy/config.yaml — run `ailloy ai config` once to set up
+    // Uses ~/.config/ailloy/config.yaml; run `ailloy ai config` once to set up
     // a node with the `video` capability, then `ailloy ai config set-default
     // <node> --task video` (or `defaults.video` in the config file directly).
     let client = Client::for_capability("video")?;

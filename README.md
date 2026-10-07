@@ -146,7 +146,7 @@ async fn main() -> anyhow::Result<()> {
 
 ### Structured JSON output
 
-Force the model to answer with JSON — a single object, or strict conformance to a JSON Schema:
+Force the model to answer with JSON: a single object, or strict conformance to a JSON Schema:
 
 ```rust
 use ailloy::{ChatOptions, Client, Message};
@@ -222,7 +222,7 @@ async fn main() -> anyhow::Result<()> {
 ```
 
 `Client::generate_image_with` is deprecated in favor of `generate_images_with`
-(some models return multiple variants) — see `MIGRATION.md`.
+(some models return multiple variants); see `MIGRATION.md`.
 
 ### Video generation
 
@@ -298,7 +298,7 @@ cargo binstall ailloy
 ```
 
 `cargo install` builds from source; on Windows that needs NASM and CMake on `PATH` (see
-[INSTALL.md](INSTALL.md#cargo)) — `cargo binstall` and Homebrew skip that by using a pre-built binary.
+[INSTALL.md](INSTALL.md#cargo)). `cargo binstall` and Homebrew skip that by using a pre-built binary.
 
 Configure your nodes:
 
@@ -409,21 +409,21 @@ See `examples/eval.rs` for all three question types.
 
 | Provider | Kind | Chat | Stream | Images | Video | Auth |
 |----------|------|:----:|:------:|:------:|:-----:|------|
-| OpenAI | `openai` | yes | yes | DALL-E, gpt-image-2 | — | API key |
-| Anthropic | `anthropic` | yes | yes | — | — | API key |
+| OpenAI | `openai` | yes | yes | DALL-E, gpt-image-2 | n/a | API key |
+| Anthropic | `anthropic` | yes | yes | n/a | n/a | API key |
 | Azure OpenAI | `azure-openai` | yes | yes | yes (gpt-image-2) | Sora | API key / `az` CLI |
 | Microsoft Foundry | `microsoft-foundry` | yes | yes | yes (gpt-image-2, MAI-Image) | Sora | API key / `az` CLI |
-| Google Vertex AI | `vertex-ai` | yes | yes | Imagen | — | `gcloud` CLI |
-| Ollama | `ollama` | yes | yes | — | — | None |
-| LM Studio | `openai` | yes | yes | — | — | None |
-| Local Agent | `local-agent` | yes | yes | — | — | None |
+| Google Vertex AI | `vertex-ai` | yes | yes | Imagen | n/a | `gcloud` CLI |
+| Ollama | `ollama` | yes | yes | n/a | n/a | None |
+| LM Studio | `openai` | yes | yes | n/a | n/a | None |
+| Local Agent | `local-agent` | yes | yes | n/a | n/a | None |
 | TypeSafe | `typesafe` | no (eval only) | no | no | no | API key (`TYPESAFE_API_KEY`) |
 
 **LM Studio** uses the OpenAI-compatible API (`http://localhost:1234` by default). **Local Agent** delegates to CLI tools installed on your system: `claude`, `codex`, or `copilot`.
 
-**Azure OpenAI and Microsoft Foundry** default to the unified `/openai/v1/` endpoint surface — no dated `api-version` needed, and the `model` field is your deployment name. Nodes that set an explicit `api_version` in config keep using the legacy dated endpoints. Video (Sora) uses the OpenAI-style `/openai/v1/videos` endpoints, following the same rule — no `?api-version` on the v1 surface, appended only for dated nodes.
+**Azure OpenAI and Microsoft Foundry** default to the unified `/openai/v1/` endpoint surface, so no dated `api-version` is needed, and the `model` field is your deployment name. Nodes that set an explicit `api_version` in config keep using the legacy dated endpoints. Video (Sora) uses the OpenAI-style `/openai/v1/videos` endpoints, following the same rule: no `?api-version` on the v1 surface, appended only for dated nodes.
 
-Chat, image, and video attachments/mapping also vary by provider — see the provider support table in `MIGRATION.md` for exactly which providers accept image/PDF/text attachments.
+Chat, image, and video attachments/mapping also vary by provider. See the provider support table in `MIGRATION.md` for exactly which providers accept image/PDF/text attachments.
 
 ## Configuration
 
@@ -480,7 +480,7 @@ Instead of environment variables or inline keys, store API keys in the operating
 ailloy ai config set-key openai/gpt-5.4-mini   # prompts for the key, stores it securely
 ```
 
-This switches the node's auth to `keychain: true` — the key never touches the config file. Keys are stored under service `ailloy` with the node ID as account. Keychain support is behind the `keychain` feature (enabled by default).
+This switches the node's auth to `keychain: true`, so the key never touches the config file. Keys are stored under service `ailloy` with the node ID as account. Keychain support is behind the `keychain` feature (enabled by default).
 
 ### Local project config
 
@@ -488,14 +488,14 @@ Create `.ailloy.yaml` in your project root to override or add nodes for that pro
 
 ### Per-node default parameters
 
-Each node can carry its own defaults for tunable request parameters — `defaults:`
+Each node can carry its own defaults for tunable request parameters: `defaults:`
 under a node in YAML (`AiNode.node_defaults` in Rust), keyed by capability, e.g.
 `image.quality`, `image.format`, `video.seconds`, `chat.temperature`,
 `embedding.dimensions`. Resolution order is explicit call options > node
 defaults > provider defaults, so passing an explicit `ImageOptions`/`ChatOptions`
 always wins. The full set of recognized keys, their value shapes, and which
 providers accept them live in `src/params.rs` (also drives the `ailloy ai config`
-dashboard's Defaults editor — see below).
+dashboard's Defaults editor, see below).
 
 ## CLI Commands
 
@@ -553,7 +553,7 @@ Ailloy uses feature flags to keep the library lean:
 | `keychain` | Yes | OS keychain storage for API keys (keyring) |
 | `config-tui` | No* | Full-screen ratatui config dashboard, status display, enable/disable (colored, crossterm, ratatui) |
 
-\* `config-tui` is automatically included when `cli` is enabled. `inquire` is a `cli`-only dependency (used by `ai config set-key`'s key prompt) — it is not pulled in by `config-tui` alone.
+\* `config-tui` is automatically included when `cli` is enabled. `inquire` is a `cli`-only dependency (used by `ai config set-key`'s key prompt), so it is not pulled in by `config-tui` alone.
 
 Library users should disable default features. To get the interactive config dashboard without the full CLI:
 
@@ -609,7 +609,7 @@ the tag triggers `.github/workflows/release.yml`, which:
 ## Folder-local configuration
 
 Drop a `.ailloy.yaml` in a repository and it becomes the complete ailloy
-configuration for everything run inside — different projects can use different
+configuration for everything run inside, so different projects can use different
 providers, models, and defaults. The **closest** file (walking up from the
 working directory) wins; folders without one fall back to the machine-wide
 config. Add `extends: global` to merge with the global config instead of

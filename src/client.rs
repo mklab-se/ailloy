@@ -800,7 +800,7 @@ impl Client {
     /// Download a completed video generation by generation ID.
     ///
     /// `generation_id` must be a single generation id from
-    /// [`VideoJob::generation_ids`], not [`VideoJob::id`] — on a multi-variant
+    /// [`VideoJob::generation_ids`], not [`VideoJob::id`]: on a multi-variant
     /// job, `id` is a `+`-joined composite of the individual generation ids
     /// and is rejected here with an actionable error.
     pub async fn download_video(&self, generation_id: &str) -> Result<VideoResponse> {
@@ -2102,7 +2102,7 @@ mod tests {
     #[test]
     fn merge_image_defaults_skips_compression_without_effective_format() {
         // A compression default alone (no format default, no preset format)
-        // must not be filled — compression requires jpeg/webp.
+        // must not be filled, since compression requires jpeg/webp.
         let defaults = defaults_map(&[("image.compression", "80")]);
         let mut opts = ImageOptions::default();
         merge_image_defaults(&mut opts, &defaults);

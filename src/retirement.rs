@@ -37,7 +37,7 @@ pub fn retirement_warning(model: &str) -> Option<String> {
         .filter(|(prefix, _, _)| normalized.starts_with(prefix))
         .max_by_key(|(prefix, _, _)| prefix.len())
         .map(|(_, date, replacement)| {
-            format!("model '{model}' retires {date} — consider switching to '{replacement}'")
+            format!("model '{model}' retires {date}, consider switching to '{replacement}'")
         })
 }
 

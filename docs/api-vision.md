@@ -8,7 +8,7 @@ This document describes the target API for ailloy. The primary product is the Ru
 
 ### The default command
 
-The most common thing you do with ailloy is ask a question. It should be as simple as possible — no subcommand required.
+The most common thing you do with ailloy is ask a question. It should be as simple as possible, with no subcommand required.
 
 ```bash
 # These are equivalent:
@@ -25,12 +25,12 @@ Implementation: before clap parses, peek at `argv[1]`. If it's not a known subco
 When stdin is a pipe (not a terminal), ailloy automatically reads it as context. No `--stdin` flag needed.
 
 ```bash
-# Stdin is auto-detected as piped — its content becomes context
+# Stdin is auto-detected as piped; its content becomes context
 git diff | ailloy "Review this diff"
 cat error.log | ailloy "What's going wrong here?"
 curl -s https://api.example.com/data | ailloy "Summarize this JSON"
 
-# No argument with piped input — stdin content is sent as-is
+# No argument with piped input: stdin content is sent as-is
 cat report.txt | ailloy
 
 # Works in scripts
@@ -41,7 +41,7 @@ How stdin + message combine:
 
 | stdin | argument | behavior |
 | --- | --- | --- |
-| piped | present | `"{argument}\n\n{stdin}"` — argument is instruction, stdin is context |
+| piped | present | `"{argument}\n\n{stdin}"` (argument is instruction, stdin is context) |
 | piped | absent | stdin content sent as the full message |
 | not piped | present | argument is the full message |
 | not piped | absent + `-i` | enter interactive mode |
@@ -59,7 +59,7 @@ ailloy "Write a haiku" --temperature 1.2 --max-tokens 50
 # Stream tokens to the terminal as they're generated
 ailloy "Tell me a story" --stream
 
-# Quiet mode — only output the response, no status on stderr
+# Quiet mode: only output the response, no status on stderr
 ailloy -q "Give me a JSON object" > output.json
 
 # Combine everything
@@ -81,7 +81,7 @@ ailloy "The weather is nice today" --system "Translate to Swedish"
 ailloy "List the top 5 programming languages" --system "Respond only in valid JSON"
 ```
 
-When is `--system` useful vs just putting it in the message? System prompts sit in a privileged position in the API — models treat them as persistent instructions rather than conversational input. This matters for:
+When is `--system` useful vs just putting it in the message? System prompts sit in a privileged position in the API: models treat them as persistent instructions rather than conversational input. This matters for:
 
 - Keeping the instruction separate from user content (important for safety)
 - Interactive mode, where the system prompt persists across turns but user messages change
@@ -108,7 +108,7 @@ ailloy -i "Let's design a REST API"
 Inside a session:
 
 ```text
-ailloy v0.2.0 — azure-gpt5 (gpt-5.3)
+ailloy v0.2.0: azure-gpt5 (gpt-5.3)
 Type /help for commands, /quit to exit.
 
 > What is a monad?
@@ -142,7 +142,7 @@ git diff | ailloy "Write a detailed review" -o review.md
 
 ### Image generation
 
-All image output — raster or vector — uses the same `-o` flag. The user thinks "I want an image", and ailloy handles the rest.
+All image output, raster or vector, uses the same `-o` flag. The user thinks "I want an image", and ailloy handles the rest.
 
 ```bash
 # Raster images → image generation provider (Nano Banana, Imagen, DALL-E)
@@ -153,7 +153,7 @@ ailloy "Product photo of a watch" --provider vertex-imagen -o watch.png
 # SVG → chat provider, ailloy auto-generates the right system prompt
 ailloy "Minimalist blue tech logo" -o logo.svg
 
-# The user experience is the same — just pick an extension
+# The user experience is the same: just pick an extension
 ailloy "Corporate logo, clean lines" -o logo.png    # raster via image gen
 ailloy "Corporate logo, clean lines" -o logo.svg    # vector via chat
 ```
@@ -167,7 +167,7 @@ Output routing logic for `--output`:
 | `.txt`, `.md`, `.json`, etc. | Chat | Uses `defaults.chat` provider, saves text response |
 | No `--output` | Chat | Prints text to stdout (default) |
 
-For SVG, ailloy auto-injects a system prompt like "Generate valid SVG markup. Output only the raw SVG code with no explanation or markdown." The user never has to think about SVG being text — it just works like any other image format.
+For SVG, ailloy auto-injects a system prompt like "Generate valid SVG markup. Output only the raw SVG code with no explanation or markdown." The user never has to think about SVG being text. It just works like any other image format.
 
 Ailloy only supports raster formats the image provider supports. If you request `.webp` and the provider only supports PNG, you get a clear error listing supported formats.
 
@@ -193,7 +193,7 @@ ailloy transcribe recording.mp3 --output transcript.txt
 ### Setup and configuration
 
 ```bash
-# Interactive wizard — detects available providers first
+# Interactive wizard: detects available providers first
 ailloy config init
 
 # Per-project config (writes .ailloy.yaml in current directory)
@@ -259,14 +259,14 @@ The config file lives at `~/.config/ailloy/config.yaml` (global) with optional p
 ### Config structure
 
 ```yaml
-# Task-level defaults — which provider to use for each task type
+# Task-level defaults: which provider to use for each task type
 defaults:
   chat: azure-gpt5
   image: vertex-nanobanana
   # embedding: openai-embed
   # transcription: whisper
 
-# Named provider configurations — each fully self-contained
+# Named provider configurations, each fully self-contained
 providers:
   # --- Chat providers ---
 
@@ -338,8 +338,8 @@ providers:
 ### Design principles
 
 - **Each provider entry is fully self-contained.** No inheritance, no shared credentials sections, no magic. You can read any single entry and understand exactly what it does.
-- **Duplication is acceptable.** Two providers using the same OpenAI API key both carry it. Config files are written once and read many times — clarity beats DRY.
-- **`defaults` maps task types to provider names.** `defaults.chat` is required (error with helpful message if missing). Other task defaults are optional — if not configured, those tasks require `--provider`.
+- **Duplication is acceptable.** Two providers using the same OpenAI API key both carry it. Config files are written once and read many times, so clarity beats DRY.
+- **`defaults` maps task types to provider names.** `defaults.chat` is required (error with helpful message if missing). Other task defaults are optional; if not configured, those tasks require `--provider`.
 - **`task` defaults to `chat` when omitted.** Most providers are chat providers. Only non-chat providers (image generation, embeddings, etc.) need to specify their task explicitly.
 - **Env var fallback.** A `kind: openai` entry without `api_key` falls back to `OPENAI_API_KEY`. A `kind: azure-openai` entry with `auth: azure-cli` shells out to `az account get-access-token`. This covers the common simple cases.
 
@@ -359,7 +359,7 @@ Each is named, each stands alone, and the user picks which to use by name or let
 `.ailloy.yaml` in the project root overrides the global config. The merge is simple: local `defaults` entries override global ones, local `providers` entries are added (or override by name).
 
 ```yaml
-# .ailloy.yaml — project-level override
+# .ailloy.yaml: project-level override
 defaults:
   chat: claude    # this project uses claude instead of azure-gpt5
 ```
@@ -377,7 +377,7 @@ defaults:
 5. **Builder pattern for ergonomics.** No 8-parameter function signatures.
 6. **Async-first, sync-friendly.** The primary API is async. A `blocking` feature provides sync wrappers.
 
-### Quick start — one-shot chat
+### Quick start: one-shot chat
 
 ```rust
 use ailloy::{Client, Message};
@@ -428,16 +428,16 @@ for event in client.chat_stream(&[Message::user("Tell me a story")])? {
 ```rust
 use ailloy::{Client, Task};
 
-// From config — uses defaults.chat provider
+// From config, uses defaults.chat provider
 let client = Client::from_config()?;
 
-// From config — specific named provider
+// From config, specific named provider
 let client = Client::from_config()?.with_provider("anthropic-sonnet")?;
 
-// From config — default provider for a task type
+// From config, default provider for a task type
 let client = Client::from_config()?.for_task(Task::ImageGeneration)?;
 
-// Construct programmatically — no config file needed
+// Construct programmatically, no config file needed
 let client = Client::openai("sk-...", "gpt-5.2")?;
 let client = Client::anthropic("sk-ant-...", "claude-sonnet-4-6")?;
 let client = Client::ollama("qwen3.5:latest", None)?;
@@ -464,7 +464,7 @@ use ailloy::{Client, ChatOptions, Message};
 
 let client = Client::from_config()?;
 
-// Simple — no options
+// Simple, no options
 let response = client.chat(&[Message::user("Hello")]).await?;
 
 // With options
@@ -524,7 +524,7 @@ let r2 = conv.send("How does that relate to lifetimes?").await?;
 println!("{}", r2.content);
 // ^ this request included the full conversation history
 
-// Streaming works too — response auto-appended to history when stream completes
+// Streaming works too: response auto-appended to history when stream completes
 let mut stream = conv.send_stream("Give me an example").await?;
 while let Some(event) = stream.next().await {
     // ...
@@ -564,7 +564,7 @@ pub trait ChatHistory: Send + Sync {
 }
 ```
 
-The key design choice: `messages()` returns `Vec<Message>`, not `&[Message]`. This lets implementations transform what gets sent — for example, a sliding window:
+The key design choice: `messages()` returns `Vec<Message>`, not `&[Message]`. This lets implementations transform what gets sent, for example, a sliding window:
 
 ```rust
 struct SlidingWindowHistory {
@@ -602,10 +602,10 @@ let mut conv = Conversation::with_history(client, history);
 
 Other implementations a library user might build:
 
-- **Redis-backed** — persist conversations across process restarts
-- **Token-counting** — window based on token budget, not message count
-- **Summarizing** — compress old messages using the AI itself
-- **Database-backed** — store conversations for audit/analytics
+- **Redis-backed**: persist conversations across process restarts
+- **Token-counting**: window based on token budget, not message count
+- **Summarizing**: compress old messages using the AI itself
+- **Database-backed**: store conversations for audit/analytics
 
 Ailloy doesn't implement these, but the trait makes them straightforward.
 
@@ -651,7 +651,7 @@ let embeddings = client
 
 ### Custom providers
 
-Library users can implement their own providers. The `Provider` trait has default methods that return `Unsupported` — implement only the capabilities your provider supports.
+Library users can implement their own providers. The `Provider` trait has default methods that return `Unsupported`, so implement only the capabilities your provider supports.
 
 ```rust
 use ailloy::provider::Provider;
@@ -717,7 +717,7 @@ let client = Client::from_provider(Box::new(MyProvider { /* ... */ }));
 let response = client.chat(&[Message::user("Hello")]).await?;
 ```
 
-The unified trait (over separate `ChatCapable` / `ImageCapable` traits) was chosen because provider selection is config-driven and dynamic at runtime — you don't know at compile time which provider the user configured. One `Box<dyn Provider>` is simpler than juggling multiple trait objects. Library users who want compile-time guarantees can use the concrete types directly (`OpenAiClient`, `OllamaClient`, etc.).
+The unified trait (over separate `ChatCapable` / `ImageCapable` traits) was chosen because provider selection is config-driven and dynamic at runtime: you don't know at compile time which provider the user configured. One `Box<dyn Provider>` is simpler than juggling multiple trait objects. Library users who want compile-time guarantees can use the concrete types directly (`OpenAiClient`, `OllamaClient`, etc.).
 
 ### Multiple providers
 
@@ -755,7 +755,7 @@ use ailloy::detect::detect_providers;
 
 let detected = detect_providers().await;
 for p in &detected {
-    println!("{}: {} — {}", p.kind, p.name, p.details);
+    println!("{}: {} ({})", p.kind, p.name, p.details);
 }
 
 // Auto-configure from detection
@@ -807,7 +807,7 @@ Ailloy abstracts multiple AI capabilities, not just chat:
 
 Task routing:
 
-1. `defaults.chat` is used for chat (required — error if missing)
+1. `defaults.chat` is used for chat (required, error if missing)
 2. `defaults.image` is used when `--output` has an image extension
 3. `defaults.embedding` is used for `ailloy embed`
 4. `--provider name` always overrides the default
@@ -935,16 +935,16 @@ providers:
 API migration:
 
 ```rust
-// v0.1 — works, low-level
+// v0.1: works, low-level
 let config = Config::load()?;
 let provider = create_provider(&config)?;
 let response = provider.chat(&[Message::user("Hello")]).await?;
 
-// v0.2 — ergonomic
+// v0.2: ergonomic
 let client = Client::from_config()?;
 let response = client.chat(&[Message::user("Hello")]).await?;
 
-// v0.2 — raw clients still public for advanced use
+// v0.2: raw clients still public for advanced use
 use ailloy::openai::OpenAiClient;
 let raw = OpenAiClient::new("sk-...", "gpt-4o", None);
 let response = raw.chat(&[Message::user("Hello")], None).await?;
@@ -962,13 +962,13 @@ let response = raw.chat(&[Message::user("Hello")], None).await?;
 
 4. **Unified Provider trait.** One trait with default methods returning `Unsupported`, not separate capability traits. Rationale: provider selection is config-driven and dynamic, so `Box<dyn Provider>` is the natural type. Compile-time guarantees are available through concrete types for advanced users.
 
-5. **Blocking feature.** Own internal tokio runtime, like `reqwest::blocking`. Simple, well-understood tradeoff. Can't be called from within an existing async runtime — documented limitation.
+5. **Blocking feature.** Own internal tokio runtime, like `reqwest::blocking`. Simple, well-understood tradeoff. Can't be called from within an existing async runtime (documented limitation).
 
 6. **Streaming in blocking mode.** Iterator-based: `blocking::ChatStream` implements `Iterator<Item = Result<StreamEvent>>`. Natural for Rust, composable with standard iterator patterns.
 
 7. **Image format handling.** Only support formats the provider actually supports. Clear error with list of supported formats. No silent conversion. `"dall-e-3 supports PNG and JPEG. SVG is not available."`
 
-8. **Config structure.** Self-contained provider entries with `defaults` task-routing map. No inheritance, no shared credentials. Duplication is acceptable — clarity over DRY. `task` defaults to `chat` when omitted. `defaults.chat` is required.
+8. **Config structure.** Self-contained provider entries with `defaults` task-routing map. No inheritance, no shared credentials. Duplication is acceptable: clarity over DRY. `task` defaults to `chat` when omitted. `defaults.chat` is required.
 
 9. **Client owns the provider.** `Client` holds `Box<dyn Provider>`. No lifetime complexity. Users who need sharing wrap in `Arc<Client>`.
 
@@ -976,4 +976,4 @@ let response = raw.chat(&[Message::user("Hello")], None).await?;
 
 11. **Streaming conversations auto-append.** When the stream's `Done` event fires, the assembled response is added to history automatically.
 
-12. **`ChatHistory::messages()` returns `Vec<Message>`.** More flexible than `&[Message]` — allows filtering/windowing. Clone cost is negligible for typical conversation lengths.
+12. **`ChatHistory::messages()` returns `Vec<Message>`.** More flexible than `&[Message]`, allows filtering/windowing. Clone cost is negligible for typical conversation lengths.

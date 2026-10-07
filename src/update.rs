@@ -113,13 +113,13 @@ mod tests {
 
     #[test]
     fn test_is_running_from_source() {
-        // When running tests, the binary is in target/debug/deps/ — so this should be true
+        // When running tests, the binary is in target/debug/deps/, so this should be true
         assert!(is_running_from_source());
     }
 
     #[test]
     fn test_upgrade_hint_defaults_to_cargo() {
-        // In a test/dev environment, exe is in target/ — not Cellar or homebrew
+        // In a test/dev environment, exe is in target/, not Cellar or homebrew
         let hint = upgrade_hint();
         assert_eq!(hint, "cargo install ailloy");
     }

@@ -62,7 +62,7 @@ fn set_node_field(node: &mut AiNode, field: &str, value: &str) -> Result<()> {
 fn unset_node_field(node: &mut AiNode, field: &str) -> Result<()> {
     match field {
         "provider" => anyhow::bail!(
-            "Cannot unset 'provider' — it is required. Remove the entire node with: ailloy ai config unset nodes.<id>"
+            "Cannot unset 'provider': it is required. Remove the entire node with: ailloy ai config unset nodes.<id>"
         ),
         "model" => node.model = None,
         "endpoint" => node.endpoint = None,

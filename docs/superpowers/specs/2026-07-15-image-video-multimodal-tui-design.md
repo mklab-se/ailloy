@@ -1,4 +1,4 @@
-# ailloy 2.0 — Foundry image support, image parameters, video generation, multimodal chat, per-node defaults, ratatui config TUI
+# ailloy 2.0: Foundry image support, image parameters, video generation, multimodal chat, per-node defaults, ratatui config TUI
 
 Date: 2026-07-15
 Status: Approved by Kristofer (design review in session)
@@ -27,7 +27,7 @@ Azure/Foundry endpoint rule (no `api_version` on node → v1 surface).
 
 ### Images (gpt-image-2 GA; gpt-image-1/1.5/1-mini limited access)
 
-- `POST /openai/v1/images/generations` — JSON body. Params: `model`, `prompt`
+- `POST /openai/v1/images/generations`: JSON body. Params: `model`, `prompt`
   (≤32k chars), `size` (`auto` | `1024x1024` | `1536x1024` | `1024x1536`;
   gpt-image-2 additionally arbitrary WxH: multiples of 16 px, long edge ≤ 3840,
   aspect ≤ 3:1, 655,360–8,294,400 total pixels), `quality`
@@ -35,9 +35,9 @@ Azure/Foundry endpoint rule (no `api_version` on node → v1 surface).
   **webp not supported on Azure**), `output_compression` (0–100, jpeg only),
   `background` (`transparent`/`opaque`/`auto`; transparent requires png),
   `moderation` (`auto`/`low`), `stream` + `partial_images` (0–3).
-  `response_format` is NOT supported for gpt-image models — responses are
+  `response_format` is NOT supported for gpt-image models; responses are
   always `data[].b64_json`. Response includes token `usage`.
-- `POST /openai/v1/images/edits` — **multipart/form-data** (GA). Fields:
+- `POST /openai/v1/images/edits`: **multipart/form-data** (GA). Fields:
   `image[]` (1..n files, png/jpg < 50 MB), `prompt`, `model`, optional `mask`
   (png, same dims as first image, transparent = editable), `input_fidelity`
   (`high`/`low`, not on gpt-image-1-mini), plus the same size/quality/n/
@@ -46,18 +46,18 @@ Azure/Foundry endpoint rule (no `api_version` on node → v1 surface).
   remain for nodes with explicit `api_version`.
 - dall-e-3 retired on Azure 2026-03-04 (add to retirement table).
 
-### Video (sora-2, preview) — Azure jobs API
+### Video (sora-2, preview): Azure jobs API
 
 Chosen over the OpenAI-style `/videos` surface because it supports
 `n_variants` (Foundry playground parity), a wider size set, and thumbnails;
 OpenAI has deprecated its platform Videos API (shutdown 2026-09-24).
 
-- `POST /openai/v1/video/generations/jobs?api-version=preview` — JSON
+- `POST /openai/v1/video/generations/jobs?api-version=preview`: JSON
   (or multipart with input files, out of scope for v1 of this feature).
   Params: `prompt`, `model`, `width`+`height` (480x480, 854x480, 720x720,
   1280x720, 1080x1080, 1920x1080, both orientations), `n_seconds` (1–20,
   default 5), `n_variants` (1–5; 720p max 2, 1080p only 1).
-- `GET .../jobs/{id}?api-version=preview` — status: `queued`/`preprocessing`/
+- `GET .../jobs/{id}?api-version=preview`: returns status `queued`/`preprocessing`/
   `running`/`processing`/`succeeded`/`failed`/`cancelled`; `generations[]`
   each with an id; `failure_reason`; artifacts expire after ~24 h.
 - `GET /openai/v1/video/generations/{gen-id}/content/video?api-version=preview`
@@ -111,7 +111,7 @@ pub struct ImageOptions {
 - `ImageResponse` unchanged (per-image); multi-image = `Vec<ImageResponse>`.
   Response `usage` added as `Option<Usage>` on `ImageResponse`.
 - Implementation: shared internal `openai_images` request-builder module used
-  by OpenAI, Azure, and (new) Foundry clients — builds JSON generations body
+  by OpenAI, Azure, and (new) Foundry clients; builds JSON generations body
   or multipart edits form (reqwest `multipart::Form`, reading reference/mask
   files async). Azure's current unconditional `response_format: "b64_json"`
   is dropped for gpt-image models (kept for dall-e on OpenAI only).
@@ -142,7 +142,7 @@ pub type ProgressFn = Box<dyn Fn(&VideoJob) + Send + Sync>;
 Provider trait additions (all default `Unsupported`):
 
 - `generate_video(prompt, options, on_progress: Option<&ProgressFn>)
-  -> Result<Vec<VideoResponse>>` — create job, poll (2 s → 10 s backoff,
+  -> Result<Vec<VideoResponse>>`: create job, poll (2 s → 10 s backoff,
   overall timeout 15 min), download all generations.
 - `create_video_job(prompt, options) -> Result<VideoJob>`
 - `get_video_job(id) -> Result<VideoJob>`
@@ -153,7 +153,7 @@ Implemented for Azure + Foundry via the jobs API. On the v1 surface the jobs
 endpoints append `?api-version=preview`; nodes with explicit dated
 `api_version` use it instead. `Client` + `blocking::Client` expose all five.
 
-CLI: new `ailloy video` subcommand — `ailloy video "prompt" [-o clip.mp4]
+CLI: new `ailloy video` subcommand: `ailloy video "prompt" [-o clip.mp4]
 [--size 1280x720] [--seconds 8] [--variants 2] [-n node] [--raw]` with
 progress spinner showing job status; multiple variants write `clip.mp4`,
 `clip-2.mp4`, …. `ailloy chat "..." -o out.mp4` routes to video generation
@@ -201,7 +201,7 @@ pub enum ContentPart {
   `image.format`, `image.compression`, `video.size`, `video.seconds`,
   `video.variants`, `chat.temperature`, `chat.max_tokens`,
   `embedding.dimensions` (existing key kept as alias, read both).
-- New `params.rs` (library, no feature gate): static parameter registry —
+- New `params.rs` (library, no feature gate): static parameter registry:
   for each (capability, param): key, label, type (enum/int/size/float),
   allowed values or range, provider applicability, default. Drives TUI
   editing, CLI validation, and defaults parsing; single source of truth.
@@ -219,15 +219,15 @@ backend). Non-TTY invocations fall back to printing status (as today).
 
 Layout:
 
-- **Left pane — node table**: rows = nodes; columns = id/alias, provider,
+- **Left pane: node table**: rows = nodes; columns = id/alias, provider,
   and a capability matrix (chat ✓, image ✓, embed ✓, video ✓) with a star
   marking capability defaults; retirement warnings inline (from
   `retirement.rs`).
-- **Right pane — detail**: selected node's connection info (endpoint,
+- **Right pane: detail**: selected node's connection info (endpoint,
   deployment, auth kind), capabilities as toggles, and a **Defaults** section
   listing registry parameters valid for this node's provider+capabilities
   with current values; enum params edited via select popup, numeric/size via
-  validated input popup. Shows "not configurable for this provider" hints —
+  validated input popup. Shows "not configurable for this provider" hints:
   making what can/can't be configured explicit.
 - **Keys**: ↑/↓ select node, Tab switch pane, Enter edit, `a` add node
   (form-based flow rendered in ratatui, including Azure/Foundry discovery
@@ -275,7 +275,7 @@ Layout:
 ## Error handling
 
 All new failure paths follow the house rule (actionable messages): missing
-video capability → "node X has no video capability — run 'ailloy ai config'";
+video capability → "node X has no video capability; run 'ailloy ai config'";
 job failed → include `failure_reason` and job id; job expired/404 → mention
 24 h retention; webp on Azure → say png/jpeg are supported; attachment on
 non-multimodal provider → name the provider and suggest a capable node.

@@ -23,7 +23,7 @@ name: ailloy
 description: Use the user's own configured AI providers (OpenAI, Anthropic, Azure, Foundry, Ollama, TypeSafe, local agents) from the CLI: chat, image generation, video generation, embeddings, and typed evaluation (yes/no, choice, score; LLM or TypeSafe judge) with script-friendly exit codes. Use when the user wants THEIR models/deployments to do the work, needs a capability you lack (e.g. video), or needs pass/fail output checks in scripts and tests.
 ---
 
-# ailloy — Vendor-Flexible AI CLI
+# ailloy: Vendor-Flexible AI CLI
 
 ailloy is the user's own pre-configured gateway to THEIR AI providers and
 models (OpenAI, Anthropic, Azure OpenAI, Microsoft Foundry, Vertex, Ollama,
@@ -34,9 +34,9 @@ local agents). `ailloy ai status` shows what they have configured.
 Reach for ailloy when:
 
 - The user asks to **generate an image or video** and you lack that capability
-  yourself — or they want it produced by *their* configured model/deployment
+  yourself, or they want it produced by *their* configured model/deployment
   (e.g. their Azure/Foundry gpt-image or sora deployment).
-- Output must be **scored or gate-checked in a script, test, or CI** —
+- Output must be **scored or gate-checked in a script, test, or CI**:
   `ailloy eval` gives deterministic pass/fail exit codes and JSON answers.
 - **Embedding vectors** are needed.
 - A prompt should run against a **specific provider or model the user
@@ -48,7 +48,7 @@ When NOT to use it: if you can already do the task well natively (e.g. you can
 judge a piece of text yourself in conversation, or you have your own image
 generation) and the user didn't ask for their configured providers, prefer
 your native capability. ailloy is an option to know about, not a required
-detour — its value is reaching the user's own models, offline/local providers,
+detour. Its value is reaching the user's own models, offline/local providers,
 and script-friendly output.
 
 ## Getting current documentation
@@ -59,44 +59,44 @@ Run this command to get full, up-to-date reference documentation:
 ailloy ai skill --reference
 ```
 
-Read the output carefully — it covers every command and flag, provider types,
+Read the output carefully: it covers every command and flag, provider types,
 configuration format, per-node default parameters, and common workflows.
 
 ## Quick command reference
 
 Chat (text in, text out):
 
-- `ailloy "message"` — send a message (shorthand for `ailloy chat`)
-- `ailloy chat "message" --raw` — script-friendly: only the model's reply, no metadata
-- `ailloy chat "message" --json` — force a single JSON object reply
-- `ailloy chat "extract X" --schema file.json` — reply must match a JSON Schema (strict)
-- `ailloy chat "message" --attach FILE` — attach an image/pdf/text file (repeatable)
-- `ailloy chat --stream "message"` — stream response; `-i` for interactive mode
-- `echo "text" | ailloy chat` — reads piped stdin
-- `... --node ID-or-alias` — any command: use a specific configured node
+- `ailloy "message"`: send a message (shorthand for `ailloy chat`)
+- `ailloy chat "message" --raw`: script-friendly: only the model's reply, no metadata
+- `ailloy chat "message" --json`: force a single JSON object reply
+- `ailloy chat "extract X" --schema file.json`: reply must match a JSON Schema (strict)
+- `ailloy chat "message" --attach FILE`: attach an image/pdf/text file (repeatable)
+- `ailloy chat --stream "message"`: stream response; `-i` for interactive mode
+- `echo "text" | ailloy chat`: reads piped stdin
+- `... --node ID-or-alias`: any command: use a specific configured node
 
 Generation:
 
-- `ailloy image "description" -o out.png` — generate an image
+- `ailloy image "description" -o out.png`: generate an image
   (`--size WxH --quality low|medium|high|auto --format png|jpeg --compression 0-100
   --variants 1-10 --background transparent|opaque|auto --ref FILE --mask FILE`;
   `--ref` edits/composes from reference images)
-- `ailloy video "description" -o out.mp4` — generate a video
+- `ailloy video "description" -o out.mp4`: generate a video
   (`--size 1280x720 --seconds 4|8|12 --variants 1-5`; needs an Azure/Foundry sora node;
   takes minutes, polls automatically)
-- `ailloy embed "text"` — embedding vector (`--full` prints the whole vector as JSON)
+- `ailloy embed "text"`: embedding vector (`--full` prints the whole vector as JSON)
 
 Judge / test:
 
 - `cmd | ailloy eval --yes-no "question"`: judge; exit 0 pass, 1 fail, 4 unsure (`--threshold`, `--min-confidence`, `--json`)
 - `ailloy eval -f in.txt --choice "q" --option a --option b --expect a` / `--score "q" --level lo --level hi --max 1` / `--questions checks.yaml`
-- `ailloy ai test --all` — ping every configured node; exit 1 if any fails
+- `ailloy ai test --all`: ping every configured node; exit 1 if any fails
 
 Configuration:
 
 - `ailloy ai status`: show configured defaults per capability (chat, image, video, embedding, eval)
-- `ailloy ai config` — full-screen node configuration dashboard (TTY)
-- `ailloy ai config list-nodes` / `show-node ID` — inspect nodes non-interactively
+- `ailloy ai config`: full-screen node configuration dashboard (TTY)
+- `ailloy ai config list-nodes` / `show-node ID`: inspect nodes non-interactively
 - `ailloy ai config set-default NODE --task chat|image|video|embedding|eval`: set defaults
 
 Nodes can carry per-node default parameters (e.g. `image.quality`,

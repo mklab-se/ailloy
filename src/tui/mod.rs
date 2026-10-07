@@ -3,7 +3,7 @@
 //! [`run`] owns terminal setup/teardown and the event loop; all UI state lives
 //! in [`app::App`] and all key handling in its pure reducer, which returns
 //! [`Effect`]s that this module executes (saving, keychain writes, connectivity
-//! tests, and Azure/Foundry discovery — the async and I/O side effects the
+//! tests, and Azure/Foundry discovery: the async and I/O side effects the
 //! reducer must stay free of).
 
 pub(crate) mod actions;
@@ -249,7 +249,7 @@ fn store_keychain(app: &mut App, node_id: &str, secret: &str) -> Result<()> {
     {
         let _ = (node_id, secret);
         app.status_line =
-            Some("keychain feature not enabled in this build — cannot store the key".to_string());
+            Some("keychain feature not enabled in this build, cannot store the key".to_string());
     }
     Ok(())
 }
@@ -293,7 +293,7 @@ async fn run_discovery(app: &mut App, provider: ProviderKind, terminal: &mut Ter
         Ok(Some((id, node))) => {
             let form = NodeForm::from_node(&id, &node);
             app.mode = Mode::AddNode(form);
-            app.status_line = Some(format!("discovered {id} — review and Save"));
+            app.status_line = Some(format!("discovered {id}, review and Save"));
         }
         Ok(None) => app.status_line = Some("discovery cancelled".to_string()),
         Err(e) => app.status_line = Some(format!("discovery failed: {e:#}")),
@@ -306,7 +306,7 @@ async fn discover_azure(terminal: &mut Term) -> Result<Option<(String, AiNode)>>
     status_popup(terminal, "Listing Azure subscriptions…")?;
     let subs = azure_discover::list_subscriptions().await?;
     if subs.is_empty() {
-        anyhow::bail!("no enabled Azure subscriptions found — run 'az login' first");
+        anyhow::bail!("no enabled Azure subscriptions found, run 'az login' first");
     }
     let labels: Vec<String> = subs.iter().map(|s| s.to_string()).collect();
     let Some(i) = pick_list(terminal, "Select Azure subscription", &labels)? else {
@@ -367,7 +367,7 @@ async fn discover_foundry(terminal: &mut Term) -> Result<Option<(String, AiNode)
     status_popup(terminal, "Listing Azure subscriptions…")?;
     let subs = azure_discover::list_subscriptions().await?;
     if subs.is_empty() {
-        anyhow::bail!("no enabled Azure subscriptions found — run 'az login' first");
+        anyhow::bail!("no enabled Azure subscriptions found, run 'az login' first");
     }
     let labels: Vec<String> = subs.iter().map(|s| s.to_string()).collect();
     let Some(i) = pick_list(terminal, "Select Azure subscription", &labels)? else {

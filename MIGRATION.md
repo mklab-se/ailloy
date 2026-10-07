@@ -96,7 +96,7 @@ pub enum MessageContent {
 }
 ```
 
-**Constructors are unchanged** — `Message::user("hi")`, `Message::system(..)`,
+**Constructors are unchanged**: `Message::user("hi")`, `Message::system(..)`,
 `Message::assistant(..)` still take anything `Into<MessageContent>`, and a
 `&str`/`String` argument still produces plain-text content. No call site that
 only *constructs* messages needs to change.
@@ -137,21 +137,21 @@ Or use the convenience helpers: `msg.content.text()`, `.as_text()`,
 
 **Serialization and stored histories are unaffected.** `MessageContent` is
 `#[serde(untagged)]`: a text-only message still serializes to (and
-deserializes from) a bare JSON/YAML string —
-`{"role":"user","content":"hello"}` — byte-for-byte identical to 1.x. Existing
+deserializes from) a bare JSON/YAML string, as in
+`{"role":"user","content":"hello"}`: byte-for-byte identical to 1.x. Existing
 on-disk conversation histories, JSON logs, or database rows load without any
 migration step. Only messages that actually carry attachments serialize to
 the new tagged-array shape (`[{"type":"text",...},{"type":"image",...}]`).
 
 ## 2. Deprecated APIs
 
-All of the following still compile and work in 2.0 — they are marked
+All of the following still compile and work in 2.0. They are marked
 `#[deprecated]` (removal not scheduled before 3.0) so `cargo build` prints a
 warning but nothing breaks.
 
 | Deprecated | Replacement | Notes |
 |---|---|---|
-| `Client::generate_image_with(prompt, &opts)` | `Client::generate_images_with(prompt, &opts)` | Returns `Vec<ImageResponse>` instead of a single `ImageResponse` — some image models (gpt-image with `n > 1`) return multiple variants. The deprecated method still returns just the first one. |
+| `Client::generate_image_with(prompt, &opts)` | `Client::generate_images_with(prompt, &opts)` | Returns `Vec<ImageResponse>` instead of a single `ImageResponse`, since some image models (gpt-image with `n > 1`) return multiple variants. The deprecated method still returns just the first one. |
 | `blocking::Client::generate_image_with(prompt, &opts)` | `blocking::Client::generate_images_with(prompt, &opts)` | Same change, sync wrapper. |
 | `ImageOptionsBuilder::style(..)` | `ImageOptionsBuilder::output_format` / `.background` / `.moderation` / `.input_fidelity` | `style` (`"natural"`/`"vivid"`) is a DALL·E-only hint; gpt-image models ignore it. Prefer the other builder methods, which map to gpt-image's actual parameter surface. |
 
@@ -193,7 +193,7 @@ creations and a multi-variant `VideoJob.id` is the per-video ids joined with
 
 Each `AiNode` gained an optional `defaults` map (`node_defaults` in Rust,
 serialized as `defaults:` under the node in YAML) for per-node parameter
-defaults — distinct from the capability-routing `defaults:` map at the top of
+defaults, distinct from the capability-routing `defaults:` map at the top of
 `Config`:
 
 ```yaml
@@ -212,14 +212,14 @@ Recognized keys in this release: `image.size`, `image.quality`,
 `image.format`, `image.compression`, `image.background`, `image.variants`,
 `video.size`, `video.seconds`, `video.variants`, `chat.temperature`,
 `chat.max_tokens`, `embedding.dimensions` (also accepts the legacy bare
-`dimensions` key). The full registry — including value shapes and which
-providers accept each key — lives in `src/params.rs`.
+`dimensions` key). The full registry (including value shapes and which
+providers accept each key) lives in `src/params.rs`.
 
 Resolution is wired into request construction along the `Client`
 (`from_config`/`with_node`/`for_capability`) path, so library consumers get it
 without extra work: **explicit call options always win**, then node defaults,
 then provider defaults. Passing an explicit `ImageOptions`/`VideoOptions`/
-`ChatOptions`/`EmbedOptions` field is never overridden by a node default —
+`ChatOptions`/`EmbedOptions` field is never overridden by a node default;
 only unset fields get filled in.
 
 Node defaults are also editable interactively: the `ailloy ai config`
@@ -270,11 +270,11 @@ ailloy chat "Summarize these" --attach report.pdf --attach notes.txt
 | Microsoft Foundry | yes | yes | yes |
 | Anthropic | yes | yes | yes |
 | Vertex AI (Gemini) | yes | yes (inline data) | yes |
-| Ollama | yes | no — errors | inlined as text into the prompt |
-| Local agents (claude/codex/copilot CLI) | no — errors | no — errors | no — errors |
+| Ollama | yes | no (errors) | inlined as text into the prompt |
+| Local agents (claude/codex/copilot CLI) | no (errors) | no (errors) | no (errors) |
 
 Local agents and Ollama-with-non-text-files return
 `ClientError::Unsupported`/an actionable error rather than silently dropping
-the attachment — check `msg.content.has_attachments()` before routing to
+the attachment. Check `msg.content.has_attachments()` before routing to
 those providers if you build tools that might send attachments to any
 configured node.

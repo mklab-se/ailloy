@@ -286,20 +286,20 @@ pub fn print_nodes_list(config: &Config) -> Result<()> {
         println!();
         println!("{}", "Available Provider Types".bold());
         println!();
-        println!("  {} — OpenAI API (GPT-4o, etc.)", "openai".bold());
+        println!("  {}: OpenAI API (GPT-4o, etc.)", "openai".bold());
         println!(
-            "  {} — Anthropic API (Claude Sonnet, etc.)",
+            "  {}: Anthropic API (Claude Sonnet, etc.)",
             "anthropic".bold()
         );
-        println!("  {} — Azure OpenAI Service", "azure-openai".bold());
+        println!("  {}: Azure OpenAI Service", "azure-openai".bold());
         println!(
-            "  {} — Microsoft Foundry (GPT, Llama, Mistral, etc.)",
+            "  {}: Microsoft Foundry (GPT, Llama, Mistral, etc.)",
             "microsoft-foundry".bold()
         );
-        println!("  {} — Google Vertex AI (Gemini, etc.)", "vertex-ai".bold());
-        println!("  {} — Local LLMs via Ollama", "ollama".bold());
+        println!("  {}: Google Vertex AI (Gemini, etc.)", "vertex-ai".bold());
+        println!("  {}: Local LLMs via Ollama", "ollama".bold());
         println!(
-            "  {} — CLI agents (Claude, Codex, Copilot)",
+            "  {}: CLI agents (Claude, Codex, Copilot)",
             "local-agent".bold()
         );
         return Ok(());
@@ -436,7 +436,7 @@ fn stdin_confirm(message: &str) -> Result<bool> {
 ///
 /// On a TTY this opens the full-screen ratatui dashboard (which loads and saves
 /// the global config itself). Without a TTY it prints the current status and
-/// exits. Returns `false` — the dashboard persists its own changes, so the
+/// exits. Returns `false`: the dashboard persists its own changes, so the
 /// caller has nothing further to save.
 pub async fn run_interactive_config(
     config: &mut Config,

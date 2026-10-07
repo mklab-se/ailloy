@@ -1,22 +1,22 @@
-//! Shared Azure/Foundry video (sora-2) request logic — OpenAI-style Videos API.
+//! Shared Azure/Foundry video (sora-2) request logic, OpenAI-style Videos API.
 //!
 //! Both `AzureOpenAiClient` and `FoundryClient` drive Sora video generation
 //! through the OpenAI-compatible **Videos** surface:
 //!
-//! - `POST   {base}/openai/v1/videos`             — create a video
-//! - `GET    {base}/openai/v1/videos/{id}`        — poll a video object
-//! - `GET    {base}/openai/v1/videos/{id}/content`— download raw `video/mp4`
-//! - `DELETE {base}/openai/v1/videos/{id}`        — delete a video
+//! - `POST   {base}/openai/v1/videos`: create a video
+//! - `GET    {base}/openai/v1/videos/{id}`: poll a video object
+//! - `GET    {base}/openai/v1/videos/{id}/content`: download raw `video/mp4`
+//! - `DELETE {base}/openai/v1/videos/{id}`: delete a video
 //!
 //! (The legacy `.../video/generations/jobs?api-version=preview` surface is a
-//! 404 on current Foundry/Azure resources — this module targets the working
+//! 404 on current Foundry/Azure resources; this module targets the working
 //! `/videos` endpoints instead.) Per the crate's v1-vs-dated convention, the
 //! `?api-version=` query is **omitted** on the unified v1 surface and appended
 //! only for nodes configured with an explicit dated `api_version`.
 //!
 //! ## Wire shape
 //!
-//! Create requests send `{model, prompt, size:"WxH", seconds:"<string>"}` —
+//! Create requests send `{model, prompt, size:"WxH", seconds:"<string>"}`:
 //! note that `seconds` is a **string** on the wire (documented values `"4"`,
 //! `"8"`, `"12"`). A video object comes back as
 //! `{id:"video_…", object:"video", status, size, seconds, error, …}` with
@@ -64,7 +64,7 @@ pub(crate) struct VideoJobsApi<'a> {
 struct CreateVideoRequest<'a> {
     model: &'a str,
     prompt: &'a str,
-    /// `"WxH"` — e.g. `"720x1280"`.
+    /// `"WxH"`, e.g. `"720x1280"`.
     size: String,
     /// Clip duration in seconds, serialized as a **string** (`"4"`, `"8"`, …).
     seconds: String,
@@ -229,7 +229,7 @@ fn split_ids(id: &str) -> Vec<&str> {
 }
 
 impl VideoJobsApi<'_> {
-    /// `?api-version=…` query suffix — empty on the v1 surface, present only
+    /// `?api-version=…` query suffix: empty on the v1 surface, present only
     /// for nodes with an explicit dated api-version.
     fn query_suffix(&self) -> String {
         match self.api_version {
@@ -356,12 +356,12 @@ impl VideoJobsApi<'_> {
 
     /// Download a completed video: fetch the video object for size/seconds,
     /// then fetch the raw content bytes, and assemble a [`VideoResponse`].
-    /// `generation_id` is a single video id (never a `+`-joined composite) —
-    /// rejected before any HTTP call if it contains `+`.
+    /// `generation_id` is a single video id (never a `+`-joined composite);
+    /// it is rejected before any HTTP call if it contains `+`.
     pub async fn download(&self, generation_id: &str) -> Result<VideoResponse> {
         if generation_id.contains(MULTI_ID_SEP) {
             anyhow::bail!(
-                "'{}' looks like a composite multi-variant job id — pass one of \
+                "'{}' looks like a composite multi-variant job id; pass one of \
                  VideoJob::generation_ids instead",
                 generation_id
             );

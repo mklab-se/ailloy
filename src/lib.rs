@@ -1,4 +1,4 @@
-//! Ailloy — Vendor-flexible AI integration for Rust tools.
+//! Ailloy: Vendor-flexible AI integration for Rust tools.
 //!
 //! Ailloy is built for developers shipping tools to other users when those users may
 //! have access to different AI vendors or environments. Integrate once in Rust, then

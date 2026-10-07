@@ -37,7 +37,7 @@ pub struct EmbedResponse {
 }
 ```
 
-`Vec<f32>` is the universal embedding currency — serializes directly to JSON arrays for Azure AI Search, converts trivially to `pgvector::Vector`, and matches every vector DB's expected format.
+`Vec<f32>` is the universal embedding currency: it serializes directly to JSON arrays for Azure AI Search, converts trivially to `pgvector::Vector`, and matches every vector DB's expected format.
 
 ### EmbedOptions
 
@@ -267,6 +267,6 @@ defaults:
 
 ## Out of Scope
 
-- Vectorizer export for non-Azure systems (Qdrant config, pgvector schema) — can be added later
-- Batch size limits / automatic chunking — consumers handle this
+- Vectorizer export for non-Azure systems (Qdrant config, pgvector schema), which can be added later
+- Batch size limits / automatic chunking, which consumers handle this
 - Embedding model discovery (listing available models from providers)

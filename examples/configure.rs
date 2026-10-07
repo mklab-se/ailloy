@@ -1,4 +1,4 @@
-//! Programmatic configuration — how a dependent tool (rigg, cosq, mdeck,
+//! Programmatic configuration: how a dependent tool (rigg, cosq, mdeck,
 //! pidge, ...) offers "set up AI" without shelling out to the ailloy CLI.
 //!
 //! Run: cargo run --example configure
@@ -25,7 +25,7 @@ fn main() -> anyhow::Result<()> {
         config.save()?;
         println!("node added (stored in ~/.config/ailloy/config.yaml)");
     } else {
-        println!("node already present — left untouched");
+        println!("node already present, left untouched");
     }
 
     // Per-node default parameters (`node_defaults` in Rust, `defaults:` under
@@ -51,7 +51,7 @@ fn main() -> anyhow::Result<()> {
         config.save()?;
         println!("media node added with node_defaults (image.quality=high, video.seconds=8)");
     } else {
-        println!("media node already present — left untouched");
+        println!("media node already present, left untouched");
     }
 
     // Secrets belong in the OS keychain, never in config files:

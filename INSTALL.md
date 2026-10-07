@@ -22,9 +22,9 @@ cargo install ailloy
 ```
 
 On Windows, building from source needs [NASM](https://www.nasm.us/) and [CMake](https://cmake.org/)
-on `PATH` (plus the Visual Studio Build Tools most Rust installs already have) — they're needed to
+on `PATH` (plus the Visual Studio Build Tools most Rust installs already have). They're needed to
 compile [`aws-lc-rs`](https://github.com/aws/aws-lc-rs), the TLS crypto backend. macOS and Linux need
-nothing extra. If you'd rather skip the build tools entirely, use `cargo binstall` or Homebrew below —
+nothing extra. If you'd rather skip the build tools entirely, use `cargo binstall` or Homebrew below,
 both fetch a pre-built binary.
 
 ## Cargo binstall
@@ -95,18 +95,18 @@ ailloy completion powershell >> $PROFILE
 Static scripts can't know your configured nodes. For completion that also
 completes `--node` and node-id arguments (`ai config set-default`,
 `edit-node`, `delete-node`, `show-node`, `set-key`) from the nodes in your
-config — showing each node's provider and model as a hint — register ailloy's
+config (showing each node's provider and model as a hint), register ailloy's
 built-in completer instead. It runs `ailloy` itself on each Tab, so new nodes
 show up immediately with no regeneration.
 
 ```bash
-# zsh — add to ~/.zshrc
+# zsh: add to ~/.zshrc
 source <(COMPLETE=zsh ailloy)
 
-# bash — add to ~/.bashrc
+# bash: add to ~/.bashrc
 source <(COMPLETE=bash ailloy)
 
-# fish — add to ~/.config/fish/completions/ailloy.fish
+# fish: add to ~/.config/fish/completions/ailloy.fish
 COMPLETE=fish ailloy | source
 ```
 

@@ -42,7 +42,7 @@ match client.chat_with_tools(&messages, tools, &options).await? {
 
 ## Open questions
 
-- Multimodal/tool blocks push `Message.content` toward a block list — a
+- Multimodal/tool blocks push `Message.content` toward a block list: a
   breaking change; likely an additive `Vec<ContentBlock>` alongside `content`.
 - Anthropic requires echoing thinking blocks with tool results on the newest
   models; ailloy would need to carry opaque provider state per conversation.

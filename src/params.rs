@@ -2,7 +2,7 @@
 //!
 //! This is the single source of truth for the tunable parameters a node can
 //! carry as defaults (e.g. `image.size`, `chat.temperature`). It is pure data
-//! plus lookup/validation helpers — no I/O, no feature gate. Consumers:
+//! plus lookup/validation helpers, with no I/O and no feature gate. Consumers:
 //! client-side defaults resolution (merging a node's stored defaults into a
 //! request) and the interactive config TUI (rendering an editable parameter
 //! table per node, filtered by provider and capability).
@@ -33,7 +33,7 @@ pub struct ParamDef {
     pub label: &'static str,
     /// The value shape used for validation and input rendering.
     pub kind: ParamKind,
-    /// A display hint for the provider default, if any. Not auto-sent —
+    /// A display hint for the provider default, if any. Not auto-sent:
     /// purely informational (e.g. shown as a placeholder in the TUI).
     pub default: Option<&'static str>,
     /// Providers this parameter applies to. Empty means "all providers that
