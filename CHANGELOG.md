@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-10-11
+
+### Added
+
+- `ErrorKind` and `ailloy::error_kind(&err)`: classify any error as `Auth`, `QuotaExhausted`,
+  `RateLimited`, `Unavailable`, `InvalidRequest`, `Network` or `Other`, so tools can tell "out of
+  credits" from "bad key" from "try again later" without parsing provider messages.
+  Out-of-credit responses (OpenAI 429 `insufficient_quota`, Anthropic "credit balance is too low",
+  HTTP 402) map to `QuotaExhausted`, not to a rate limit
+- `ClientError::kind()` and `ProviderError` (the error behind every non-success provider
+  response, carrying `status` and `kind`). Error messages are unchanged
+
 ## [3.0.1] - 2026-10-07
 
 ### Changed
