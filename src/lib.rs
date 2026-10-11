@@ -54,7 +54,7 @@ mod video_jobs;
 pub use client::{Client, Provider};
 pub use config::{AiNode, Auth, Capability, EmbeddingMetadata};
 pub use conversation::{ChatHistory, Conversation, InMemoryHistory};
-pub use error::ClientError;
+pub use error::{ClientError, ErrorKind, ProviderError, error_kind};
 pub use eval::{Answer, Calibration, EvalResponse, Question, Questions, YesNoCriteria};
 pub use types::{
     Background, ChatOptions, ChatResponse, ChatStream, ContentPart, EmbedOptions, EmbedResponse,

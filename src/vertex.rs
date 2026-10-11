@@ -356,8 +356,12 @@ impl Provider for VertexAiClient {
                 let message = serde_json::from_str::<ApiError>(&body)
                     .ok()
                     .and_then(|e| e.error.map(|d| d.message))
-                    .unwrap_or(body);
-                anyhow::bail!("Vertex AI API error ({}): {}", status.as_u16(), message);
+                    .unwrap_or_else(|| body.clone());
+                return Err(crate::error::api_error(
+                    status.as_u16(),
+                    &body,
+                    format!("Vertex AI API error ({}): {}", status.as_u16(), message),
+                ));
             }
             break response;
         };
@@ -438,8 +442,12 @@ impl Provider for VertexAiClient {
             let message = serde_json::from_str::<ApiError>(&body)
                 .ok()
                 .and_then(|e| e.error.map(|d| d.message))
-                .unwrap_or(body);
-            anyhow::bail!("Vertex AI API error ({}): {}", status.as_u16(), message);
+                .unwrap_or_else(|| body.clone());
+            return Err(crate::error::api_error(
+                status.as_u16(),
+                &body,
+                format!("Vertex AI API error ({}): {}", status.as_u16(), message),
+            ));
         }
 
         let model = self.model.clone();
@@ -537,11 +545,15 @@ impl Provider for VertexAiClient {
             let status = response.status();
             if !status.is_success() {
                 let body = response.text().await.unwrap_or_default();
-                anyhow::bail!(
-                    "Vertex AI image generation error ({}): {}",
+                return Err(crate::error::api_error(
                     status.as_u16(),
-                    body
-                );
+                    &body,
+                    format!(
+                        "Vertex AI image generation error ({}): {}",
+                        status.as_u16(),
+                        body
+                    ),
+                ));
             }
 
             let api_response: ImagenResponse = response
@@ -602,11 +614,15 @@ impl Provider for VertexAiClient {
             let status = response.status();
             if !status.is_success() {
                 let body = response.text().await.unwrap_or_default();
-                anyhow::bail!(
-                    "Vertex AI image generation error ({}): {}",
+                return Err(crate::error::api_error(
                     status.as_u16(),
-                    body
-                );
+                    &body,
+                    format!(
+                        "Vertex AI image generation error ({}): {}",
+                        status.as_u16(),
+                        body
+                    ),
+                ));
             }
 
             let api_response: GenerateContentResponse = response
@@ -684,12 +700,16 @@ impl Provider for VertexAiClient {
             let message = serde_json::from_str::<ApiError>(&body)
                 .ok()
                 .and_then(|e| e.error.map(|d| d.message))
-                .unwrap_or(body);
-            anyhow::bail!(
-                "Vertex AI embedding error ({}): {}",
+                .unwrap_or_else(|| body.clone());
+            return Err(crate::error::api_error(
                 status.as_u16(),
-                message
-            );
+                &body,
+                format!(
+                    "Vertex AI embedding error ({}): {}",
+                    status.as_u16(),
+                    message
+                ),
+            ));
         }
         let api_response: EmbedPredictResponse = response
             .json()

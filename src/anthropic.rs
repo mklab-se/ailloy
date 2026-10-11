@@ -174,11 +174,15 @@ impl AnthropicClient {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "Failed to list Anthropic models ({}): {}",
+            return Err(crate::error::api_error(
                 status.as_u16(),
-                body
-            );
+                &body,
+                format!(
+                    "Failed to list Anthropic models ({}): {}",
+                    status.as_u16(),
+                    body
+                ),
+            ));
         }
 
         #[derive(Deserialize)]
@@ -293,8 +297,12 @@ impl Provider for AnthropicClient {
                 }
                 let message = serde_json::from_str::<ApiError>(&body)
                     .map(|e| e.error.message)
-                    .unwrap_or(body);
-                anyhow::bail!("Anthropic API error ({}): {}", status.as_u16(), message);
+                    .unwrap_or_else(|_| body.clone());
+                return Err(crate::error::api_error(
+                    status.as_u16(),
+                    &body,
+                    format!("Anthropic API error ({}): {}", status.as_u16(), message),
+                ));
             }
             break response;
         };
@@ -360,8 +368,12 @@ impl Provider for AnthropicClient {
             let body = response.text().await.unwrap_or_default();
             let message = serde_json::from_str::<ApiError>(&body)
                 .map(|e| e.error.message)
-                .unwrap_or(body);
-            anyhow::bail!("Anthropic API error ({}): {}", status.as_u16(), message);
+                .unwrap_or_else(|_| body.clone());
+            return Err(crate::error::api_error(
+                status.as_u16(),
+                &body,
+                format!("Anthropic API error ({}): {}", status.as_u16(), message),
+            ));
         }
 
         let model = self.model.clone();

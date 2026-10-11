@@ -216,7 +216,11 @@ impl OpenAiClient {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Failed to list models ({}): {}", status.as_u16(), body);
+            return Err(crate::error::api_error(
+                status.as_u16(),
+                &body,
+                format!("Failed to list models ({}): {}", status.as_u16(), body),
+            ));
         }
 
         #[derive(Deserialize)]
@@ -291,12 +295,16 @@ impl OpenAiClient {
             let body = response.text().await.unwrap_or_default();
             let message = serde_json::from_str::<ApiError>(&body)
                 .map(|e| e.error.message)
-                .unwrap_or(body);
-            anyhow::bail!(
-                "OpenAI image generation error ({}): {}",
+                .unwrap_or_else(|_| body.clone());
+            return Err(crate::error::api_error(
                 status.as_u16(),
-                message
-            );
+                &body,
+                format!(
+                    "OpenAI image generation error ({}): {}",
+                    status.as_u16(),
+                    message
+                ),
+            ));
         }
 
         let body = response
@@ -347,12 +355,16 @@ impl OpenAiClient {
             let body = response.text().await.unwrap_or_default();
             let message = serde_json::from_str::<ApiError>(&body)
                 .map(|e| e.error.message)
-                .unwrap_or(body);
-            anyhow::bail!(
-                "OpenAI image generation error ({}): {}",
+                .unwrap_or_else(|_| body.clone());
+            return Err(crate::error::api_error(
                 status.as_u16(),
-                message
-            );
+                &body,
+                format!(
+                    "OpenAI image generation error ({}): {}",
+                    status.as_u16(),
+                    message
+                ),
+            ));
         }
 
         let api_response: ResponsesApiResponse = response
@@ -442,8 +454,12 @@ impl Provider for OpenAiClient {
                 }
                 let message = serde_json::from_str::<ApiError>(&body)
                     .map(|e| e.error.message)
-                    .unwrap_or(body);
-                anyhow::bail!("OpenAI API error ({}): {}", status.as_u16(), message);
+                    .unwrap_or_else(|_| body.clone());
+                return Err(crate::error::api_error(
+                    status.as_u16(),
+                    &body,
+                    format!("OpenAI API error ({}): {}", status.as_u16(), message),
+                ));
             }
             break response;
         };
@@ -506,8 +522,12 @@ impl Provider for OpenAiClient {
             let body = response.text().await.unwrap_or_default();
             let message = serde_json::from_str::<ApiError>(&body)
                 .map(|e| e.error.message)
-                .unwrap_or(body);
-            anyhow::bail!("OpenAI API error ({}): {}", status.as_u16(), message);
+                .unwrap_or_else(|_| body.clone());
+            return Err(crate::error::api_error(
+                status.as_u16(),
+                &body,
+                format!("OpenAI API error ({}): {}", status.as_u16(), message),
+            ));
         }
 
         let model = self.model.clone();
@@ -652,8 +672,12 @@ impl Provider for OpenAiClient {
             let body = response.text().await.unwrap_or_default();
             let message = serde_json::from_str::<ApiError>(&body)
                 .map(|e| e.error.message)
-                .unwrap_or(body);
-            anyhow::bail!("OpenAI embedding error ({}): {}", status.as_u16(), message);
+                .unwrap_or_else(|_| body.clone());
+            return Err(crate::error::api_error(
+                status.as_u16(),
+                &body,
+                format!("OpenAI embedding error ({}): {}", status.as_u16(), message),
+            ));
         }
 
         let api_response: EmbedApiResponse = response

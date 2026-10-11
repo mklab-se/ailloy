@@ -405,6 +405,26 @@ for (id, answer) in &response.answers {
 
 See `examples/eval.rs` for all three question types.
 
+### Telling failures apart
+
+`ailloy::error_kind(&err)` classifies any error ailloy returns, so a tool can tell the user what to do instead of showing a provider message:
+
+```rust
+use ailloy::{ErrorKind, error_kind};
+
+match client.eval(state, &questions).await {
+    Ok(answers) => { /* ... */ }
+    Err(e) => match error_kind(&e) {
+        ErrorKind::QuotaExhausted => { /* out of credits: top up */ }
+        ErrorKind::Auth => { /* key missing, invalid or revoked */ }
+        ErrorKind::RateLimited | ErrorKind::Unavailable => { /* try again later */ }
+        _ => { /* bad request, network, other */ }
+    },
+}
+```
+
+Out-of-credit responses differ per provider (OpenAI answers 429 `insufficient_quota`, Anthropic 400 "credit balance is too low", others 402); ailloy maps them all to `QuotaExhausted`, separate from an ordinary rate limit.
+
 ## Providers
 
 | Provider | Kind | Chat | Stream | Images | Video | Auth |

@@ -375,7 +375,11 @@ impl FoundryClient {
             let status = response.status();
             if !status.is_success() {
                 let body = response.text().await.unwrap_or_default();
-                anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
+                return Err(crate::error::api_error(
+                    status.as_u16(),
+                    &body,
+                    self.format_api_error(status.as_u16(), &body).to_string(),
+                ));
             }
             let body = response
                 .text()
@@ -450,7 +454,11 @@ impl Provider for FoundryClient {
                     temperature = None;
                     continue;
                 }
-                anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
+                return Err(crate::error::api_error(
+                    status.as_u16(),
+                    &body,
+                    self.format_api_error(status.as_u16(), &body).to_string(),
+                ));
             }
             break response;
         };
@@ -514,7 +522,11 @@ impl Provider for FoundryClient {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
+            return Err(crate::error::api_error(
+                status.as_u16(),
+                &body,
+                self.format_api_error(status.as_u16(), &body).to_string(),
+            ));
         }
 
         let model = self.model.clone();
@@ -650,7 +662,11 @@ impl Provider for FoundryClient {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
+            return Err(crate::error::api_error(
+                status.as_u16(),
+                &body,
+                self.format_api_error(status.as_u16(), &body).to_string(),
+            ));
         }
 
         let body = response
@@ -685,7 +701,11 @@ impl Provider for FoundryClient {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("{}", self.format_api_error(status.as_u16(), &body));
+            return Err(crate::error::api_error(
+                status.as_u16(),
+                &body,
+                self.format_api_error(status.as_u16(), &body).to_string(),
+            ));
         }
 
         let api_response: EmbedApiResponse = response

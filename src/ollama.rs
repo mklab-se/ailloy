@@ -235,7 +235,11 @@ impl Provider for OllamaClient {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Ollama API error ({}): {}", status.as_u16(), body);
+            return Err(crate::error::api_error(
+                status.as_u16(),
+                &body,
+                format!("Ollama API error ({}): {}", status.as_u16(), body),
+            ));
         }
 
         let api_response: ChatApiResponse = response
@@ -279,7 +283,11 @@ impl Provider for OllamaClient {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Ollama API error ({}): {}", status.as_u16(), body);
+            return Err(crate::error::api_error(
+                status.as_u16(),
+                &body,
+                format!("Ollama API error ({}): {}", status.as_u16(), body),
+            ));
         }
 
         let model = self.model.clone();
@@ -376,7 +384,11 @@ impl Provider for OllamaClient {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Ollama embedding error ({}): {}", status.as_u16(), body);
+            return Err(crate::error::api_error(
+                status.as_u16(),
+                &body,
+                format!("Ollama embedding error ({}): {}", status.as_u16(), body),
+            ));
         }
         let api_response: EmbedApiResponse = response
             .json()
