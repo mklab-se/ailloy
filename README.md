@@ -517,6 +517,27 @@ always wins. The full set of recognized keys, their value shapes, and which
 providers accept them live in `src/params.rs` (also drives the `ailloy ai config`
 dashboard's Defaults editor, see below).
 
+### Cost estimates
+
+The CLI prints an estimated cost after every call (`Cost: ≈ $0.0059`) and a
+running total in interactive chat (`/cost`, and on exit). Prices come from a
+built-in table of public list prices, overridable per node with
+`chat.price_input`/`chat.price_output` (USD per 1M tokens), `image.price_*`,
+`embedding.price_input` and `video.price_second`. In Rust:
+
+```rust
+use ailloy::config::Capability;
+use ailloy::pricing::{format_usd, price_for_node};
+
+if let (Some(price), Some(usage)) = (price_for_node(&node, &Capability::Chat), &response.usage) {
+    if let Some(usd) = price.cost_of(usage) {
+        println!("this call cost about {}", format_usd(usd));
+    }
+}
+```
+
+It is an estimate (list prices, no discounts or cached-input rates), not an invoice.
+
 ## CLI Commands
 
 | Command | Description |

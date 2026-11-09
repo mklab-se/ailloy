@@ -494,41 +494,55 @@ impl Provider for OpenAiClient {
         let url = format!("{}/v1/chat/completions", self.base_url());
         debug!(url = %url, model = %self.model, "Sending streaming chat request");
 
-        let request = ChatRequest {
-            model: &self.model,
-            messages: crate::types::to_openai_wire(messages),
-            max_completion_tokens: options.and_then(|o| o.max_tokens),
-            temperature: options.and_then(|o| o.temperature),
-            stream: true,
-            stream_options: Some(StreamOptions {
-                include_usage: true,
-            }),
-            response_format: options
-                .and_then(|o| o.response_format.as_ref())
-                .map(|f| f.to_openai_value()),
+        let wire_messages = crate::types::to_openai_wire(messages);
+        let mut temperature = options.and_then(|o| o.temperature);
+        let response = loop {
+            let request = ChatRequest {
+                model: &self.model,
+                messages: wire_messages.clone(),
+                max_completion_tokens: options.and_then(|o| o.max_tokens),
+                temperature,
+                stream: true,
+                stream_options: Some(StreamOptions {
+                    include_usage: true,
+                }),
+                response_format: options
+                    .and_then(|o| o.response_format.as_ref())
+                    .map(|f| f.to_openai_value()),
+            };
+
+            let response = self
+                .client
+                .post(&url)
+                .bearer_auth(&self.api_key)
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send streaming request to OpenAI API")?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                if temperature.is_some()
+                    && crate::types::is_sampling_rejection(status.as_u16(), &body)
+                {
+                    debug!(
+                        "model rejected sampling parameters; retrying stream without temperature"
+                    );
+                    temperature = None;
+                    continue;
+                }
+                let message = serde_json::from_str::<ApiError>(&body)
+                    .map(|e| e.error.message)
+                    .unwrap_or_else(|_| body.clone());
+                return Err(crate::error::api_error(
+                    status.as_u16(),
+                    &body,
+                    format!("OpenAI API error ({}): {}", status.as_u16(), message),
+                ));
+            }
+            break response;
         };
-
-        let response = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.api_key)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send streaming request to OpenAI API")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            let message = serde_json::from_str::<ApiError>(&body)
-                .map(|e| e.error.message)
-                .unwrap_or_else(|_| body.clone());
-            return Err(crate::error::api_error(
-                status.as_u16(),
-                &body,
-                format!("OpenAI API error ({}): {}", status.as_u16(), message),
-            ));
-        }
 
         let model = self.model.clone();
         let byte_stream = response.bytes_stream();
@@ -555,7 +569,7 @@ impl Provider for OpenAiClient {
                         if let Some(data) = line.strip_prefix("data: ") {
                             if data == "[DONE]" {
                                 let response = ChatResponse {
-                                    content: assembled.clone(),
+                                    content: std::mem::take(&mut assembled),
                                     model: model.clone(),
                                     usage: usage.take(),
                                 };
@@ -799,5 +813,85 @@ mod tests {
             .to_string();
         assert!(err.contains("gpt-image"), "error was: {err}");
         assert!(err.contains("dedicated image model"), "error was: {err}");
+    }
+
+    /// Serve canned HTTP responses on a local port, one per connection, and
+    /// hand back the request bodies that arrived.
+    fn serve(responses: Vec<String>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = format!("http://{}", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let mut bodies = Vec::new();
+            for response in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut content_length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
+                    if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        content_length = v.trim().parse().unwrap();
+                    }
+                }
+                let mut body = vec![0u8; content_length];
+                reader.read_exact(&mut body).unwrap();
+                bodies.push(String::from_utf8(body).unwrap());
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+            bodies
+        });
+        (addr, handle)
+    }
+
+    fn http(status: &str, content_type: &str, body: &str) -> String {
+        format!(
+            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    #[tokio::test]
+    async fn chat_stream_retries_without_rejected_temperature() {
+        use futures_util::StreamExt;
+        let rejection = r#"{"error":{"message":"Unsupported value: 'temperature' does not support 0.2 with this model. Only the default (1) value is supported."}}"#;
+        let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n";
+        let (addr, server) = serve(vec![
+            http("400 Bad Request", "application/json", rejection),
+            http("200 OK", "text/event-stream", sse),
+        ]);
+
+        let client = OpenAiClient::new("test-key", "gpt-6.1-terra", Some(addr));
+        let opts = ChatOptions {
+            temperature: Some(0.2),
+            ..Default::default()
+        };
+        let mut stream =
+            <OpenAiClient as Provider>::chat_stream(&client, &[Message::user("hi")], Some(&opts))
+                .await
+                .expect("stream should succeed after the retry");
+
+        let mut text = String::new();
+        let mut done_events = 0;
+        while let Some(event) = stream.next().await {
+            match event.unwrap() {
+                StreamEvent::Delta(d) => text.push_str(&d),
+                StreamEvent::Done(r) => {
+                    done_events += 1;
+                    assert_eq!(r.content, "ok");
+                }
+            }
+        }
+        assert_eq!(text, "ok");
+        // [DONE] then connection close must yield one Done, not two.
+        assert_eq!(done_events, 1);
+
+        let bodies = server.join().unwrap();
+        assert_eq!(bodies.len(), 2);
+        assert!(bodies[0].contains("\"temperature\""), "{}", bodies[0]);
+        assert!(!bodies[1].contains("\"temperature\""), "{}", bodies[1]);
     }
 }

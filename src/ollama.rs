@@ -310,7 +310,7 @@ impl Provider for OllamaClient {
                         if let Ok(chunk) = serde_json::from_str::<StreamChunk>(&line) {
                             if chunk.done {
                                 let response = ChatResponse {
-                                    content: assembled.clone(),
+                                    content: std::mem::take(&mut assembled),
                                     model: chunk.model.unwrap_or_else(|| model.clone()),
                                     usage: None,
                                 };

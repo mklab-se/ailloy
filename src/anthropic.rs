@@ -343,38 +343,51 @@ impl Provider for AnthropicClient {
             .and_then(|o| o.max_tokens)
             .unwrap_or(DEFAULT_MAX_TOKENS);
 
-        let request = MessagesRequest {
-            model: &self.model,
-            messages: converted,
-            system: system.as_deref(),
-            max_tokens,
-            temperature: options.and_then(|o| o.temperature),
-            stream: true,
+        let mut temperature = options.and_then(|o| o.temperature);
+        let response = loop {
+            let request = MessagesRequest {
+                model: &self.model,
+                messages: converted.clone(),
+                system: system.as_deref(),
+                max_tokens,
+                temperature,
+                stream: true,
+            };
+
+            let response = self
+                .client
+                .post(&url)
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", API_VERSION)
+                .header("content-type", "application/json")
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send streaming request to Anthropic API")?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                if temperature.is_some()
+                    && crate::types::is_sampling_rejection(status.as_u16(), &body)
+                {
+                    debug!(
+                        "model rejected sampling parameters; retrying stream without temperature"
+                    );
+                    temperature = None;
+                    continue;
+                }
+                let message = serde_json::from_str::<ApiError>(&body)
+                    .map(|e| e.error.message)
+                    .unwrap_or_else(|_| body.clone());
+                return Err(crate::error::api_error(
+                    status.as_u16(),
+                    &body,
+                    format!("Anthropic API error ({}): {}", status.as_u16(), message),
+                ));
+            }
+            break response;
         };
-
-        let response = self
-            .client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", API_VERSION)
-            .header("content-type", "application/json")
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send streaming request to Anthropic API")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            let message = serde_json::from_str::<ApiError>(&body)
-                .map(|e| e.error.message)
-                .unwrap_or_else(|_| body.clone());
-            return Err(crate::error::api_error(
-                status.as_u16(),
-                &body,
-                format!("Anthropic API error ({}): {}", status.as_u16(), message),
-            ));
-        }
 
         let model = self.model.clone();
         let byte_stream = response.bytes_stream();
@@ -435,7 +448,7 @@ impl Provider for AnthropicClient {
                                         total_tokens: tokens.0 + tokens.1,
                                     });
                                     let response = ChatResponse {
-                                        content: assembled.clone(),
+                                        content: std::mem::take(&mut assembled),
                                         model: model.clone(),
                                         usage,
                                     };

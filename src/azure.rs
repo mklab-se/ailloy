@@ -422,39 +422,53 @@ impl Provider for AzureOpenAiClient {
 
         let (header_name, header_value) = self.get_auth_header().await?;
 
-        let request = ChatRequest {
-            model: self.body_model(),
-            messages: crate::types::to_openai_wire(messages),
-            max_completion_tokens: options.and_then(|o| o.max_tokens),
-            temperature: options.and_then(|o| o.temperature),
-            stream: true,
-            // usage in the final chunk; supported on the v1 surface
-            stream_options: self.api_version.is_none().then_some(StreamOptions {
-                include_usage: true,
-            }),
-            response_format: options
-                .and_then(|o| o.response_format.as_ref())
-                .map(|f| f.to_openai_value()),
+        let wire_messages = crate::types::to_openai_wire(messages);
+        let mut temperature = options.and_then(|o| o.temperature);
+        let response = loop {
+            let request = ChatRequest {
+                model: self.body_model(),
+                messages: wire_messages.clone(),
+                max_completion_tokens: options.and_then(|o| o.max_tokens),
+                temperature,
+                stream: true,
+                // usage in the final chunk; supported on the v1 surface
+                stream_options: self.api_version.is_none().then_some(StreamOptions {
+                    include_usage: true,
+                }),
+                response_format: options
+                    .and_then(|o| o.response_format.as_ref())
+                    .map(|f| f.to_openai_value()),
+            };
+
+            let response = self
+                .client
+                .post(&url)
+                .header(header_name, &header_value)
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send streaming request to Azure OpenAI")?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                if temperature.is_some()
+                    && crate::types::is_sampling_rejection(status.as_u16(), &body)
+                {
+                    debug!(
+                        "model rejected sampling parameters; retrying stream without temperature"
+                    );
+                    temperature = None;
+                    continue;
+                }
+                return Err(crate::error::api_error(
+                    status.as_u16(),
+                    &body,
+                    self.format_api_error(status.as_u16(), &body).to_string(),
+                ));
+            }
+            break response;
         };
-
-        let response = self
-            .client
-            .post(&url)
-            .header(header_name, &header_value)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to send streaming request to Azure OpenAI")?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(crate::error::api_error(
-                status.as_u16(),
-                &body,
-                self.format_api_error(status.as_u16(), &body).to_string(),
-            ));
-        }
 
         let deployment = self.deployment.clone();
         let byte_stream = response.bytes_stream();
@@ -480,7 +494,7 @@ impl Provider for AzureOpenAiClient {
                         if let Some(data) = line.strip_prefix("data: ") {
                             if data == "[DONE]" {
                                 let response = ChatResponse {
-                                    content: assembled.clone(),
+                                    content: std::mem::take(&mut assembled),
                                     model: deployment.clone(),
                                     usage: usage.take(),
                                 };

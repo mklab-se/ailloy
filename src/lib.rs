@@ -41,6 +41,7 @@ pub mod ollama;
 pub mod openai;
 mod openai_images;
 pub mod params;
+pub mod pricing;
 pub mod retirement;
 pub mod terminal;
 #[cfg(feature = "config-tui")]

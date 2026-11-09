@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Cost estimates: every CLI call now prints an estimated USD cost next to the token count, video
+  prints the cost of the generated seconds, and interactive chat shows each reply's cost, the
+  running session total, a new `/cost` command and the session total on exit. Prices come from a
+  built-in table of public list prices (gpt-6.1-sol/terra, gpt-6/5.6 families, gpt-image-2.5
+  flare/sunburst, gpt-image-2/1, MAI-Image-2.x, text-embedding-3, sora-2), overridable per node
+  with the new `chat.price_input`, `chat.price_output`, `image.price_input`, `image.price_output`,
+  `embedding.price_input` and `video.price_second` defaults. Library API: `ailloy::pricing`
+  (`price_for_node`, `builtin_price`, `Price::cost_of`, `CostTracker`, `format_usd`)
+- `xhigh` and `max` image quality levels (gpt-image-2.5-flare and gpt-image-2.5-sunburst), accepted
+  by `--quality` and the `image.quality` node default
+
+### Fixed
+
+- Streaming chat (`--stream`, interactive mode) now retries without `temperature` when the model
+  only accepts its default, as non-streaming chat already did. Previously
+  `ailloy chat --stream --temperature 0.2` failed with HTTP 400 on gpt-6.1-sol, gpt-6.1-terra and
+  other reasoning models (OpenAI, Azure OpenAI, Foundry, Anthropic and Vertex)
+- Streams no longer end with a second, empty `Done` event (OpenAI, Azure OpenAI, Foundry, Anthropic
+  and Ollama sent one when the connection closed after the end marker), which printed an extra
+  blank line after streamed replies
+- Image token counts now sum every variant's usage instead of showing the first one only (MAI
+  image models report usage per image)
+
 ## [3.1.0] - 2026-10-11
 
 ### Added

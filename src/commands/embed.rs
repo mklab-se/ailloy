@@ -2,9 +2,10 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 
 use ailloy::client::{create_provider_from_node, merge_embed_defaults};
-use ailloy::config::{Auth, Config};
+use ailloy::config::{Auth, Capability, Config};
 use ailloy::types::EmbedOptions;
 
+use super::util::usage_line;
 use crate::cli::EmbedArgs;
 
 pub async fn run(args: EmbedArgs, quiet: bool) -> Result<()> {
@@ -62,7 +63,7 @@ pub async fn run(args: EmbedArgs, quiet: bool) -> Result<()> {
         println!("{} {}", "Model:".bold(), response.model);
         println!("{} {}", "Dimensions:".bold(), vector.len());
         if let Some(usage) = &response.usage {
-            println!("{} {}", "Tokens:".bold(), usage.prompt_tokens);
+            println!("{}", usage_line(node, &Capability::Embedding, usage));
         }
         // Preview: first 5 values
         let preview: Vec<String> = vector.iter().take(5).map(|v| format!("{:.6}", v)).collect();

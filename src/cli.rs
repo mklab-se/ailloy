@@ -426,9 +426,9 @@ pub struct ImageArgs {
     #[arg(long)]
     pub size: Option<String>,
 
-    /// Image quality (hd/standard apply to DALL·E models only)
+    /// Image quality (xhigh/max need gpt-image-2.5 or newer; hd/standard apply to DALL·E models only)
     #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(
-        ["low", "medium", "high", "auto", "hd", "standard"]))]
+        ["low", "medium", "high", "xhigh", "max", "auto", "hd", "standard"]))]
     pub quality: Option<String>,
 
     /// Image style, DALL·E models only, ignored by gpt-image models
@@ -802,6 +802,18 @@ mod tests {
             Commands::Eval(args) => Ok(args),
             _ => panic!("not an eval command"),
         }
+    }
+
+    #[test]
+    fn image_quality_accepts_gpt_image_2_5_levels() {
+        for q in ["xhigh", "max", "low", "hd"] {
+            let cli = Cli::try_parse_from(["ailloy", "image", "a cat", "--quality", q]).unwrap();
+            match cli.command {
+                Commands::Image(args) => assert_eq!(args.quality.as_deref(), Some(q)),
+                _ => panic!("not an image command"),
+            }
+        }
+        assert!(Cli::try_parse_from(["ailloy", "image", "a cat", "--quality", "ultra"]).is_err());
     }
 
     #[test]

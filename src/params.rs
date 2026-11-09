@@ -41,6 +41,13 @@ pub struct ParamDef {
     pub providers: &'static [ProviderKind],
 }
 
+/// Value shape of the `*.price_*` cost-estimate overrides (USD; see
+/// [`crate::pricing`]). Not sent to providers.
+const PRICE: ParamKind = ParamKind::Float {
+    min: 0.0,
+    max: 10_000.0,
+};
+
 /// The full static parameter registry.
 pub const PARAMS: &[ParamDef] = &[
     ParamDef {
@@ -55,7 +62,7 @@ pub const PARAMS: &[ParamDef] = &[
         key: "image.quality",
         capability: Capability::Image,
         label: "Quality",
-        kind: ParamKind::Enum(&["low", "medium", "high", "auto"]),
+        kind: ParamKind::Enum(&["low", "medium", "high", "xhigh", "max", "auto"]),
         default: Some("auto"),
         providers: &[],
     },
@@ -154,6 +161,54 @@ pub const PARAMS: &[ParamDef] = &[
             min: 1,
             max: 10_000,
         },
+        default: None,
+        providers: &[],
+    },
+    ParamDef {
+        key: "chat.price_input",
+        capability: Capability::Chat,
+        label: "Price in ($/1M tok)",
+        kind: PRICE,
+        default: None,
+        providers: &[],
+    },
+    ParamDef {
+        key: "chat.price_output",
+        capability: Capability::Chat,
+        label: "Price out ($/1M tok)",
+        kind: PRICE,
+        default: None,
+        providers: &[],
+    },
+    ParamDef {
+        key: "image.price_input",
+        capability: Capability::Image,
+        label: "Price in ($/1M tok)",
+        kind: PRICE,
+        default: None,
+        providers: &[],
+    },
+    ParamDef {
+        key: "image.price_output",
+        capability: Capability::Image,
+        label: "Price out ($/1M tok)",
+        kind: PRICE,
+        default: None,
+        providers: &[],
+    },
+    ParamDef {
+        key: "embedding.price_input",
+        capability: Capability::Embedding,
+        label: "Price ($/1M tok)",
+        kind: PRICE,
+        default: None,
+        providers: &[],
+    },
+    ParamDef {
+        key: "video.price_second",
+        capability: Capability::Video,
+        label: "Price ($/second)",
+        kind: PRICE,
         default: None,
         providers: &[],
     },
@@ -298,6 +353,9 @@ mod tests {
     fn validate_value_enum_member_and_non_member() {
         let def = lookup("image.quality").unwrap();
         assert!(validate_value(def, "high").is_ok());
+        // gpt-image-2.5 quality levels
+        assert!(validate_value(def, "xhigh").is_ok());
+        assert!(validate_value(def, "max").is_ok());
         let err = validate_value(def, "ultra").unwrap_err();
         assert!(err.contains("low"));
         assert!(err.contains("medium"));

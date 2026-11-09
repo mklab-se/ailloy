@@ -8,13 +8,15 @@ use futures_util::StreamExt;
 use ailloy::client::{
     Provider, create_provider_from_node, merge_chat_defaults, merge_image_defaults,
 };
-use ailloy::config::Config;
+use ailloy::config::{AiNode, Capability, Config};
 use ailloy::types::{
     Background, ChatOptions, ImageFormat, ImageOptions, InputFidelity, Message, Moderation,
     StreamEvent,
 };
 
-use super::util::{Spinner, ThinkFilter, file_hyperlink, strip_think_blocks};
+use super::util::{
+    Spinner, ThinkFilter, file_hyperlink, strip_think_blocks, sum_usage, usage_line,
+};
 use crate::cli::ImageArgs;
 
 const IMAGE_SYSTEM_PROMPT: &str = "\
@@ -60,14 +62,7 @@ async fn run_direct(args: &ImageArgs, config: &Config, prompt: &str, quiet: bool
         );
     }
 
-    generate_and_save(
-        provider.as_ref(),
-        prompt,
-        args,
-        node.node_defaults.as_ref(),
-        quiet,
-    )
-    .await
+    generate_and_save(provider.as_ref(), prompt, args, node, quiet).await
 }
 
 async fn run_interactive(args: ImageArgs, config: Config, quiet: bool) -> Result<()> {
@@ -321,14 +316,7 @@ async fn generate_image(
         );
     }
 
-    generate_and_save(
-        provider.as_ref(),
-        prompt,
-        args,
-        node.node_defaults.as_ref(),
-        quiet,
-    )
-    .await
+    generate_and_save(provider.as_ref(), prompt, args, node, quiet).await
 }
 
 // ---------------------------------------------------------------------------
@@ -356,13 +344,13 @@ async fn generate_and_save(
     provider: &dyn Provider,
     prompt: &str,
     args: &ImageArgs,
-    node_defaults: Option<&BTreeMap<String, String>>,
+    node: &AiNode,
     quiet: bool,
 ) -> Result<()> {
     let options = finalize_image_options(
         build_image_options(args)?,
         args.output.as_deref(),
-        node_defaults,
+        node.node_defaults.as_ref(),
     )?;
 
     let images = if quiet {
@@ -403,14 +391,10 @@ async fn generate_and_save(
         }
     }
 
-    if !quiet && let Some(usage) = images.iter().find_map(|img| img.usage.as_ref()) {
-        eprintln!(
-            "{} {} prompt + {} completion = {} total",
-            "Tokens:".dimmed(),
-            usage.prompt_tokens.to_string().dimmed(),
-            usage.completion_tokens.to_string().dimmed(),
-            usage.total_tokens.to_string().dimmed(),
-        );
+    // Batched responses carry usage on the first image only; per-image
+    // backends (MAI) carry one per image. Summing covers both.
+    if !quiet && let Some(usage) = sum_usage(images.iter().filter_map(|img| img.usage.as_ref())) {
+        eprintln!("{}", usage_line(node, &Capability::Image, &usage));
     }
 
     Ok(())

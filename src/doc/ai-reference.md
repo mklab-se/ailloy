@@ -54,7 +54,7 @@ Generate an image from a text description.
 | `-o, --output <FILE>` | Output file path (auto-generated if omitted) |
 | `-i, --interactive` | AI helps describe the image |
 | `--size <WxH>` | Image size (e.g. 1024x1024) |
-| `--quality <Q>` | Image quality: `low`, `medium`, `high`, `auto` (gpt-image models; DALL·E takes `hd`/`standard`) |
+| `--quality <Q>` | Image quality: `low`, `medium`, `high`, `auto` (gpt-image models), plus `xhigh` and `max` on gpt-image-2.5 and newer; DALL·E takes `hd`/`standard` |
 | `--style <S>` | Image style (natural, vivid), DALL·E only, ignored by gpt-image models |
 | `--format <F>` | Output image format (png, jpeg, webp) |
 | `--compression <0-100>` | Compression level (only with `--format` jpeg or webp) |
@@ -441,7 +441,7 @@ Enter) or directly in the YAML.
 | Key | Values | Applies to |
 |-----|--------|------------|
 | `image.size` | `WxH`, e.g. `1024x1024` | image |
-| `image.quality` | `low`, `medium`, `high`, `auto` | image |
+| `image.quality` | `low`, `medium`, `high`, `xhigh`, `max`, `auto` (`xhigh`/`max` need gpt-image-2.5 or newer) | image |
 | `image.format` | `png`, `jpeg` | image (OpenAI/Azure/Foundry) |
 | `image.compression` | `0`–`100` (jpeg/webp only; auto-skipped when the effective format is png) | image (OpenAI/Azure/Foundry) |
 | `image.background` | `transparent`, `opaque`, `auto` | image (OpenAI/Azure/Foundry) |
@@ -452,6 +452,37 @@ Enter) or directly in the YAML.
 | `chat.temperature` | `0`–`2` | chat |
 | `chat.max_tokens` | positive integer | chat |
 | `embedding.dimensions` | positive integer (legacy key `dimensions` also read) | embedding |
+| `chat.price_input`, `chat.price_output` | USD per 1M tokens (cost estimate only, never sent) | chat, eval |
+| `image.price_input`, `image.price_output` | USD per 1M tokens (cost estimate only, never sent) | image |
+| `embedding.price_input` | USD per 1M tokens (cost estimate only, never sent) | embedding |
+| `video.price_second` | USD per second of video (cost estimate only, never sent) | video |
+
+### Cost estimates
+
+After each call the CLI prints the token usage and an estimated cost, e.g.
+`Tokens: 13 prompt + 196 completion = 209 total  Cost: ≈ $0.0059`
+(video prints `Cost:` from the generated seconds). In interactive chat each
+reply shows its cost and the running session total; `/cost` prints the total
+so far, and the session total is printed on exit. `-q`/`--quiet` hides all of it.
+
+Prices come from the node's `*.price_*` defaults first, then a built-in table of
+public list prices (Azure Global Standard, short context, USD) for current
+OpenAI-family, MAI-Image, embedding and Sora models. A model with no known price
+shows `Cost: unknown` with the key to set; Ollama shows `$0 (local)`; local CLI
+agents show no cost. Estimates ignore discounts, cached-input rates,
+long-context surcharges and taxes, and price image-edit input images at the
+text-input rate, so treat them as a guide rather than an invoice. Library users
+get the same numbers from `ailloy::pricing::price_for_node(&node, &cap)` and
+`Price::cost_of(&usage)`.
+
+```yaml
+  anthropic/claude-sonnet-5:
+    provider: anthropic
+    model: claude-sonnet-5
+    defaults:
+      chat.price_input: "3"     # USD per 1M input tokens
+      chat.price_output: "15"   # USD per 1M output tokens
+```
 
 ### Node ID Format
 

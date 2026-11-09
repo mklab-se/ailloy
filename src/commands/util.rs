@@ -1,6 +1,10 @@
 use std::io::{self, Write};
 
+use ailloy::config::{AiNode, Capability, ProviderKind};
+use ailloy::pricing::{self, CostTracker};
 use ailloy::terminal::hyperlink;
+use ailloy::types::Usage;
+use colored::Colorize;
 
 pub const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -169,5 +173,189 @@ pub fn file_hyperlink(path: &str) -> String {
         path.to_string()
     } else {
         hyperlink(&url, path)
+    }
+}
+
+/// Estimated USD cost of one call to `node` for `cap`, or `None` when the
+/// model has no known price.
+pub fn estimate_cost(node: &AiNode, cap: &Capability, usage: &Usage) -> Option<f64> {
+    pricing::price_for_node(node, cap)?.cost_of(usage)
+}
+
+/// Sum several usage blocks (image variants report one each on some models).
+pub fn sum_usage<'a>(usages: impl IntoIterator<Item = &'a Usage>) -> Option<Usage> {
+    usages.into_iter().fold(None, |acc: Option<Usage>, u| {
+        let mut total = acc.unwrap_or(Usage {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+        });
+        total.prompt_tokens += u.prompt_tokens;
+        total.completion_tokens += u.completion_tokens;
+        total.total_tokens += u.total_tokens;
+        Some(total)
+    })
+}
+
+/// The node-default keys a user sets to price `cap` (for actionable hints).
+fn price_keys(cap: &Capability) -> &'static str {
+    match cap {
+        Capability::Image => "image.price_input/image.price_output",
+        Capability::Embedding => "embedding.price_input",
+        Capability::Video => "video.price_second",
+        _ => "chat.price_input/chat.price_output",
+    }
+}
+
+/// Human text for an estimated cost: `≈ $0.0059`, `$0 (local)`, or an
+/// actionable hint when the model has no known price. `None` for local CLI
+/// agents, which bill through their own subscription.
+pub fn cost_text(node: &AiNode, cap: &Capability, cost: Option<f64>) -> Option<String> {
+    match (&node.provider, cost) {
+        (ProviderKind::LocalAgent, None) => None,
+        (ProviderKind::Ollama, _) => Some("$0 (local)".to_string()),
+        (_, Some(c)) => Some(format!("\u{2248} {}", pricing::format_usd(c))),
+        (_, None) => Some(format!(
+            "unknown for '{}', set {} on the node in 'ailloy ai config'",
+            node.detail(),
+            price_keys(cap)
+        )),
+    }
+}
+
+/// The dimmed `Tokens: ... · Cost: ...` summary line printed after a call.
+pub fn usage_line(node: &AiNode, cap: &Capability, usage: &Usage) -> String {
+    let tokens = if *cap == Capability::Embedding {
+        format!(
+            "{} {}",
+            "Tokens:".dimmed(),
+            usage.prompt_tokens.to_string().dimmed()
+        )
+    } else {
+        format!(
+            "{} {} prompt + {} completion = {} total",
+            "Tokens:".dimmed(),
+            usage.prompt_tokens.to_string().dimmed(),
+            usage.completion_tokens.to_string().dimmed(),
+            usage.total_tokens.to_string().dimmed(),
+        )
+    };
+    match cost_text(node, cap, estimate_cost(node, cap, usage)) {
+        Some(cost) => format!("{tokens}  {} {}", "Cost:".dimmed(), cost.dimmed()),
+        None => tokens,
+    }
+}
+
+/// The dimmed `Cost: ...` line for `seconds` of generated video.
+pub fn video_cost_line(node: &AiNode, seconds: f64) -> Option<String> {
+    let cost =
+        pricing::price_for_node(node, &Capability::Video).and_then(|p| p.cost_of_seconds(seconds));
+    cost_text(node, &Capability::Video, cost)
+        .map(|text| format!("{} {}", "Cost:".dimmed(), text.dimmed()))
+}
+
+/// The dimmed session summary: `Session cost: ≈ $0.031 over 4 calls`.
+pub fn session_line(node: &AiNode, cap: &Capability, tracker: &CostTracker) -> String {
+    let calls = tracker.calls();
+    let plural = if calls == 1 { "call" } else { "calls" };
+    let priced = calls - tracker.unpriced_calls();
+    let amount = if priced == 0 {
+        cost_text(node, cap, None).unwrap_or_else(|| "unknown".to_string())
+    } else {
+        let mut text = cost_text(node, cap, Some(tracker.total())).unwrap_or_default();
+        if tracker.unpriced_calls() > 0 {
+            text.push_str(&format!(
+                " ({} without usage data)",
+                tracker.unpriced_calls()
+            ));
+        }
+        text
+    };
+    format!(
+        "{} {} over {calls} {plural}",
+        "Session cost:".dimmed(),
+        amount.dimmed()
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(provider: ProviderKind, model: &str) -> AiNode {
+        let mut n = AiNode::new(provider);
+        n.model = Some(model.to_string());
+        n
+    }
+
+    fn usage(p: u32, c: u32) -> Usage {
+        Usage {
+            prompt_tokens: p,
+            completion_tokens: c,
+            total_tokens: p + c,
+        }
+    }
+
+    #[test]
+    fn usage_line_shows_estimated_cost() {
+        colored::control::set_override(false);
+        let n = node(ProviderKind::MicrosoftFoundry, "gpt-image-2.5-flare");
+        let line = usage_line(&n, &Capability::Image, &usage(13, 196));
+        assert_eq!(
+            line,
+            "Tokens: 13 prompt + 196 completion = 209 total  Cost: \u{2248} $0.0059"
+        );
+    }
+
+    #[test]
+    fn unknown_price_gives_actionable_hint() {
+        colored::control::set_override(false);
+        let n = node(ProviderKind::Anthropic, "claude-next");
+        let line = usage_line(&n, &Capability::Chat, &usage(10, 10));
+        assert!(line.contains("unknown for 'claude-next'"), "{line}");
+        assert!(line.contains("chat.price_input"), "{line}");
+        assert!(line.contains("ailloy ai config"), "{line}");
+    }
+
+    #[test]
+    fn local_agents_show_no_cost_and_ollama_is_free() {
+        let agent = node(ProviderKind::LocalAgent, "codex");
+        assert_eq!(cost_text(&agent, &Capability::Chat, None), None);
+        let ollama = node(ProviderKind::Ollama, "llama3");
+        assert_eq!(
+            cost_text(&ollama, &Capability::Chat, Some(0.0)).as_deref(),
+            Some("$0 (local)")
+        );
+    }
+
+    #[test]
+    fn embedding_line_shows_only_input_tokens() {
+        colored::control::set_override(false);
+        let n = node(ProviderKind::MicrosoftFoundry, "text-embedding-3-large");
+        let line = usage_line(&n, &Capability::Embedding, &usage(100, 0));
+        assert_eq!(line, "Tokens: 100  Cost: \u{2248} <$0.0001");
+    }
+
+    #[test]
+    fn sum_usage_adds_variants() {
+        let all = [usage(10, 100), usage(10, 100)];
+        let total = sum_usage(all.iter()).unwrap();
+        assert_eq!((total.prompt_tokens, total.completion_tokens), (20, 200));
+        assert!(sum_usage(std::iter::empty()).is_none());
+    }
+
+    #[test]
+    fn session_line_totals_and_flags_unpriced_calls() {
+        colored::control::set_override(false);
+        let n = node(ProviderKind::MicrosoftFoundry, "gpt-6.1-sol");
+        let mut t = CostTracker::new();
+        t.record(Some(0.01));
+        t.record(Some(0.02));
+        assert_eq!(
+            session_line(&n, &Capability::Chat, &t),
+            "Session cost: \u{2248} $0.030 over 2 calls"
+        );
+        t.record(None);
+        assert!(session_line(&n, &Capability::Chat, &t).contains("(1 without usage data)"));
     }
 }

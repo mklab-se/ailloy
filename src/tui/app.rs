@@ -1183,7 +1183,7 @@ mod tests {
     fn select_enter_commits_chosen_value() {
         let mut app = App::new(config_with_capable_nodes(), "ailloy");
         open_editor(&mut app, "image.quality");
-        // choices: ["(unset)", "low", "medium", "high", "auto"] → Down → "low".
+        // choices: ["(unset)", "low", "medium", "high", "xhigh", "max", "auto"] → Down → "low".
         app.handle_key(key_ev(KeyCode::Down));
         let effect = app.handle_key(key_ev(KeyCode::Enter));
         assert_eq!(effect, Some(Effect::Save));

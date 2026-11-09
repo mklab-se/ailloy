@@ -96,6 +96,10 @@ src/
   local_agent.rs      # Local CLI agent (claude, codex, copilot): chat, stream (line-buffered)
   retirement.rs       # Static model retirement table + retirement_warning() for
                       #   `ailloy ai status` warnings
+  pricing.rs          # Cost estimates (no feature gate): static prefix-matched list-price
+                      #   table (BUILTIN_PRICES, Azure Global Standard USD), per-node overrides
+                      #   via *.price_* node defaults, price_for_node()/builtin_price(),
+                      #   Price::cost_of(&Usage)/cost_of_seconds(), CostTracker, format_usd()
   main.rs             # CLI entry point (requires "cli" feature)
   cli.rs              # Clap CLI definitions (requires "cli" feature)
   banner.rs           # ASCII art logo (requires "cli" feature)
@@ -153,11 +157,18 @@ examples/
 - **Video generation**: `Capability::Video`/`Task::VideoGeneration` (config key `video`), implemented only for Azure OpenAI and Microsoft Foundry via the shared OpenAI-style Videos API in `video_jobs.rs` (`POST/GET/DELETE {base}/openai/v1/videos[/{id}][/content]`; the legacy `.../video/generations/jobs` surface is a 404 on current Foundry resources). Follows the same v1-vs-dated endpoint rule as chat/images: no `api_version` on the node → v1 surface with **no** `?api-version`; explicit `api_version` → append `?api-version={v}`. Create body is `{model, prompt, size:"WxH" (default 720x1280), seconds:"<string>" (default "4")}`. `seconds` is a wire **string**; sizes/durations are model-dependent (commonly 4/8/12s). The Videos API has no multi-variant field, so `--variants`/`opts.variants > 1` issues N create POSTs and returns one `VideoJob` whose `id` is the per-video ids joined with `+`; `get`/`delete` split on `+` and fan out, aggregating status (all completed → Succeeded; any failed → Failed with that video's error; else Running/Queued). `Provider::generate_video` (default method) creates a job, polls `get_video_job` (2s→10s backoff, 15-min timeout), and downloads every generation via `download_video`; video/content artifacts expire ~24h after completion; other providers return `Unsupported`
 - **Node-level default parameters**: `AiNode.node_defaults` (`defaults:` map under a node in YAML, `BTreeMap<String, String>`) holds dotted keys (`image.quality`, `video.seconds`, `chat.temperature`, `embedding.dimensions`, ...) defined in `params.rs`. Resolution order applied in the `Client` construction path (so library consumers get it for free): explicit call options > node defaults > provider defaults; explicit `*Options` structs passed to `*_with` calls are never mutated by this; merging happens where the client already knows its node
 - **Parameter registry** (`params.rs`): static `PARAMS: &[ParamDef]` table is the single source of truth for recognized `node_defaults` keys: key, capability, value shape (`ParamKind::Enum`/`UInt`/`Float`/`Size`), provider applicability, informational default. `params_for(provider, caps)` filters what's editable for a given node; `validate_value()`/`lookup()` back both request-time resolution and the TUI's Defaults editor
-- **Sampling guard**: all HTTP providers retry once without `temperature` when the model rejects sampling params (`is_sampling_rejection` in types.rs), covering gpt-5.x/o-series, newest Claude, Gemini 3
+- **Sampling guard**: all HTTP providers retry once without `temperature` when the model rejects sampling params (in both `chat` and `chat_stream`) (`is_sampling_rejection` in types.rs), covering gpt-5.x/o-series, newest Claude, Gemini 3
+- **Cost estimates**: `pricing.rs` turns `Usage` into estimated USD. Node `defaults:` keys
+  `chat.price_input`/`chat.price_output`/`image.price_*`/`embedding.price_input`/
+  `video.price_second` (registered in `params.rs`, never sent to providers) override the built-in
+  list-price table field by field; Ollama is free, local agents unpriced. The CLI prints
+  `usage_line()`/`video_cost_line()` (in `commands/util.rs`) after each call and keeps a
+  `CostTracker` in interactive chat (`/cost`, total on exit). Update `BUILTIN_PRICES` when prices
+  change (source: Azure Retail Prices API, `prices.azure.com`)
 - **Model retirements**: static prefix table in `retirement.rs`; `ailloy ai status` warns on configured models with scheduled/past retirement dates and suggests replacements
 - **Interactive config TUI**: `ailloy ai config` opens a full-screen ratatui dashboard (`src/tui/`): a two-pane node table + detail view with keys `a`/`e`/`x`/`d`/`k`/`t` (add/edit/delete/set-default/keychain/test); a provider-selector form with dynamic per-provider fields and capability toggles (`ProviderKind::supported_capabilities()` constrains them). All state lives in `app::App` with a pure reducer returning `Effect`s executed by the event loop in `tui::mod`. `config_tui.rs` keeps the stable non-UI API (status/print/consent/test) plus thin wrappers over the dashboard
 - **Discovery**: `discover.rs` library provides `discover_env_keys()`, `discover_local()`, `discover_ollama()` returning data only; Azure/Foundry discovery is in `azure_discover.rs` (library level, gated on `config-tui`), driven inline by the dashboard's add-node `[ Discover via az CLI ]` action behind a consent modal
-- **Local config**: `.ailloy.yaml` in current or parent directories, merged with global config (nodes/defaults merge, consents are global-only)
+- **Local config**: the closest `.ailloy.yaml` in current or parent directories replaces the global config; with `extends: global` it is merged over it instead (nodes/defaults merge). Consents are always global-only
 - **CLI tool consent**: `consents` map in config tracks user permission for external tools (`azure-cli`, `gcloud-cli`); security decisions use global config only (not overridable by local `.ailloy.yaml`)
 - **Azure auto-discovery**: `azure_discover.rs` wraps `az` CLI for subscription/resource/deployment listing; discovers both `kind=='OpenAI'` and `kind=='AIServices'` resources; the `ailloy ai config` dashboard uses it when the user consents
 - **Blocking wrapper**: `blocking::Client` with internal `tokio::runtime::Builder::new_current_thread()`, mirrors async Client API

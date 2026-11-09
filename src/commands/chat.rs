@@ -6,10 +6,14 @@ use colored::Colorize;
 use futures_util::StreamExt;
 
 use ailloy::client::{create_provider_from_node, merge_chat_defaults, merge_video_defaults};
-use ailloy::config::{AiNode, Config};
+use ailloy::config::{AiNode, Capability, Config};
+use ailloy::pricing::CostTracker;
 use ailloy::types::{ChatOptions, ImageOptions, Message, StreamEvent, VideoOptions};
 
-use super::util::{Spinner, ThinkFilter, file_hyperlink, strip_think_blocks};
+use super::util::{
+    Spinner, ThinkFilter, estimate_cost, file_hyperlink, session_line, strip_think_blocks,
+    usage_line, video_cost_line,
+};
 use crate::cli::ChatArgs;
 
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp"];
@@ -167,13 +171,7 @@ pub async fn run(args: ChatArgs, quiet: bool) -> Result<()> {
                         writeln!(output_writer)?;
                     }
                     if !quiet && let Some(usage) = &response.usage {
-                        eprintln!(
-                            "\n{} {} prompt + {} completion = {} total",
-                            "Tokens:".dimmed(),
-                            usage.prompt_tokens.to_string().dimmed(),
-                            usage.completion_tokens.to_string().dimmed(),
-                            usage.total_tokens.to_string().dimmed(),
-                        );
+                        eprintln!("\n{}", usage_line(node, &Capability::Chat, usage));
                     }
                 }
             }
@@ -195,13 +193,7 @@ pub async fn run(args: ChatArgs, quiet: bool) -> Result<()> {
         }
 
         if !quiet && let Some(usage) = &response.usage {
-            eprintln!(
-                "\n{} {} prompt + {} completion = {} total",
-                "Tokens:".dimmed(),
-                usage.prompt_tokens.to_string().dimmed(),
-                usage.completion_tokens.to_string().dimmed(),
-                usage.total_tokens.to_string().dimmed(),
-            );
+            eprintln!("\n{}", usage_line(node, &Capability::Chat, usage));
         }
     }
 
@@ -258,6 +250,9 @@ async fn run_image_generation(
         if let Some(revised) = &image.revised_prompt {
             eprintln!("{} {}", "Revised prompt:".dimmed(), revised.dimmed());
         }
+        if let Some(usage) = &image.usage {
+            eprintln!("{}", usage_line(node, &Capability::Image, usage));
+        }
     }
 
     Ok(())
@@ -299,6 +294,8 @@ async fn run_video_generation(
         result?
     };
 
+    // Every variant is billed even though only the first is saved here.
+    let billed_seconds: u32 = videos.iter().map(|v| v.duration_seconds).sum();
     let video = videos
         .into_iter()
         .next()
@@ -316,6 +313,9 @@ async fn run_video_generation(
             video.height,
             video.duration_seconds,
         );
+        if let Some(line) = video_cost_line(node, f64::from(billed_seconds)) {
+            eprintln!("{line}");
+        }
     }
 
     Ok(())
@@ -353,6 +353,9 @@ async fn run_svg_generation(
 
     if !quiet {
         eprintln!("{} {}", "Saved to:".dimmed(), file_hyperlink(output));
+        if let Some(usage) = &response.usage {
+            eprintln!("{}", usage_line(node, &Capability::Chat, usage));
+        }
     }
 
     Ok(())
@@ -385,6 +388,7 @@ async fn run_interactive(
     );
 
     let mut history: Vec<Message> = Vec::new();
+    let mut session = CostTracker::new();
 
     if let Some(system) = &args.system {
         history.push(Message::system(system));
@@ -421,12 +425,13 @@ async fn run_interactive(
                         io::stdout().flush()?;
                     }
                 }
-                StreamEvent::Done(_) => {
+                StreamEvent::Done(response) => {
                     let remaining = think_filter.flush();
                     if !remaining.is_empty() {
                         print!("{}", remaining);
                     }
                     println!();
+                    record_turn(&mut session, node, response.usage.as_ref(), quiet);
                 }
             }
         }
@@ -470,10 +475,15 @@ async fn run_interactive(
                 eprintln!("{}", "History cleared.".dimmed());
                 continue;
             }
+            "/cost" => {
+                eprintln!("{}", session_line(node, &Capability::Chat, &session));
+                continue;
+            }
             "/help" => {
                 eprintln!("{}", "Commands:".bold());
                 eprintln!("  {}: Exit the session", "/quit".bold());
                 eprintln!("  {}: Clear conversation history", "/clear".bold());
+                eprintln!("  {}: Show the estimated cost so far", "/cost".bold());
                 eprintln!("  {}: Show this help", "/help".bold());
                 continue;
             }
@@ -507,12 +517,13 @@ async fn run_interactive(
                             io::stdout().flush()?;
                         }
                     }
-                    StreamEvent::Done(_) => {
+                    StreamEvent::Done(response) => {
                         let remaining = think_filter.flush();
                         if !remaining.is_empty() {
                             print!("{}", remaining);
                         }
                         println!();
+                        record_turn(&mut session, node, response.usage.as_ref(), quiet);
                     }
                 }
             }
@@ -521,6 +532,7 @@ async fn run_interactive(
             let response = provider.chat(&history, chat_options.as_ref()).await?;
             println!("{}", strip_think_blocks(&response.content));
             history.push(Message::assistant(&response.content));
+            record_turn(&mut session, node, response.usage.as_ref(), quiet);
         }
 
         if !quiet {
@@ -528,7 +540,36 @@ async fn run_interactive(
         }
     }
 
+    if !quiet && session.calls() > 0 {
+        eprintln!("{}", session_line(node, &Capability::Chat, &session));
+    }
+
     Ok(())
+}
+
+/// Add one interactive turn to the session total and, unless quiet, print
+/// that turn's estimated cost next to the running total.
+fn record_turn(
+    session: &mut CostTracker,
+    node: &AiNode,
+    usage: Option<&ailloy::types::Usage>,
+    quiet: bool,
+) {
+    let cost = usage.and_then(|u| estimate_cost(node, &Capability::Chat, u));
+    session.record(cost);
+    if quiet || usage.is_none() {
+        return;
+    }
+    if let Some(text) = super::util::cost_text(node, &Capability::Chat, cost) {
+        let total = super::util::cost_text(node, &Capability::Chat, Some(session.total()))
+            .unwrap_or_default();
+        let line = if cost.is_some() {
+            format!("{text} (session {total})")
+        } else {
+            text
+        };
+        eprintln!("{}", line.dimmed());
+    }
 }
 
 /// Merge the resolved node's per-node chat defaults into the CLI-built options,
