@@ -8,7 +8,7 @@ use async_trait::async_trait;
 
 use crate::config::{AiNode, Auth, Config, ProviderKind};
 use crate::error::ClientError;
-use crate::eval::{Answer, EvalResponse, Question, Questions};
+use crate::eval::{Answer, EvalOptions, EvalResponse, Question, Questions};
 use crate::types::{
     Background, ChatOptions, ChatResponse, ChatStream, EmbedOptions, EmbedResponse, ImageFormat,
     ImageOptions, ImageResponse, Message, Task, VideoJob, VideoJobStatus, VideoOptions,
@@ -84,7 +84,27 @@ pub trait Provider: Send + Sync {
         state: &serde_json::Value,
         questions: &Questions,
     ) -> Result<EvalResponse> {
-        crate::eval_chat::evaluate_via_chat(self, state, questions).await
+        crate::eval_chat::evaluate_via_chat(self, state, questions, &[]).await
+    }
+
+    /// Answer typed questions with images and other [`EvalOptions`].
+    ///
+    /// Default implementation: without images it calls
+    /// [`Provider::evaluate`] (so providers that override only that keep
+    /// working); with images it emulates over chat, attaching the images to
+    /// every call. Long context is ignored by chat emulation. TypeSafe
+    /// overrides this to send images and switches natively.
+    async fn evaluate_with(
+        &self,
+        state: &serde_json::Value,
+        questions: &Questions,
+        options: &EvalOptions,
+    ) -> Result<EvalResponse> {
+        if options.images.is_empty() {
+            self.evaluate(state, questions).await
+        } else {
+            crate::eval_chat::evaluate_via_chat(self, state, questions, &options.images).await
+        }
     }
 
     /// Create an asynchronous video generation job.
@@ -683,8 +703,32 @@ impl Client {
         state: impl Into<serde_json::Value>,
         questions: &Questions,
     ) -> Result<EvalResponse> {
+        self.eval_with(state, questions, &EvalOptions::default())
+            .await
+    }
+
+    /// Evaluate with images or long context (see [`EvalOptions`]).
+    ///
+    /// When `options.long_context` is `None`, the node's `eval.long_context`
+    /// default applies.
+    pub async fn eval_with(
+        &self,
+        state: impl Into<serde_json::Value>,
+        questions: &Questions,
+        options: &EvalOptions,
+    ) -> Result<EvalResponse> {
         let state = state.into();
-        self.provider.evaluate(&state, questions).await
+        let mut options = options.clone();
+        if options.long_context.is_none() {
+            options.long_context = self
+                .node_defaults
+                .as_ref()
+                .and_then(|d| d.get("eval.long_context"))
+                .and_then(|v| v.trim().parse::<bool>().ok());
+        }
+        self.provider
+            .evaluate_with(&state, questions, &options)
+            .await
     }
 
     /// Evaluate a single question and return its answer.
@@ -1374,6 +1418,132 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(answer.as_yes_no(), Some(0.9));
+    }
+
+    /// Records whether each chat call carried image parts, and its prompt.
+    struct ImageJudge(Mutex<Vec<(bool, String)>>);
+
+    #[async_trait]
+    impl Provider for ImageJudge {
+        fn name(&self) -> &str {
+            "image-judge"
+        }
+
+        async fn chat(
+            &self,
+            messages: &[Message],
+            _options: Option<&ChatOptions>,
+        ) -> Result<ChatResponse> {
+            let last = messages.last().unwrap();
+            self.0.lock().unwrap().push((
+                last.content.has_attachments(),
+                last.content.text().to_string(),
+            ));
+            Ok(ChatResponse {
+                content: r#"{"probability":0.8,"rationale":"seen"}"#.to_string(),
+                model: "vision".to_string(),
+                usage: None,
+            })
+        }
+    }
+
+    fn tiny_png() -> Vec<u8> {
+        let mut data = b"\x89PNG\r\n\x1a\n".to_vec();
+        data.extend_from_slice(&[0, 0, 0, 13, b'I', b'H', b'D', b'R']);
+        data.extend_from_slice(&400u32.to_be_bytes());
+        data.extend_from_slice(&300u32.to_be_bytes());
+        data
+    }
+
+    #[tokio::test]
+    async fn chat_eval_attaches_images_and_names_their_references() {
+        let judge = std::sync::Arc::new(ImageJudge(Mutex::new(Vec::new())));
+        struct Shared(std::sync::Arc<ImageJudge>);
+        #[async_trait]
+        impl Provider for Shared {
+            fn name(&self) -> &str {
+                "shared"
+            }
+            async fn chat(
+                &self,
+                messages: &[Message],
+                options: Option<&ChatOptions>,
+            ) -> Result<ChatResponse> {
+                self.0.chat(messages, options).await
+            }
+        }
+        let client = Client::from_provider(Box::new(Shared(judge.clone())));
+        let image = crate::eval::EvalImage::new("img-door", tiny_png()).unwrap();
+        let mut qs = crate::eval::Questions::new();
+        qs.insert(
+            "person".into(),
+            crate::eval::Question::yes_no("Is there a person in `image`?"),
+        );
+        let response = client
+            .eval_with(
+                serde_json::json!({"image": "img-door"}),
+                &qs,
+                &EvalOptions::new().image(image),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.answers["person"].as_yes_no(), Some(0.8));
+        let calls = judge.0.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].0, "image part attached");
+        assert!(calls[0].1.contains("1. img-door"), "{}", calls[0].1);
+    }
+
+    #[tokio::test]
+    async fn chat_eval_refuses_box_questions() {
+        let client = Client::from_provider(Box::new(MockJudge::new(None)));
+        let err = client
+            .eval_one("s", crate::eval::Question::bounding_box("the mug"))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("TypeSafe"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn eval_with_applies_the_node_long_context_default() {
+        struct Spy(std::sync::Arc<Mutex<Vec<Option<bool>>>>);
+        #[async_trait]
+        impl Provider for Spy {
+            fn name(&self) -> &str {
+                "spy"
+            }
+            async fn evaluate_with(
+                &self,
+                _state: &serde_json::Value,
+                _questions: &Questions,
+                options: &EvalOptions,
+            ) -> Result<EvalResponse> {
+                self.0.lock().unwrap().push(options.long_context);
+                Ok(EvalResponse::new(
+                    Default::default(),
+                    "spy",
+                    None,
+                    crate::eval::Calibration::Measured,
+                    Default::default(),
+                ))
+            }
+        }
+        let seen = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let client = Client {
+            provider: Box::new(Spy(seen.clone())),
+            node_defaults: Some(BTreeMap::from([(
+                "eval.long_context".to_string(),
+                "true".to_string(),
+            )])),
+        };
+        let qs = crate::eval::Questions::new();
+        client.eval("s", &qs).await.unwrap();
+        client
+            .eval_with("s", &qs, &EvalOptions::new().long_context(false))
+            .await
+            .unwrap();
+        assert_eq!(*seen.lock().unwrap(), vec![Some(true), Some(false)]);
     }
 
     #[tokio::test]

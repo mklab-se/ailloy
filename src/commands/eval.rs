@@ -12,7 +12,10 @@ use colored::Colorize;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use ailloy::{Answer, Calibration, Client, EvalResponse, Question, Questions};
+use ailloy::config::{AiNode, Capability, Config};
+use ailloy::{
+    Answer, Calibration, Client, EvalImage, EvalOptions, EvalResponse, Question, Questions,
+};
 
 use crate::cli::EvalArgs;
 
@@ -28,9 +31,18 @@ const DEFAULT_THRESHOLD: f64 = 0.5;
 /// What decides pass or fail for one question.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Gate {
-    YesNo { threshold: f64 },
-    Choice { expect: Vec<String> },
-    Score { min: Option<f64>, max: Option<f64> },
+    YesNo {
+        threshold: f64,
+    },
+    Choice {
+        expect: Vec<String>,
+    },
+    Score {
+        min: Option<f64>,
+        max: Option<f64>,
+    },
+    /// Box answers always pass the gate; only `--min-confidence` can flag them.
+    Box,
 }
 
 /// One question plus its gate.
@@ -157,6 +169,15 @@ fn score_item(
     })
 }
 
+fn box_item(id: &str, text: &str, min_confidence: Option<f64>) -> Item {
+    Item {
+        id: id.to_string(),
+        question: Question::bounding_box(text),
+        gate: Gate::Box,
+        min_confidence,
+    }
+}
+
 fn yes_no_item(
     id: &str,
     text: &str,
@@ -214,8 +235,10 @@ pub fn items_from_flags(args: &EvalArgs) -> Result<Vec<Item>, String> {
             args.min_confidence,
             "--level TEXT, repeated",
         )?
+    } else if let Some(text) = &args.find_box {
+        box_item("box", text, args.min_confidence)
     } else {
-        return Err("pass one of --yes-no, --choice, --score or --questions".to_string());
+        return Err("pass one of --yes-no, --choice, --score, --box or --questions".to_string());
     };
     Ok(vec![item])
 }
@@ -241,6 +264,8 @@ struct FileQuestion {
     levels: Option<Vec<String>>,
     min: Option<f64>,
     max: Option<f64>,
+    #[serde(rename = "box")]
+    find_box: Option<String>,
     min_confidence: Option<f64>,
 }
 
@@ -267,18 +292,38 @@ pub fn parse_questions_file(
         };
         let q: FileQuestion = serde_norway::from_value(value)
             .map_err(|e| format!("invalid questions file: question '{id}': {e}"))?;
-        let kinds = [q.yes_no.is_some(), q.choice.is_some(), q.score.is_some()]
-            .iter()
-            .filter(|b| **b)
-            .count();
+        let kinds = [
+            q.yes_no.is_some(),
+            q.choice.is_some(),
+            q.score.is_some(),
+            q.find_box.is_some(),
+        ]
+        .iter()
+        .filter(|b| **b)
+        .count();
         if kinds != 1 {
             return Err(format!(
-                "question '{id}' must set exactly one of yes_no, choice, score"
+                "question '{id}' must set exactly one of yes_no, choice, score, box"
             ));
         }
         check_unit(&format!("question '{id}' min_confidence"), q.min_confidence)?;
         let floor = q.min_confidence.or(global_min_confidence);
-        let item = if let Some(text) = q.yes_no {
+        let item = if let Some(text) = q.find_box {
+            if q.threshold.is_some()
+                || q.yes_means.is_some()
+                || q.no_means.is_some()
+                || q.options.is_some()
+                || q.expect.is_some()
+                || q.levels.is_some()
+                || q.min.is_some()
+                || q.max.is_some()
+            {
+                return Err(format!(
+                    "question '{id}' is a box but sets yes_no/choice/score fields"
+                ));
+            }
+            box_item(&id, &text, floor)
+        } else if let Some(text) = q.yes_no {
             if q.options.is_some()
                 || q.expect.is_some()
                 || q.levels.is_some()
@@ -347,6 +392,7 @@ pub fn judge(item: &Item, answer: &Answer) -> Outcome {
         (Gate::Score { min, max }, Answer::Score { score, .. }) => {
             min.is_none_or(|m| *score >= m) && max.is_none_or(|m| *score <= m)
         }
+        (Gate::Box, Answer::Box { .. }) => true,
         _ => false,
     };
     if !passed {
@@ -369,12 +415,29 @@ pub fn exit_code(outcomes: &[Outcome]) -> u8 {
     }
 }
 
-/// The state sent to the judge: the input, or `{context, input}`.
-pub fn build_state(input: &str, context: Option<&str>) -> Value {
-    match context {
-        Some(ctx) => json!({"context": ctx, "input": input}),
-        None => Value::String(input.to_string()),
+/// The state sent to the judge: the input, or `{context, input}`. With
+/// images, an object that also holds `image` (one) or `images` (several),
+/// whose values are the images' reference strings.
+pub fn build_state(input: Option<&str>, context: Option<&str>, images: &[String]) -> Value {
+    if images.is_empty() {
+        let input = input.unwrap_or_default();
+        return match context {
+            Some(ctx) => json!({"context": ctx, "input": input}),
+            None => Value::String(input.to_string()),
+        };
     }
+    let mut state = serde_json::Map::new();
+    if let Some(ctx) = context {
+        state.insert("context".into(), json!(ctx));
+    }
+    if let Some(input) = input {
+        state.insert("input".into(), json!(input));
+    }
+    match images {
+        [one] => state.insert("image".into(), json!(one)),
+        many => state.insert("images".into(), json!(many)),
+    };
+    Value::Object(state)
 }
 
 /// The `--json` document.
@@ -453,6 +516,10 @@ fn describe(item: &Item, answer: &Answer) -> String {
             };
             format!("{score:.2} of 0..{top} ({label})")
         }
+        Answer::Box { bounds, .. } => format!(
+            "top {:.2}  bottom {:.2}  left {:.2}  right {:.2}",
+            bounds.top, bounds.bottom, bounds.left, bounds.right
+        ),
         _ => String::new(),
     }
 }
@@ -528,7 +595,7 @@ fn read_input(args: &EvalArgs) -> Result<Option<String>> {
     Ok(None)
 }
 
-pub async fn run(args: EvalArgs) -> u8 {
+pub async fn run(args: EvalArgs, quiet: bool) -> u8 {
     let items = match &args.questions {
         Some(path) => match std::fs::read_to_string(path) {
             Ok(text) => {
@@ -545,12 +612,32 @@ pub async fn run(args: EvalArgs) -> u8 {
         Ok(items) => items,
         Err(e) => return usage_error(&e),
     };
+    if args.attach.is_empty()
+        && let Some(item) = items.iter().find(|i| i.gate == Gate::Box)
+    {
+        return usage_error(&format!(
+            "box question '{}' needs an image to look in; attach one with --attach FILE",
+            item.id
+        ));
+    }
+    let images = match args
+        .attach
+        .iter()
+        .map(EvalImage::from_path)
+        .collect::<Result<Vec<_>>>()
+    {
+        Ok(images) => images,
+        Err(e) => return usage_error(&format!("{e:#}")),
+    };
     let input = match read_input(&args) {
-        Ok(Some(input)) if !input.trim().is_empty() => input,
-        Ok(Some(_)) => return usage_error("input is empty"),
-        Ok(None) => {
-            return usage_error("nothing to evaluate: pass an argument, --file, or pipe stdin");
+        Ok(Some(input)) if !input.trim().is_empty() => Some(input),
+        Ok(Some(_)) if images.is_empty() => return usage_error("input is empty"),
+        Ok(None) if images.is_empty() => {
+            return usage_error(
+                "nothing to evaluate: pass an argument, --file, --attach, or pipe stdin",
+            );
         }
+        Ok(_) => None,
         Err(e) => return usage_error(&format!("{e:#}")),
     };
     let questions: Questions = items
@@ -560,11 +647,16 @@ pub async fn run(args: EvalArgs) -> u8 {
     if let Err(e) = ailloy::eval::validate_questions(&questions) {
         return usage_error(&format!("{e:#}"));
     }
-    let client = match build_client(args.node.as_deref()) {
-        Ok(client) => client,
+    let (client, node) = match build_client(args.node.as_deref()) {
+        Ok(pair) => pair,
         Err(e) => return usage_error(&format!("{e:#}")),
     };
-    match evaluate(&client, &args, &items, &input).await {
+    let target = Judge {
+        client: &client,
+        node: &node,
+        quiet,
+    };
+    match evaluate(&target, &args, &items, input.as_deref(), images).await {
         Ok(code) => code,
         Err(e) => {
             eprintln!("{} {e:#}", "error:".red().bold());
@@ -573,21 +665,45 @@ pub async fn run(args: EvalArgs) -> u8 {
     }
 }
 
-/// Build the judge client. Failures here are config errors (exit 2).
-fn build_client(node: Option<&str>) -> Result<Client> {
-    Ok(match node {
-        Some(node) => Client::with_node(node)?,
-        None => Client::for_capability("eval")?,
-    })
+/// Build the judge client and return its node (for pricing). Failures here
+/// are config errors (exit 2).
+fn build_client(node: Option<&str>) -> Result<(Client, AiNode)> {
+    let config = Config::load()?;
+    let (id, ai_node) = match node {
+        Some(node) => config.get_node(node).with_context(|| {
+            format!("Node '{node}' not found in config. Run `ailloy ai config` to add it.")
+        })?,
+        None => config.default_eval_node()?,
+    };
+    Ok((Client::with_node(id)?, ai_node.clone()))
 }
 
-async fn evaluate(client: &Client, args: &EvalArgs, items: &[Item], input: &str) -> Result<u8> {
+/// The judge to ask, and how to report on it.
+struct Judge<'a> {
+    client: &'a Client,
+    node: &'a AiNode,
+    quiet: bool,
+}
+
+async fn evaluate(
+    target: &Judge<'_>,
+    args: &EvalArgs,
+    items: &[Item],
+    input: Option<&str>,
+    images: Vec<EvalImage>,
+) -> Result<u8> {
     let questions: Questions = items
         .iter()
         .map(|i| (i.id.clone(), i.question.clone()))
         .collect();
-    let state = build_state(input, args.context.as_deref());
-    let response = client.eval(state, &questions).await?;
+    let references: Vec<String> = images.iter().map(|i| i.reference().to_string()).collect();
+    let state = build_state(input, args.context.as_deref(), &references);
+    let mut options = EvalOptions::new();
+    options.images = images;
+    if args.long_context {
+        options = options.long_context(true);
+    }
+    let response = target.client.eval_with(state, &questions, &options).await?;
     let outcomes: Vec<Outcome> = items
         .iter()
         .map(|item| match response.answers.get(&item.id) {
@@ -605,6 +721,14 @@ async fn evaluate(client: &Client, args: &EvalArgs, items: &[Item], input: &str)
             "{}",
             render_text(&response, items, &outcomes, args.questions.is_some())
         );
+        if !target.quiet
+            && let Some(usage) = &response.usage
+        {
+            eprintln!(
+                "{}",
+                super::util::usage_line(target.node, &Capability::Eval, usage)
+            );
+        }
     }
     Ok(exit_code(&outcomes))
 }
@@ -632,7 +756,10 @@ mod tests {
             level: vec![],
             min: None,
             max: None,
+            find_box: None,
             questions: None,
+            attach: vec![],
+            long_context: false,
             min_confidence: None,
         }
     }
@@ -873,10 +1000,57 @@ questions:
 
     #[test]
     fn state_shape() {
-        assert_eq!(build_state("x", None), serde_json::json!("x"));
+        assert_eq!(build_state(Some("x"), None, &[]), serde_json::json!("x"));
         assert_eq!(
-            build_state("x", Some("ctx")),
+            build_state(Some("x"), Some("ctx"), &[]),
             serde_json::json!({"context": "ctx", "input": "x"})
+        );
+    }
+
+    #[test]
+    fn state_with_images() {
+        let one = vec!["img-a".to_string()];
+        assert_eq!(
+            build_state(None, None, &one),
+            serde_json::json!({"image": "img-a"})
+        );
+        let two = vec!["img-a".to_string(), "img-b".to_string()];
+        assert_eq!(
+            build_state(Some("caption"), Some("ctx"), &two),
+            serde_json::json!({"context": "ctx", "input": "caption", "images": ["img-a", "img-b"]})
+        );
+    }
+
+    #[test]
+    fn box_from_flag_and_file_always_passes_the_gate() {
+        let mut a = args();
+        a.find_box = Some("the mug".into());
+        let items = items_from_flags(&a).unwrap();
+        assert_eq!(items[0].id, "box");
+        assert_eq!(items[0].question.kind(), "box");
+
+        let answer = Answer::Box {
+            bounds: ailloy::BoundingBox {
+                top: 0.25,
+                bottom: 0.82,
+                left: 0.44,
+                right: 0.84,
+            },
+            confidence: 0.3,
+        };
+        assert_eq!(judge(&items[0], &answer), Outcome::Pass);
+        assert!(describe(&items[0], &answer).contains("top 0.25"));
+
+        let file = "questions:\n  mug:\n    box: the mug\n    min_confidence: 0.5\n";
+        let items = parse_questions_file(file, None).unwrap();
+        assert_eq!(items[0].question.kind(), "box");
+        assert_eq!(judge(&items[0], &answer), Outcome::Unsure);
+
+        let bad = "questions:\n  mug:\n    box: the mug\n    threshold: 0.5\n";
+        assert!(
+            parse_questions_file(bad, None)
+                .unwrap_err()
+                .contains("is a box")
         );
     }
 
@@ -978,7 +1152,7 @@ questions:
         a.yes_no = Some("ok?".into());
         a.input = Some("text".into());
         a.node = Some("no/such-node".into());
-        assert_eq!(run(a).await, EXIT_USAGE);
+        assert_eq!(run(a, true).await, EXIT_USAGE);
     }
 
     #[tokio::test]
@@ -986,7 +1160,15 @@ questions:
         let mut a = args();
         a.yes_no = Some(String::new());
         a.input = Some("text".into());
-        assert_eq!(run(a).await, EXIT_USAGE);
+        assert_eq!(run(a, true).await, EXIT_USAGE);
+    }
+
+    #[tokio::test]
+    async fn box_without_an_image_is_a_usage_error() {
+        let mut a = args();
+        a.find_box = Some("the mug".into());
+        a.input = Some("text".into());
+        assert_eq!(run(a, true).await, EXIT_USAGE);
     }
 
     #[test]

@@ -158,6 +158,17 @@ impl Client {
         self.runtime.block_on(self.inner.eval(state, questions))
     }
 
+    /// Evaluate with images or long context (blocking).
+    pub fn eval_with(
+        &self,
+        state: impl Into<serde_json::Value>,
+        questions: &crate::eval::Questions,
+        options: &crate::eval::EvalOptions,
+    ) -> Result<crate::eval::EvalResponse> {
+        self.runtime
+            .block_on(self.inner.eval_with(state, questions, options))
+    }
+
     /// Evaluate a single question (blocking).
     pub fn eval_one(
         &self,

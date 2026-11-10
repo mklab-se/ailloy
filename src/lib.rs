@@ -56,7 +56,10 @@ pub use client::{Client, Provider};
 pub use config::{AiNode, Auth, Capability, EmbeddingMetadata};
 pub use conversation::{ChatHistory, Conversation, InMemoryHistory};
 pub use error::{ClientError, ErrorKind, ProviderError, error_kind};
-pub use eval::{Answer, Calibration, EvalResponse, Question, Questions, YesNoCriteria};
+pub use eval::{
+    Answer, BoundingBox, Calibration, EvalImage, EvalOptions, EvalResponse, Question, Questions,
+    YesNoCriteria,
+};
 pub use types::{
     Background, ChatOptions, ChatResponse, ChatStream, ContentPart, EmbedOptions, EmbedResponse,
     ImageFormat, ImageOptions, ImageResponse, InputFidelity, Message, MessageContent, Moderation,

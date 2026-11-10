@@ -15,7 +15,8 @@ use serde_json::{Map, Value, json};
 use crate::client::Provider;
 use crate::error::ClientError;
 use crate::eval::{
-    Answer, Calibration, EvalResponse, Question, Questions, choice_answer, validate_questions,
+    Answer, BoundingBox, Calibration, EvalImage, EvalOptions, EvalResponse, Question, Questions,
+    choice_answer, validate_questions,
 };
 use crate::types::{ChatOptions, ChatResponse, Message, Usage};
 
@@ -28,6 +29,16 @@ const MAX_ATTEMPTS: u32 = 3;
 const BASE_DELAY: Duration = Duration::from_millis(500);
 const MAX_BACKOFF: Duration = Duration::from_secs(8);
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
+
+/// Header that turns on images and Box questions (TypeSafe "Dreamer-ready").
+pub const IMAGES_HEADER: &str = "TypeSafe-Danger-Zone-Images";
+/// Header that raises both context limits to 262k tokens.
+pub const LONG_CONTEXT_HEADER: &str = "TypeSafe-Danger-Zone-Long-Context";
+
+/// TypeSafe image limits: each side 280 to 1568 px, at most 16 MiB per file.
+const MIN_IMAGE_SIDE: u32 = 280;
+const MAX_IMAGE_SIDE: u32 = 1568;
+const MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
 
 /// Client for TypeSafe's System One API.
 pub struct TypeSafeClient {
@@ -106,15 +117,99 @@ fn question_wire(question: &Question) -> Value {
             instructions,
             levels,
         } => json!({"type": "score", "instructions": instructions, "criteria": levels}),
+        Question::Box { instructions } => json!({"type": "box", "instructions": instructions}),
     }
 }
 
-pub(crate) fn request_body(model: &str, state: &Value, questions: &Questions) -> Value {
+pub(crate) fn request_body(
+    model: &str,
+    state: &Value,
+    questions: &Questions,
+    images: &[EvalImage],
+) -> Value {
+    use base64::Engine as _;
     let wire: Map<String, Value> = questions
         .iter()
         .map(|(id, q)| (id.clone(), question_wire(q)))
         .collect();
-    json!({"model": model, "state": state, "questions": wire})
+    let mut body = json!({"model": model, "state": state, "questions": wire});
+    if !images.is_empty() {
+        let assets: Map<String, Value> = images
+            .iter()
+            .map(|image| {
+                (
+                    image.reference().to_string(),
+                    json!({
+                        "type": "image",
+                        "format": image.format().wire_name(),
+                        "data_base64": base64::engine::general_purpose::STANDARD.encode(image.data()),
+                    }),
+                )
+            })
+            .collect();
+        body["assets"] = Value::Object(assets);
+    }
+    body
+}
+
+/// Check images against TypeSafe's rules before sending, so mistakes get an
+/// actionable message instead of a bare HTTP 400.
+pub(crate) fn validate_images(
+    state: &Value,
+    questions: &Questions,
+    images: &[EvalImage],
+) -> Result<()> {
+    if images.is_empty() {
+        if let Some((id, _)) = questions
+            .iter()
+            .find(|(_, q)| matches!(q, Question::Box { .. }))
+        {
+            bail!(
+                "box question '{id}' needs an image to look in; attach one (--attach FILE, or \
+                 EvalOptions::image)"
+            );
+        }
+        return Ok(());
+    }
+    // References are matched as plain text anywhere in the request's strings.
+    let text = format!(
+        "{}{}",
+        serde_json::to_string(state).unwrap_or_default(),
+        serde_json::to_string(&questions.values().map(question_wire).collect::<Vec<_>>())
+            .unwrap_or_default()
+    );
+    let mut seen = std::collections::BTreeSet::new();
+    for image in images {
+        let reference = image.reference();
+        if !seen.insert(reference) {
+            bail!("two images share the reference '{reference}'; give every image its own");
+        }
+        if !text.contains(reference) {
+            bail!(
+                "image '{reference}' is not used: write its reference in the state, or in a \
+                 question's instructions or criteria (TypeSafe rejects unreferenced images)"
+            );
+        }
+        if image.data().len() > MAX_IMAGE_BYTES {
+            bail!(
+                "image '{reference}' is {:.1} MiB; TypeSafe accepts at most 16 MiB per image, \
+                 so resize or recompress it",
+                image.data().len() as f64 / (1024.0 * 1024.0)
+            );
+        }
+        if let Some((w, h)) = image.dimensions() {
+            let ok = |side: u32| (MIN_IMAGE_SIDE..=MAX_IMAGE_SIDE).contains(&side);
+            if !ok(w) || !ok(h) {
+                bail!(
+                    "image '{reference}' is {w}x{h} px; TypeSafe needs each side between \
+                     {MIN_IMAGE_SIDE} and {MAX_IMAGE_SIDE} px (it does not resize), so scale \
+                     it so the longest side is at most {MAX_IMAGE_SIDE} and the shortest at \
+                     least {MIN_IMAGE_SIDE}"
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -145,6 +240,11 @@ enum WireAnswer {
     Score {
         score: f64,
         probabilities: BTreeMap<String, f64>,
+        confidence: f64,
+    },
+    Box {
+        #[serde(rename = "box")]
+        bounds: BoundingBox,
         confidence: f64,
     },
 }
@@ -206,6 +306,15 @@ pub(crate) fn parse_response(body: &str, questions: &Questions) -> Result<EvalRe
                     confidence: *confidence,
                 }
             }
+            (Question::Box { .. }, WireAnswer::Box { bounds, confidence }) => Answer::Box {
+                bounds: BoundingBox {
+                    top: bounds.top.clamp(0.0, 1.0),
+                    bottom: bounds.bottom.clamp(0.0, 1.0),
+                    left: bounds.left.clamp(0.0, 1.0),
+                    right: bounds.right.clamp(0.0, 1.0),
+                },
+                confidence: *confidence,
+            },
             _ => bail!(
                 "TypeSafe answered question '{id}' with a different type than asked ({})",
                 question.kind()
@@ -301,6 +410,25 @@ pub(crate) fn format_error(
     }
 }
 
+/// The opt-in headers a request needs: images for any image or Box question,
+/// long context when asked for.
+pub(crate) fn request_headers(
+    questions: &Questions,
+    options: &EvalOptions,
+) -> Vec<(&'static str, &'static str)> {
+    let mut headers = Vec::new();
+    let has_box = questions
+        .values()
+        .any(|q| matches!(q, Question::Box { .. }));
+    if !options.images.is_empty() || has_box {
+        headers.push((IMAGES_HEADER, "true"));
+    }
+    if options.long_context == Some(true) {
+        headers.push((LONG_CONTEXT_HEADER, "true"));
+    }
+    headers
+}
+
 pub(crate) fn should_retry(status: u16) -> bool {
     matches!(status, 429 | 529)
 }
@@ -366,16 +494,31 @@ impl Provider for TypeSafeClient {
     }
 
     async fn evaluate(&self, state: &Value, questions: &Questions) -> Result<EvalResponse> {
+        self.evaluate_with(state, questions, &EvalOptions::default())
+            .await
+    }
+
+    async fn evaluate_with(
+        &self,
+        state: &Value,
+        questions: &Questions,
+        options: &EvalOptions,
+    ) -> Result<EvalResponse> {
         validate_questions(questions)?;
+        validate_images(state, questions, &options.images)?;
         let url = format!("{}/v1/systemone", self.endpoint);
         let url = url.as_str();
-        let body = request_body(&self.model, state, questions);
+        let body = request_body(&self.model, state, questions, &options.images);
+        let headers = request_headers(questions, options);
         let raw = with_retries(MAX_ATTEMPTS, Duration::ZERO, || {
-            let request = self
+            let mut request = self
                 .client
                 .post(url)
                 .bearer_auth(&self.api_key)
                 .json(&body);
+            for (name, value) in &headers {
+                request = request.header(*name, *value);
+            }
             async move {
                 let response = request.send().await.with_context(|| {
                     format!("could not reach TypeSafe at {url}; check your network and the node's endpoint")
@@ -446,7 +589,7 @@ mod tests {
 
     #[test]
     fn request_body_maps_question_types() {
-        let body = request_body("jev-latest", &json!("text"), &questions());
+        let body = request_body("jev-latest", &json!("text"), &questions(), &[]);
         assert_eq!(body["model"], "jev-latest");
         assert_eq!(body["state"], "text");
         assert_eq!(
@@ -469,7 +612,7 @@ mod tests {
     fn yes_no_without_criteria_omits_the_field() {
         let mut qs = Questions::new();
         qs.insert("q".into(), Question::yes_no("ok?"));
-        let body = request_body("m", &json!("s"), &qs);
+        let body = request_body("m", &json!("s"), &qs, &[]);
         assert!(body["questions"]["q"].get("criteria").is_none());
     }
 
@@ -708,5 +851,120 @@ mod tests {
                 .unwrap_err()
                 .to_string();
         assert!(err.contains("chat node"), "{err}");
+    }
+
+    fn png(width: u32, height: u32) -> Vec<u8> {
+        let mut data = b"\x89PNG\r\n\x1a\n".to_vec();
+        data.extend_from_slice(&[0, 0, 0, 13, b'I', b'H', b'D', b'R']);
+        data.extend_from_slice(&width.to_be_bytes());
+        data.extend_from_slice(&height.to_be_bytes());
+        data
+    }
+
+    fn box_questions() -> Questions {
+        let mut qs = Questions::new();
+        qs.insert("mug".into(), Question::bounding_box("the mug in `photo`"));
+        qs
+    }
+
+    #[test]
+    fn box_question_wire_and_assets() {
+        let image = EvalImage::new("img-kitchen", png(800, 600)).unwrap();
+        let body = request_body(
+            "jev-latest",
+            &json!({"photo": "img-kitchen"}),
+            &box_questions(),
+            std::slice::from_ref(&image),
+        );
+        assert_eq!(
+            body["questions"]["mug"],
+            json!({"type": "box", "instructions": "the mug in `photo`"})
+        );
+        let asset = &body["assets"]["img-kitchen"];
+        assert_eq!(asset["type"], "image");
+        assert_eq!(asset["format"], "png");
+        assert!(
+            asset["data_base64"]
+                .as_str()
+                .unwrap()
+                .starts_with("iVBORw0KGgo")
+        );
+        // no images: no assets key at all
+        let plain = request_body("m", &json!("s"), &questions(), &[]);
+        assert!(plain.get("assets").is_none());
+    }
+
+    #[test]
+    fn headers_follow_images_box_and_long_context() {
+        assert!(request_headers(&questions(), &EvalOptions::new()).is_empty());
+        let h = request_headers(&box_questions(), &EvalOptions::new());
+        assert_eq!(h, vec![(IMAGES_HEADER, "true")]);
+        let image = EvalImage::new("img-x", png(800, 600)).unwrap();
+        let h = request_headers(
+            &questions(),
+            &EvalOptions::new().image(image).long_context(true),
+        );
+        assert_eq!(
+            h,
+            vec![(IMAGES_HEADER, "true"), (LONG_CONTEXT_HEADER, "true")]
+        );
+        let h = request_headers(&questions(), &EvalOptions::new().long_context(false));
+        assert!(h.is_empty());
+    }
+
+    #[test]
+    fn validate_images_gives_actionable_errors() {
+        let err = validate_images(&json!("s"), &box_questions(), &[])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("needs an image") && err.contains("--attach"),
+            "{err}"
+        );
+
+        let state = json!({"photo": "img-a"});
+        let ok = EvalImage::new("img-a", png(800, 600)).unwrap();
+        validate_images(&state, &box_questions(), std::slice::from_ref(&ok)).unwrap();
+
+        let unused = EvalImage::new("img-b", png(800, 600)).unwrap();
+        let err = validate_images(&state, &box_questions(), &[ok.clone(), unused])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("'img-b' is not used"), "{err}");
+
+        let small = EvalImage::new("img-a", png(200, 600)).unwrap();
+        let err = validate_images(&state, &box_questions(), &[small])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("200x600") && err.contains("280"), "{err}");
+
+        let err = validate_images(&state, &box_questions(), &[ok.clone(), ok])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("share the reference"), "{err}");
+
+        // a reference inside instructions counts as used
+        let mut qs = Questions::new();
+        qs.insert(
+            "same".into(),
+            Question::yes_no("Is `photo` the same dog as img-poster?"),
+        );
+        let poster = EvalImage::new("img-poster", png(800, 600)).unwrap();
+        let a = EvalImage::new("img-a", png(800, 600)).unwrap();
+        validate_images(&state, &qs, &[a, poster]).unwrap();
+    }
+
+    #[test]
+    fn parses_box_answer() {
+        let body = r#"{"model":"jev-1.14.0","answers":{"mug":{"type":"box",
+            "box":{"top":0.25,"bottom":0.82,"left":0.44,"right":0.84},"confidence":0.92}},
+            "usage":{"input_tokens":290,"output_tokens":21}}"#;
+        let resp = parse_response(body, &box_questions()).unwrap();
+        let answer = &resp.answers["mug"];
+        assert_eq!(answer.kind(), "box");
+        let b = answer.as_box().unwrap();
+        assert_eq!((b.top, b.bottom, b.left, b.right), (0.25, 0.82, 0.44, 0.84));
+        assert_eq!(answer.confidence(), 0.92);
+        assert_eq!(resp.usage.unwrap().prompt_tokens, 290);
     }
 }

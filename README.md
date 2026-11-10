@@ -342,6 +342,10 @@ ailloy eval "$reply" --score "How frustrated is the customer?" \
 
 # Several questions over one input, JSON out
 ailloy eval -f ticket.txt --questions checks.yaml --json
+
+# Images: judge a photo, or find where something is in it (box, TypeSafe Jev 1.14+)
+ailloy eval --attach door.jpg --yes-no 'Is there a person in `image`?'
+ailloy eval --attach kitchen.jpg --box 'the coffee mug in `image`'
 ```
 
 A questions file (YAML or JSON; batch output follows the file's order):
@@ -363,7 +367,7 @@ questions:
     min_confidence: 0.6
 ```
 
-Options: input as an argument, `--file`, or stdin; `--context` for background; `--node` to pick the judge (otherwise `defaults.eval`, then the default chat node); `--min-confidence` to flag shaky answers; `--json` for structured output. Exit codes: `0` pass, `1` a gate failed, `2` usage or config error, `3` provider error, `4` gates passed but an answer is below the confidence floor. See `examples/eval.sh` for the full pattern.
+Options: input as an argument, `--file`, stdin, or `--attach` images (PNG/JPEG; one image is `image` in the state, several are `images`); `--long-context` for documents beyond TypeSafe's default 64k-token limit; `--context` for background; `--node` to pick the judge (otherwise `defaults.eval`, then the default chat node); `--min-confidence` to flag shaky answers; `--json` for structured output. Exit codes: `0` pass, `1` a gate failed, `2` usage or config error, `3` provider error, `4` gates passed but an answer is below the confidence floor. See `examples/eval.sh` for the full pattern.
 
 **Threshold guidance.** Answers vary slightly between runs. Jev is mostly identical run to run (TypeSafe's cookbook measured a std dev of 0 to about 0.008); chat models varied by 0.01 to 0.12 in our measurement. Keep gates away from typical values. Batching is free on TypeSafe nodes; on chat nodes each question is its own call, so large documents with many questions belong on a TypeSafe node.
 
@@ -403,7 +407,24 @@ for (id, answer) in &response.answers {
 }
 ```
 
-See `examples/eval.rs` for all three question types.
+Images and box questions go through `EvalOptions`:
+
+```rust
+use ailloy::{EvalImage, EvalOptions, Question, Questions};
+
+let photo = EvalImage::from_path("kitchen.jpg")?;
+let state = serde_json::json!({ "photo": photo.reference() });
+let mut questions = Questions::new();
+questions.insert("mug".into(), Question::bounding_box("the coffee mug in `photo`"));
+let response = client
+    .eval_with(state, &questions, &EvalOptions::new().image(photo))
+    .await?;
+let mug = response.answers["mug"].as_box().unwrap(); // top/bottom/left/right, 0..1
+```
+
+TypeSafe calls images and box questions "Dreamer-ready" (the format can still change). Chat judges accept images too but not box questions.
+
+See `examples/eval.rs` for the other question types.
 
 ### Telling failures apart
 

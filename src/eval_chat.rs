@@ -11,11 +11,12 @@ use futures_util::{FutureExt, StreamExt};
 use serde_json::{Value, json};
 
 use crate::client::Provider;
+use crate::error::ClientError;
 use crate::eval::{
-    Answer, Calibration, EvalResponse, Question, Questions, choice_answer, normalize_probabilities,
-    score_answer, validate_questions,
+    Answer, Calibration, EvalImage, EvalResponse, Question, Questions, choice_answer,
+    normalize_probabilities, score_answer, validate_questions,
 };
-use crate::types::{ChatOptions, Message, Usage};
+use crate::types::{ChatOptions, ContentPart, Message, MessageContent, Usage};
 
 /// Maximum concurrent chat calls per evaluation.
 pub(crate) const MAX_IN_FLIGHT: usize = 4;
@@ -72,6 +73,8 @@ pub(crate) fn question_schema(question: &Question) -> Value {
                 probability_map_schema((0..levels.len()).map(|i| i.to_string())),
             );
         }
+        // Refused before any call; see `evaluate_via_chat`.
+        Question::Box { .. } => {}
     }
     props.insert("rationale".into(), json!({"type": "string"}));
     strict_object(props)
@@ -134,8 +137,24 @@ pub(crate) fn question_prompt(state: &Value, question: &Question) -> String {
                  sum to 1), and a one-sentence `rationale`.",
             );
         }
+        Question::Box { instructions } => {
+            out.push_str(&format!("QUESTION (locate): {}\n", render(instructions)));
+        }
     }
     out
+}
+
+/// The note that tells a chat model which attached image each reference
+/// string stands for.
+pub(crate) fn image_note(images: &[EvalImage]) -> String {
+    let mut note = String::from(
+        "\n\nIMAGES: the images attached to this message are referred to above by these \
+         reference strings, in attachment order:\n",
+    );
+    for (i, image) in images.iter().enumerate() {
+        note.push_str(&format!("{}. {}\n", i + 1, image.reference()));
+    }
+    note
 }
 
 fn strip_fences(raw: &str) -> &str {
@@ -216,6 +235,7 @@ pub(crate) fn parse_chat_answer(
             let keys: Vec<String> = (0..levels.len()).map(|i| i.to_string()).collect();
             score_answer(normalize_probabilities(&probability_map(&root, id, &keys)?))
         }
+        Question::Box { .. } => bail!("question '{id}': box questions need a TypeSafe node"),
     };
     Ok((answer, rationale))
 }
@@ -241,14 +261,25 @@ async fn ask_question<P: Provider + ?Sized>(
     state: &Value,
     id: &str,
     question: &Question,
+    images: &[EvalImage],
 ) -> (String, QuestionOutcome) {
     let options = ChatOptions::builder()
         .json_schema(SCHEMA_NAME, question_schema(question))
         .build();
-    let messages = [
-        Message::system(SYSTEM_PROMPT),
-        Message::user(question_prompt(state, question)),
-    ];
+    let prompt = question_prompt(state, question);
+    let user = if images.is_empty() {
+        Message::user(prompt)
+    } else {
+        let mut parts = vec![ContentPart::Text {
+            text: prompt + &image_note(images),
+        }];
+        parts.extend(images.iter().map(|image| ContentPart::Image {
+            data: image.data().to_vec(),
+            media_type: image.format().media_type().to_string(),
+        }));
+        Message::user(MessageContent::Parts(parts))
+    };
+    let messages = [Message::system(SYSTEM_PROMPT), user];
     let outcome = async {
         let response = provider
             .chat(&messages, Some(&options))
@@ -269,14 +300,26 @@ pub(crate) async fn evaluate_via_chat<P: Provider + ?Sized>(
     provider: &P,
     state: &Value,
     questions: &Questions,
+    images: &[EvalImage],
 ) -> Result<EvalResponse> {
     validate_questions(questions)?;
+    if let Some((id, _)) = questions
+        .iter()
+        .find(|(_, q)| matches!(q, Question::Box { .. }))
+    {
+        return Err(ClientError::Unsupported(format!(
+            "box question '{id}' on {}: only TypeSafe nodes (Jev 1.14 or newer) answer box \
+             questions; pass --node with a typesafe node or set defaults.eval",
+            provider.name()
+        ))
+        .into());
+    }
     // Boxing the futures first keeps the stream's item type free of closure
     // lifetimes, which otherwise trips rustc's higher-ranked inference when
     // this runs inside an `async_trait` method.
     let pending: Vec<futures_util::future::BoxFuture<'_, (String, QuestionOutcome)>> = questions
         .iter()
-        .map(|(id, question)| ask_question(provider, state, id, question).boxed())
+        .map(|(id, question)| ask_question(provider, state, id, question, images).boxed())
         .collect();
     let mut stream = futures_util::stream::iter(pending).buffer_unordered(MAX_IN_FLIGHT);
 

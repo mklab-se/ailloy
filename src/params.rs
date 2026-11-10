@@ -154,6 +154,14 @@ pub const PARAMS: &[ParamDef] = &[
         providers: &[],
     },
     ParamDef {
+        key: "eval.long_context",
+        capability: Capability::Eval,
+        label: "Long context",
+        kind: ParamKind::Enum(&["true", "false"]),
+        default: Some("false"),
+        providers: &[ProviderKind::TypeSafe],
+    },
+    ParamDef {
         key: "embedding.dimensions",
         capability: Capability::Embedding,
         label: "Dimensions",

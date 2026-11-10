@@ -121,13 +121,14 @@ Generate embeddings from text using the default (or specified) embedding node.
 ### Eval (typed questions)
 
 ```
-ailloy eval [INPUT] (--yes-no Q | --choice Q | --score Q | --questions FILE) [OPTIONS]
+ailloy eval [INPUT] (--yes-no Q | --choice Q | --score Q | --box WHAT | --questions FILE) [OPTIONS]
 ```
 
 Ask typed questions about the input with an AI judge. Built for scripts and
-integration tests. Exactly one of `--yes-no`, `--choice`, `--score` or
-`--questions` is required. Input comes from the positional argument, `--file`,
-or stdin.
+integration tests. Exactly one of `--yes-no`, `--choice`, `--score`, `--box`
+or `--questions` is required. Input comes from the positional argument,
+`--file`, stdin, or `--attach` images (text is optional when an image is
+attached).
 
 | Flag | Description |
 |------|-------------|
@@ -142,7 +143,10 @@ or stdin.
 | `--level <TEXT>` | A score level, lowest first (repeatable, 2-10) |
 | `--min <F>` | Fail when the score is below this |
 | `--max <F>` | Fail when the score is above this |
+| `--box <WHAT>` | Find where something is in an attached image; answers with a bounding box (TypeSafe Jev 1.14+) |
 | `--questions <FILE>` | Read several questions from a file (YAML or JSON; output follows the file's order) |
+| `--attach <FILE>` | Attach a PNG or JPEG image (repeatable). One image is `image` in the state, several are `images` |
+| `--long-context` | Raise TypeSafe's context limits from 64k/32k to 262k tokens (slower, less accurate; TypeSafe nodes only) |
 | `--min-confidence <F>` | Exit 4 when an answer's confidence is below this (0.0-1.0) |
 | `-f, --file <FILE>` | Read the input to evaluate from a file |
 | `--context <TEXT>` | Extra context for the judge (what produced the input, expectations) |
@@ -157,11 +161,50 @@ ailloy eval -f ticket.txt --choice "Which team should handle this?" \
 ailloy eval "$reply" --score "How frustrated is the customer?" \
   --level Calm --level Frustrated --level "Very angry" --max 1.0
 ailloy eval -f ticket.txt --questions checks.yaml --json
+ailloy eval --attach door.jpg --yes-no 'Is there a person in `image`?'
+ailloy eval --attach kitchen.jpg --box 'the coffee mug in `image`'
 ```
 
 Usage errors (exit 2): duplicate or empty option keys, more than 255 options,
-score `--min` greater than `--max`, an unknown `--node`, no judge configured, or
-a missing API key.
+score `--min` greater than `--max`, `--box` without `--attach`, an unreadable
+or non-PNG/JPEG `--attach` file, an unknown `--node`, no judge configured, or a
+missing API key.
+
+After the answers, a dimmed line on stderr shows the tokens and the estimated
+cost (Jev bills input tokens only, at $0.042 per 1M). `-q` or `--json` hides it.
+
+#### Images and box questions
+
+Attached images go into the state by reference: one image makes the state
+`{"image": "<ref>"}` (plus `input` and `context` when given), several make
+`{"images": ["<ref1>", "<ref2>"]}`. Refer to them in questions with backticks,
+e.g. "Is the dog in `image` wearing a collar?".
+
+- **TypeSafe nodes** send the images natively (TypeSafe's
+  `TypeSafe-Danger-Zone-Images` opt-in, which ailloy adds for you). Each side
+  must be 280 to 1568 px and each file at most 16 MiB; TypeSafe never resizes,
+  so ailloy rejects images outside the limits with the fix. Images work on Jev
+  1.13 and newer.
+- **Chat nodes** get the images attached to every per-question call (the model
+  needs vision input).
+- **`--box`** (and `box:` in a questions file) returns `top`, `bottom`, `left`,
+  `right` as fractions of the image's height and width, plus a confidence. It
+  needs an image and a TypeSafe node on Jev 1.14 or newer; chat nodes refuse it.
+  A box always passes its gate; use `--min-confidence` to flag shaky ones.
+
+TypeSafe labels images and box questions "Dreamer-ready": fine for prototypes,
+and the request format can still change between releases.
+
+```
+PASS  box  top 0.47  bottom 0.51  left 0.48  right 0.52  confidence 0.96  (jev-1.14.0)
+```
+
+#### Long context
+
+`--long-context` (or the node default `eval.long_context: "true"`) raises
+TypeSafe's per-request and per-question limits to 262k tokens. It costs the
+same per token but is slower and less accurate, so use it only for documents
+that do not fit the default 64k/32k. Chat nodes ignore it.
 
 #### Questions file
 
@@ -184,7 +227,7 @@ questions:
     min_confidence: 0.6
 ```
 
-Each entry has exactly one of `yes_no`, `choice` or `score`. Other fields:
+Each entry has exactly one of `yes_no`, `choice`, `score` or `box`. Other fields:
 `yes_means`, `no_means`, `threshold` (yes/no); `options`, `expect` (choice);
 `levels`, `min`, `max` (score); `min_confidence` (any, overrides the global
 `--min-confidence`). All questions are sent in one evaluation.
@@ -452,6 +495,7 @@ Enter) or directly in the YAML.
 | `chat.temperature` | `0`–`2` | chat |
 | `chat.max_tokens` | positive integer | chat |
 | `embedding.dimensions` | positive integer (legacy key `dimensions` also read) | embedding |
+| `eval.long_context` | `true`, `false` (raise TypeSafe context limits to 262k tokens) | eval (TypeSafe) |
 | `chat.price_input`, `chat.price_output` | USD per 1M tokens (cost estimate only, never sent) | chat, eval |
 | `image.price_input`, `image.price_output` | USD per 1M tokens (cost estimate only, never sent) | image |
 | `embedding.price_input` | USD per 1M tokens (cost estimate only, never sent) | embedding |

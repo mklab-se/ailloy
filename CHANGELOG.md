@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Images in evaluations (TypeSafe Jev 1.13+ and vision chat models): `ailloy eval --attach FILE`
+  (repeatable; the state gets `image` or `images`), and in the library `EvalImage`
+  (`from_path`/`from_bytes`/`new` with your own reference) passed through the new `EvalOptions`
+  to `Client::eval_with` (also on `blocking::Client`). TypeSafe nodes send them natively with the
+  images opt-in header and check TypeSafe's limits first (PNG/JPEG, 280 to 1568 px per side,
+  16 MiB, every image referenced) with actionable errors; chat nodes attach them to every
+  per-question call
+- Box questions (TypeSafe Jev 1.14+): `ailloy eval --attach photo.jpg --box "the mug"` (and `box:`
+  in questions files) returns where something is as `top`/`bottom`/`left`/`right` fractions plus a
+  confidence. Library: `Question::bounding_box`, `Answer::Box`, `BoundingBox` (with `to_pixels`).
+  Chat nodes refuse box questions with a hint to use a TypeSafe node
+- Long context for TypeSafe: `ailloy eval --long-context`, `EvalOptions::long_context`, or the node
+  default `eval.long_context: "true"` raise the context limits to 262k tokens
+- `Provider::evaluate_with` (default method; existing providers keep working unchanged)
+- Jev pricing ($0.042 per 1M input tokens, output free) and a token/cost line after
+  `ailloy eval` text output (hidden by `-q` and `--json`)
+
 ## [3.2.0] - 2026-11-09
 
 ### Added

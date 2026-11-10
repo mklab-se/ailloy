@@ -215,7 +215,7 @@ pub enum AiConfigCommands {
 #[command(group(
     clap::ArgGroup::new("mode")
         .required(true)
-        .args(["yes_no", "choice", "score", "questions"])
+        .args(["yes_no", "choice", "score", "find_box", "questions"])
 ))]
 #[command(after_help = "Examples:
   # Yes/no (exit 0 when p(yes) >= threshold, default 0.5)
@@ -232,6 +232,12 @@ pub enum AiConfigCommands {
 
   # Many questions over one input, JSON out
   ailloy eval -f ticket.txt --questions checks.yaml --json
+
+  # Judge an image (TypeSafe Jev or a vision chat model); the image is `image` in the state
+  ailloy eval --attach door.jpg --yes-no 'Is there a person in `image`?'
+
+  # Where is it? Bounding box as fractions of the image (TypeSafe Jev 1.14+)
+  ailloy eval --attach kitchen.jpg --box 'the coffee mug in `image`'
 
 Exit codes: 0 pass, 1 a gate failed, 2 usage/config error, 3 provider error,
 4 gates passed but an answer is below --min-confidence")]
@@ -299,9 +305,21 @@ pub struct EvalArgs {
     #[arg(long, requires = "score")]
     pub max: Option<f64>,
 
+    /// Find where something is in an attached image (bounding box; TypeSafe Jev 1.14+)
+    #[arg(long = "box", value_name = "WHAT")]
+    pub find_box: Option<String>,
+
     /// Read several questions from a YAML or JSON file
     #[arg(long, value_name = "FILE")]
     pub questions: Option<String>,
+
+    /// Attach a PNG or JPEG image (repeatable); one image is `image` in the state, several are `images`
+    #[arg(long = "attach", value_name = "FILE")]
+    pub attach: Vec<String>,
+
+    /// Raise TypeSafe's context limits to 262k tokens (slower, less accurate; TypeSafe nodes only)
+    #[arg(long)]
+    pub long_context: bool,
 
     /// Exit 4 when an answer's confidence is below this (0.0-1.0)
     #[arg(long, value_name = "F")]

@@ -144,6 +144,10 @@ const BUILTIN_PRICES: &[PriceRow] = &[
     tok(Chat, "gpt-5.6-sol", 4.0, 20.0),
     tok(Chat, "gpt-5.6-terra", 2.0, 12.0),
     tok(Chat, "gpt-5.6-luna", 0.2, 1.2),
+    // TypeSafe System One (USD per 1M input tokens; output tokens are free).
+    // Source: docs.typesafe.ai/models, retrieved 2026-11-10. Eval is priced
+    // through the chat rows.
+    tok(Chat, "jev", 0.042, 0.0),
     // Images (USD per 1M tokens: text input, image output)
     tok(Image, "gpt-image-2.5-flare", 5.0, 30.0),
     tok(Image, "gpt-image-2.5-sunburst", 5.0, 30.0),
@@ -371,6 +375,17 @@ mod tests {
             builtin_price(&Video, "sora-2").unwrap().per_second,
             Some(0.10)
         );
+    }
+
+    #[test]
+    fn jev_is_priced_for_eval_with_free_output() {
+        let mut n = AiNode::new(ProviderKind::TypeSafe);
+        n.model = Some("jev-latest".to_string());
+        let p = price_for_node(&n, &Capability::Eval).unwrap();
+        assert_eq!((p.input, p.output), (Some(0.042), Some(0.0)));
+        let c = p.cost_of(&usage(1_000_000, 50)).unwrap();
+        assert!((c - 0.042).abs() < 1e-12, "{c}");
+        assert!(builtin_price(&Chat, "jev-1.14.0").is_some());
     }
 
     #[test]

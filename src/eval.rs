@@ -1,9 +1,14 @@
-//! Typed evaluation: yes/no, choice and score questions over a state.
+//! Typed evaluation: yes/no, choice, score and box questions over a state.
 //!
-//! The three question types mirror TypeSafe's System One primitives (Noul,
-//! Choice, Score). TypeSafe nodes answer them natively with calibrated
-//! probabilities; chat nodes answer them through structured output with
-//! self-reported probabilities (see [`Calibration`]).
+//! The question types mirror TypeSafe's System One primitives (Noul, Choice,
+//! Score, Box). TypeSafe nodes answer them natively with calibrated
+//! probabilities; chat nodes answer yes/no, choice and score through
+//! structured output with self-reported probabilities (see [`Calibration`]).
+//!
+//! Images ([`EvalImage`]) and long context travel in [`EvalOptions`]. An
+//! image is placed in the request by writing its reference string wherever it
+//! belongs: as a value in the state, or inside a question's instructions or
+//! criteria.
 
 use std::collections::BTreeMap;
 
@@ -50,6 +55,10 @@ pub enum Question {
         instructions: Value,
         levels: Vec<Value>,
     },
+    /// Where something is in an image: answered with a [`BoundingBox`].
+    /// Needs an image in [`EvalOptions`] and a TypeSafe node on Jev 1.14 or
+    /// newer; chat nodes refuse it.
+    Box { instructions: Value },
 }
 
 impl Question {
@@ -74,6 +83,14 @@ impl Question {
         Self::Score {
             instructions: instructions.into(),
             levels: Vec::new(),
+        }
+    }
+
+    /// A box question: find where something is in an image, e.g.
+    /// `"the coffee mug in `photo`"`.
+    pub fn bounding_box(instructions: impl Into<Value>) -> Self {
+        Self::Box {
+            instructions: instructions.into(),
         }
     }
 
@@ -129,12 +146,13 @@ impl Question {
         self
     }
 
-    /// `"yes_no"`, `"choice"` or `"score"`.
+    /// `"yes_no"`, `"choice"`, `"score"` or `"box"`.
     pub fn kind(&self) -> &'static str {
         match self {
             Self::YesNo { .. } => "yes_no",
             Self::Choice { .. } => "choice",
             Self::Score { .. } => "score",
+            Self::Box { .. } => "box",
         }
     }
 
@@ -143,8 +161,34 @@ impl Question {
         match self {
             Self::YesNo { instructions, .. }
             | Self::Choice { instructions, .. }
-            | Self::Score { instructions, .. } => instructions,
+            | Self::Score { instructions, .. }
+            | Self::Box { instructions } => instructions,
         }
+    }
+}
+
+/// A rectangle in an image, each edge a fraction (0 to 1) of the image's
+/// size measured from the top-left corner: `left`/`right` of the width,
+/// `top`/`bottom` of the height.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BoundingBox {
+    pub top: f64,
+    pub bottom: f64,
+    pub left: f64,
+    pub right: f64,
+}
+
+impl BoundingBox {
+    /// The box in pixels for an image of `width` x `height`:
+    /// `(left, top, right, bottom)`.
+    pub fn to_pixels(&self, width: u32, height: u32) -> (u32, u32, u32, u32) {
+        let px = |f: f64, size: u32| (f.clamp(0.0, 1.0) * f64::from(size)).round() as u32;
+        (
+            px(self.left, width),
+            px(self.top, height),
+            px(self.right, width),
+            px(self.bottom, height),
+        )
     }
 }
 
@@ -168,6 +212,12 @@ pub enum Answer {
         probabilities: Vec<f64>,
         confidence: f64,
     },
+    Box {
+        /// Where the target is (serialized as `box`).
+        #[serde(rename = "box")]
+        bounds: BoundingBox,
+        confidence: f64,
+    },
 }
 
 impl Answer {
@@ -175,16 +225,27 @@ impl Answer {
     pub fn confidence(&self) -> f64 {
         match self {
             Self::YesNo { probability } => yes_no_confidence(*probability),
-            Self::Choice { confidence, .. } | Self::Score { confidence, .. } => *confidence,
+            Self::Choice { confidence, .. }
+            | Self::Score { confidence, .. }
+            | Self::Box { confidence, .. } => *confidence,
         }
     }
 
-    /// `"yes_no"`, `"choice"` or `"score"`.
+    /// `"yes_no"`, `"choice"`, `"score"` or `"box"`.
     pub fn kind(&self) -> &'static str {
         match self {
             Self::YesNo { .. } => "yes_no",
             Self::Choice { .. } => "choice",
             Self::Score { .. } => "score",
+            Self::Box { .. } => "box",
+        }
+    }
+
+    /// The bounding box, for a Box answer.
+    pub fn as_box(&self) -> Option<BoundingBox> {
+        match self {
+            Self::Box { bounds, .. } => Some(*bounds),
+            _ => None,
         }
     }
 
@@ -268,6 +329,158 @@ impl EvalResponse {
     }
 }
 
+/// Image file format accepted in an evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EvalImageFormat {
+    Png,
+    Jpeg,
+}
+
+impl EvalImageFormat {
+    /// The TypeSafe wire name: `"png"` or `"jpg"`.
+    pub fn wire_name(&self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Jpeg => "jpg",
+        }
+    }
+
+    /// The media type: `image/png` or `image/jpeg`.
+    pub fn media_type(&self) -> &'static str {
+        match self {
+            Self::Png => "image/png",
+            Self::Jpeg => "image/jpeg",
+        }
+    }
+
+    /// Detect PNG or JPEG from the file's first bytes.
+    pub fn detect(data: &[u8]) -> Option<Self> {
+        if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+            Some(Self::Png)
+        } else if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+            Some(Self::Jpeg)
+        } else {
+            None
+        }
+    }
+}
+
+/// An image for an evaluation, placed in the request by its `reference`.
+///
+/// Write the reference wherever the image belongs: as a whole value in the
+/// state (`{"photo": img.reference()}`), or inside instructions or criteria
+/// ("Is the dog in `photo` the same as in REF?"). References are matched as
+/// plain text, so use one that cannot occur by accident;
+/// [`EvalImage::from_path`] and [`EvalImage::from_bytes`] generate one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EvalImage {
+    reference: String,
+    data: Vec<u8>,
+    format: EvalImageFormat,
+}
+
+impl EvalImage {
+    /// An image with a reference you choose. PNG or JPEG only.
+    pub fn new(reference: impl Into<String>, data: Vec<u8>) -> Result<Self> {
+        let reference = reference.into();
+        if reference.trim().is_empty() {
+            bail!("an image reference can't be empty; use EvalImage::from_bytes to generate one");
+        }
+        if reference.len() > 1024 {
+            bail!("image reference '{reference:.40}...' is over 1024 bytes; use a shorter one");
+        }
+        let format = EvalImageFormat::detect(&data).ok_or_else(|| {
+            anyhow::anyhow!(
+                "image '{reference}' is not a PNG or JPEG; convert it (GIF, WebP and HEIC \
+                 are not accepted)"
+            )
+        })?;
+        Ok(Self {
+            reference,
+            data,
+            format,
+        })
+    }
+
+    /// An image with a generated reference (`img-` plus 16 hex digits).
+    pub fn from_bytes(data: Vec<u8>) -> Result<Self> {
+        Self::new(generate_reference(), data)
+    }
+
+    /// Read an image file and give it a generated reference.
+    pub fn from_path(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let data = std::fs::read(path)
+            .map_err(|e| anyhow::anyhow!("cannot read image {}: {e}", path.display()))?;
+        Self::from_bytes(data).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))
+    }
+
+    /// The reference string that stands for this image in the request.
+    pub fn reference(&self) -> &str {
+        &self.reference
+    }
+
+    /// The raw file bytes.
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// PNG or JPEG.
+    pub fn format(&self) -> EvalImageFormat {
+        self.format
+    }
+
+    /// `(width, height)` in pixels, read from the file header.
+    pub fn dimensions(&self) -> Option<(u32, u32)> {
+        crate::types::image_dimensions(&self.data)
+    }
+}
+
+/// A reference that is unique per process and run: `img-` + 16 hex digits.
+fn generate_reference() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u64(COUNTER.fetch_add(1, Ordering::Relaxed));
+    if let Ok(t) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        hasher.write_u128(t.as_nanos());
+    }
+    format!("img-{:016x}", hasher.finish())
+}
+
+/// Extra inputs and switches for an evaluation.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
+pub struct EvalOptions {
+    /// Images referenced from the state, instructions or criteria.
+    pub images: Vec<EvalImage>,
+    /// Raise TypeSafe's context limits to 262k tokens (slower and less
+    /// accurate; only for requests that need it). `None` uses the node's
+    /// `eval.long_context` default, else off. Ignored by chat nodes.
+    pub long_context: Option<bool>,
+}
+
+impl EvalOptions {
+    /// Empty options.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add an image.
+    pub fn image(mut self, image: EvalImage) -> Self {
+        self.images.push(image);
+        self
+    }
+
+    /// Turn long context on or off explicitly.
+    pub fn long_context(mut self, on: bool) -> Self {
+        self.long_context = Some(on);
+        self
+    }
+}
+
 fn is_blank(value: &Value) -> bool {
     match value {
         Value::Null => true,
@@ -310,6 +523,7 @@ pub fn validate_questions(questions: &Questions) -> Result<()> {
                     );
                 }
             }
+            Question::Box { .. } => {}
         }
     }
     Ok(())
@@ -618,5 +832,74 @@ mod tests {
         let v = serde_json::to_value(Answer::YesNo { probability: 0.9 }).unwrap();
         assert_eq!(v, json!({"type": "yes_no", "probability": 0.9}));
         assert_eq!(Answer::YesNo { probability: 0.9 }.kind(), "yes_no");
+    }
+
+    fn png(width: u32, height: u32) -> Vec<u8> {
+        let mut data = b"\x89PNG\r\n\x1a\n".to_vec();
+        data.extend_from_slice(&[0, 0, 0, 13, b'I', b'H', b'D', b'R']);
+        data.extend_from_slice(&width.to_be_bytes());
+        data.extend_from_slice(&height.to_be_bytes());
+        data
+    }
+
+    #[test]
+    fn box_question_and_answer() {
+        let q = Question::bounding_box("the mug");
+        assert_eq!(q.kind(), "box");
+        assert_eq!(q.instructions(), &json!("the mug"));
+        let a = Answer::Box {
+            bounds: BoundingBox {
+                top: 0.25,
+                bottom: 0.82,
+                left: 0.44,
+                right: 0.84,
+            },
+            confidence: 0.92,
+        };
+        assert_eq!(a.kind(), "box");
+        assert_eq!(a.confidence(), 0.92);
+        assert_eq!(
+            serde_json::to_value(&a).unwrap(),
+            json!({"type": "box", "box": {"top": 0.25, "bottom": 0.82, "left": 0.44, "right": 0.84}, "confidence": 0.92})
+        );
+        assert_eq!(
+            a.as_box().unwrap().to_pixels(1000, 500),
+            (440, 125, 840, 410)
+        );
+        let mut qs = Questions::new();
+        qs.insert("mug".into(), q);
+        validate_questions(&qs).unwrap();
+    }
+
+    #[test]
+    fn eval_image_detects_format_and_generates_references() {
+        let a = EvalImage::from_bytes(png(800, 600)).unwrap();
+        let b = EvalImage::from_bytes(png(800, 600)).unwrap();
+        assert_eq!(a.format(), EvalImageFormat::Png);
+        assert_eq!(a.dimensions(), Some((800, 600)));
+        assert!(a.reference().starts_with("img-") && a.reference().len() == 20);
+        assert_ne!(a.reference(), b.reference());
+
+        let jpeg = EvalImage::new("photo-ref", vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 0]).unwrap();
+        assert_eq!(jpeg.format().wire_name(), "jpg");
+        assert_eq!(jpeg.format().media_type(), "image/jpeg");
+
+        let err = EvalImage::new("r", b"GIF89a....".to_vec())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not a PNG or JPEG"), "{err}");
+        assert!(EvalImage::new("  ", png(800, 600)).is_err());
+        let err = EvalImage::from_path("/nonexistent/door.jpg")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("door.jpg"), "{err}");
+    }
+
+    #[test]
+    fn eval_options_builders() {
+        let opts = EvalOptions::new().long_context(true);
+        assert_eq!(opts.long_context, Some(true));
+        assert!(opts.images.is_empty());
+        assert_eq!(EvalOptions::default().long_context, None);
     }
 }
